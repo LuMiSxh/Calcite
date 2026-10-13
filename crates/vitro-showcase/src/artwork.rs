@@ -12,7 +12,7 @@ use gpui::{
 	linear_color_stop, linear_gradient, px,
 };
 
-use vitro_ui::tokens::{self, black, rgba, scale_alpha, white};
+use calcite::tokens::{self, black, rgba, scale_alpha, white};
 
 /// Asset path of the accent slash in the fallback artwork.
 pub const SLASH_ASSET: &str = "artwork/slash.svg";

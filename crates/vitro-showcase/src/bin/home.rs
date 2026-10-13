@@ -1,37 +1,29 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Showcase of the UI kit: the launcher home screen with a simulated install, download,
-//! verification, and game session. It contains no launcher logic and starts no game.
+//! The launcher home screen with a simulated install, download, verification, and game
+//! session. It contains no launcher logic and starts no game.
 //!
-//! Run: `cargo run --release` (optionally `-- /path/to/artwork.jpg`).
+//! Run: `cargo run --release --bin home` (optionally `-- /path/to/artwork.jpg`).
 
 use std::{
 	path::PathBuf,
-	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use calcite::{UI_FONT, prelude::*, tokens::hud};
 use gpui::{
-	App, Bounds, Context, FocusHandle, FontWeight, IntoElement, KeyBinding, MouseButton, SharedString, Task,
-	TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
+	App, Bounds, Context, FocusHandle, FontWeight, IntoElement, MouseButton, SharedString, Task,
+	TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgba, size,
 };
-use vitro_exec::{ActivityLease, ActivityStore, TaskSlot, Throttle, publish};
+use vitro_exec::prelude::*;
 use vitro_showcase::artwork::{Artwork, SLASH_ASSET, SLASH_SVG, artwork_layer, readability_field, wordmark};
-use vitro_ui::{
-	GlassStyle, Theme, UI_FONT,
-	controls::{CapsuleButton, IconButton, Size, Tone, accent_halo},
-	glass::GlassExt,
-	hud::{ControlBar, HudPill, pill_row, status_text},
-	icons::{Assets, Icon},
-	progress::OutlineMode,
-	tokens::{self, hud, rgba, scale_alpha},
-};
 
 actions!(
-	showcase,
+	home,
 	[
 		PrimaryAction,
 		CycleAccent,
-		CycleGlassStyle,
+		CycleGlass,
 		ToggleReduceMotion,
 		ToggleUpdateButton,
 		ToggleMusicPill,
@@ -45,8 +37,6 @@ actions!(
 
 const DOWNLOAD_BYTES: f64 = 3.42e9;
 const DOWNLOAD_RATE: f64 = 38.6e6;
-/// Raw progress arrives faster than the UI should redraw; `Throttle` bounds it to ~10 Hz.
-const TICK: Duration = Duration::from_millis(25);
 /// The simulated transfer runs faster than the displayed rate so the demo stays short.
 const DEMO_SPEEDUP: f64 = 9.;
 
@@ -87,21 +77,21 @@ const REGIONS: [(&str, u64); 5] = [
 ];
 
 /// Accent presets that stand in for colors sampled from artwork. `None` is the fallback.
-const ACCENTS: [Option<gpui::Rgba>; 5] = [
-	None,
-	Some(rgba(0.96, 0.62, 0.22, 1.)),
-	Some(rgba(0.94, 0.36, 0.52, 1.)),
-	Some(rgba(0.62, 0.50, 0.98, 1.)),
-	Some(rgba(0.36, 0.86, 0.58, 1.)),
-];
+fn accents() -> [Option<gpui::Rgba>; 5] {
+	[
+		None,
+		Some(rgba(0xF59E38FF)),
+		Some(rgba(0xF05C85FF)),
+		Some(rgba(0x9E80FAFF)),
+		Some(rgba(0x5CDB94FF)),
+	]
+}
 
-struct Showcase {
+struct Home {
 	focus: FocusHandle,
 	phase: Phase,
 	progress: f64,
 	accent_index: usize,
-	glass: GlassStyle,
-	reduce_motion: bool,
 	shows_update_button: bool,
 	expanded: Option<Pill>,
 	region: usize,
@@ -116,10 +106,11 @@ struct Showcase {
 	_clock: Task<()>,
 }
 
-impl Showcase {
+impl Home {
 	fn new(custom_artwork: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
 		let focus = cx.focus_handle();
 		window.focus(&focus, cx);
+		cx.redraw_on_window_activation(window);
 		// Redraws the reset countdown once per second.
 		let clock = cx.spawn(async move |this, cx| {
 			loop {
@@ -134,8 +125,6 @@ impl Showcase {
 			phase: Phase::NotInstalled,
 			progress: 0.,
 			accent_index: 0,
-			glass: GlassStyle::MacOS27(vitro_ui::Transparency::Default),
-			reduce_motion: cx.reduce_motion(),
 			shows_update_button: false,
 			expanded: None,
 			region: 0,
@@ -148,14 +137,6 @@ impl Showcase {
 			lease: None,
 			transfer: TaskSlot::new(),
 			_clock: clock,
-		}
-	}
-
-	fn theme(&self) -> Theme {
-		Theme {
-			glass: self.glass,
-			reduce_motion: self.reduce_motion,
-			..Theme::new(ACCENTS[self.accent_index])
 		}
 	}
 
@@ -183,15 +164,11 @@ impl Showcase {
 			}
 			Phase::Running => {
 				self.end_activity();
-				self.enter_ready();
+				self.phase = Phase::Ready;
+				self.halo_generation += 1;
 			}
 		}
 		cx.notify();
-	}
-
-	fn enter_ready(&mut self) {
-		self.phase = Phase::Ready;
-		self.halo_generation += 1;
 	}
 
 	/// Simulates a download whose raw progress is throttled to ~10 Hz, then a verification.
@@ -201,61 +178,42 @@ impl Showcase {
 		};
 		self.lease = Some(lease);
 		self.phase = Phase::Downloading;
-		let mut progress = self.progress;
-		self.transfer.replace(cx, async move |token, this, cx| {
-			let mut throttle = Throttle::progress();
-			let (started_at, start) = (Instant::now(), progress);
-			let rate = DOWNLOAD_RATE * DEMO_SPEEDUP / DOWNLOAD_BYTES;
-			while progress < 1. {
-				cx.background_executor().timer(TICK).await;
-				let now = Instant::now();
-				progress = (start + now.duration_since(started_at).as_secs_f64() * rate).min(1.);
-				if progress < 1. && !throttle.admit(now) {
-					continue;
-				}
-				let published = publish(
-					&this,
-					cx,
-					|view| &view.transfer,
-					token,
-					|view, cx| {
-						view.progress = progress;
+		let start = self.progress;
+		self.transfer.run(
+			cx,
+			|home| &mut home.transfer,
+			async move |job| {
+				// The work also stops when its activity lease is no longer current.
+				job.guard(move |home: &Home| home.activity.holds(lease));
+				let mut throttle = Throttle::progress();
+				let started_at = std::time::Instant::now();
+				let rate = DOWNLOAD_RATE * DEMO_SPEEDUP / DOWNLOAD_BYTES;
+				loop {
+					job.sleep(Duration::from_millis(25)).await;
+					let progress = (start + started_at.elapsed().as_secs_f64() * rate).min(1.);
+					if progress >= 1. {
+						break;
+					}
+					job.update_throttled(&mut throttle, |home, cx| {
+						home.progress = progress;
 						cx.notify();
-					},
-				);
-				if !published {
-					return;
+					})?;
 				}
-			}
-			let verifying = publish(
-				&this,
-				cx,
-				|view| &view.transfer,
-				token,
-				|view, cx| {
-					view.progress = 1.;
-					view.phase = Phase::Verifying;
-					view.activity.update(lease, Activity::Verifying);
+				job.update(|home, cx| {
+					home.progress = 1.;
+					home.phase = Phase::Verifying;
+					home.activity.update(lease, Activity::Verifying);
 					cx.notify();
-				},
-			);
-			if !verifying {
-				return;
-			}
-			cx.background_executor().timer(Duration::from_millis(2600)).await;
-			publish(
-				&this,
-				cx,
-				|view| &view.transfer,
-				token,
-				|view, cx| {
-					view.transfer.finish(token);
-					view.end_activity();
-					view.enter_ready();
+				})?;
+				job.sleep(Duration::from_millis(2600)).await;
+				job.update(|home, cx| {
+					home.end_activity();
+					home.phase = Phase::Ready;
+					home.halo_generation += 1;
 					cx.notify();
-				},
-			);
-		});
+				})
+			},
+		);
 	}
 
 	fn toggle_pill(&mut self, pill: Pill, cx: &mut Context<Self>) {
@@ -267,76 +225,52 @@ impl Showcase {
 		cx.notify();
 	}
 
-	fn status(&self) -> (SharedString, Option<SharedString>, bool) {
+	fn status(&self) -> impl IntoElement + use<> {
 		let region = REGIONS[self.region].0;
 		let percent = (self.progress * 100.).floor() as u32;
 		match self.phase {
-			Phase::NotInstalled => (
-				"Not installed".into(),
-				Some(format!("{region} · {} download", gigabytes(DOWNLOAD_BYTES)).into()),
-				false,
-			),
+			Phase::NotInstalled => {
+				status("Not installed").detail(format!("{region} · {} download", gigabytes(DOWNLOAD_BYTES)))
+			}
 			Phase::Downloading => {
 				let done = self.progress * DOWNLOAD_BYTES;
 				let remaining = ((DOWNLOAD_BYTES - done) / (DOWNLOAD_RATE * DEMO_SPEEDUP)).ceil() as u64;
-				(
-					format!("{percent}%").into(),
-					Some(
-						format!(
-							"{} of {} · {:.1} MB/s · {} s left",
-							gigabytes(done),
-							gigabytes(DOWNLOAD_BYTES),
-							DOWNLOAD_RATE / 1e6,
-							remaining
-						)
-						.into(),
-					),
-					true,
-				)
+				status(format!("{percent}%")).emphasized(true).detail(format!(
+					"{} of {} · {:.1} MB/s · {remaining} s left",
+					gigabytes(done),
+					gigabytes(DOWNLOAD_BYTES),
+					DOWNLOAD_RATE / 1e6
+				))
 			}
-			Phase::Paused => (
-				format!("Paused · {percent}%").into(),
-				Some("Resume continues from the partial files".into()),
-				true,
-			),
-			Phase::Verifying => (
-				"Verifying files".into(),
-				Some("Checking 1 284 files".into()),
-				false,
-			),
-			Phase::Ready => (
-				"Ready to play".into(),
-				Some(format!("{region} · Version 2.6.81").into()),
-				false,
-			),
-			Phase::Running => (
-				"Arknights is running".into(),
-				Some("Stop closes the game and its Windows runtime".into()),
-				false,
-			),
+			Phase::Paused => status(format!("Paused · {percent}%"))
+				.emphasized(true)
+				.detail("Resume continues from the partial files"),
+			Phase::Verifying => status("Verifying files").detail("Checking 1 284 files"),
+			Phase::Ready => status("Ready to play").detail(format!("{region} · Version 2.6.81")),
+			Phase::Running => {
+				status("Arknights is running").detail("Stop closes the game and its Windows runtime")
+			}
 		}
 	}
 
-	fn primary_button(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-		let theme = self.theme();
-		let accent = Tone::Accent(theme.accent);
-		let (title, icon, tone, enabled) = match self.phase {
-			Phase::NotInstalled => ("Install", Icon::ArrowDown, accent, true),
-			Phase::Downloading => ("Pause", Icon::Pause, Tone::Neutral, true),
-			Phase::Paused => ("Resume", Icon::ArrowClockwise, accent, true),
-			Phase::Verifying => ("Pause", Icon::Pause, Tone::Neutral, false),
-			Phase::Ready => ("Play", Icon::Play, accent, true),
-			Phase::Running => ("Stop", Icon::Stop, Tone::Neutral, true),
-		};
-		let button = CapsuleButton::new("primary-action", title, tone, theme)
-			.icon(icon)
-			.size(Size::Large)
-			.enabled(enabled)
-			.on_click(cx.listener(|this, _, _, cx| this.primary_action(cx)));
-		if self.phase == Phase::Ready {
-			accent_halo(theme.accent, self.halo_generation, &theme, button).into_any_element()
-		} else {
-			button.into_any_element()
+	fn primary_button(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+		let action = cx.listener(|this, _, _, cx| this.primary_action(cx));
+		let base = |title: &'static str, icon: Icon| button("primary-action", title).icon(icon).large();
+		match self.phase {
+			Phase::NotInstalled => base("Install", Icon::ArrowDown)
+				.accent()
+				.on_click(action)
+				.into_any_element(),
+			Phase::Downloading => base("Pause", Icon::Pause).on_click(action).into_any_element(),
+			Phase::Paused => base("Resume", Icon::ArrowClockwise)
+				.accent()
+				.on_click(action)
+				.into_any_element(),
+			Phase::Verifying => base("Pause", Icon::Pause).disabled(true).into_any_element(),
+			Phase::Ready => halo(base("Play", Icon::Play).accent().on_click(action))
+				.generation(self.halo_generation)
+				.into_any_element(),
+			Phase::Running => base("Stop", Icon::Stop).on_click(action).into_any_element(),
 		}
 	}
 
@@ -350,14 +284,14 @@ impl Showcase {
 	}
 
 	fn pill_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-		let theme = self.theme();
 		let receded = |pill: Pill| self.expanded.is_some() && self.expanded != Some(pill);
 		let now = SystemTime::now()
 			.duration_since(UNIX_EPOCH)
 			.unwrap_or_default()
 			.as_secs();
+		let playing = self.music_playing;
 
-		let music = HudPill::new(
+		let music = pill(
 			"music-pill",
 			Icon::Music,
 			div()
@@ -365,8 +299,8 @@ impl Showcase {
 				.truncate()
 				.font_weight(FontWeight::MEDIUM)
 				.child("Sanity Restored — Lobby Theme"),
-			theme,
 		)
+		.noun("music")
 		.detail(
 			div()
 				.flex()
@@ -383,28 +317,15 @@ impl Showcase {
 						.flex_row()
 						.gap(px(6.))
 						.child(
-							CapsuleButton::new(
-								"music-play",
-								if self.music_playing { "Pause" } else { "Play" },
-								Tone::Neutral,
-								theme,
-							)
-							.icon(if self.music_playing {
-								Icon::Pause
-							} else {
-								Icon::Play
-							})
-							.size(Size::Compact)
-							.on_click(cx.listener(|this, _, _, cx| {
-								this.music_playing = !this.music_playing;
-								cx.notify();
-							})),
+							button("music-play", if playing { "Pause" } else { "Play" })
+								.icon(if playing { Icon::Pause } else { Icon::Play })
+								.compact()
+								.on_click(cx.listener(|this, _, _, cx| {
+									this.music_playing = !this.music_playing;
+									cx.notify();
+								})),
 						)
-						.child(
-							CapsuleButton::new("music-next", "Next", Tone::Neutral, theme)
-								.icon(Icon::Forward)
-								.size(Size::Compact),
-						),
+						.child(button("music-next", "Next").icon(Icon::Forward).compact()),
 				),
 			hud::EXPANDED_MUSIC_WIDTH,
 			px(116.),
@@ -413,12 +334,12 @@ impl Showcase {
 		.receded(receded(Pill::Music))
 		.on_toggle(cx.listener(|this, _, _, cx| this.toggle_pill(Pill::Music, cx)));
 
-		let version = HudPill::new(
+		let version = pill(
 			"version-pill",
 			Icon::Tag,
 			div().font_weight(FontWeight::MEDIUM).child("2.6.81"),
-			theme,
 		)
+		.noun("version")
 		.detail(
 			div()
 				.flex()
@@ -430,9 +351,9 @@ impl Showcase {
 						.child("Installed 2.6.81 · Latest 2.6.81"),
 				)
 				.child(
-					CapsuleButton::new("check-updates", "Check for Updates", Tone::Neutral, theme)
+					button("check-updates", "Check for Updates")
 						.icon(Icon::ArrowClockwise)
-						.size(Size::Compact),
+						.compact(),
 				),
 			hud::EXPANDED_VERSION_WIDTH,
 			px(112.),
@@ -442,7 +363,16 @@ impl Showcase {
 		.on_toggle(cx.listener(|this, _, _, cx| this.toggle_pill(Pill::Version, cx)));
 
 		let (region_name, reset_hour) = REGIONS[self.region];
-		let status = HudPill::new(
+		let rows = REGIONS.iter().enumerate().map(|(index, (name, hour))| {
+			list_row(("region", index), *name)
+				.value(countdown(now, *hour))
+				.selected(index == self.region)
+				.on_click(cx.listener(move |this, _, _, cx| {
+					this.region = index;
+					cx.notify();
+				}))
+		});
+		let status_pill = pill(
 			"status-pill",
 			Icon::Globe,
 			div()
@@ -455,26 +385,10 @@ impl Showcase {
 						.text_color(tokens::SECONDARY_TEXT)
 						.child(countdown(now, reset_hour)),
 				),
-			theme,
 		)
+		.noun("server time")
 		.detail(
-			div()
-				.flex()
-				.flex_col()
-				.gap(px(2.))
-				.children(REGIONS.iter().enumerate().map(|(index, (name, hour))| {
-					pill_row(
-						("region", index),
-						*name,
-						countdown(now, *hour),
-						index == self.region,
-						theme,
-						cx.listener(move |this, _, _, cx| {
-							this.region = index;
-							cx.notify();
-						}),
-					)
-				})),
+			div().flex().flex_col().gap(px(2.)).children(rows),
 			hud::EXPANDED_STATUS_WIDTH,
 			px(28. + 8. + 16. + 5. * 28.),
 		)
@@ -491,12 +405,12 @@ impl Showcase {
 			.pr(px(2.))
 			.child(music)
 			.child(version)
-			.child(status)
+			.child(status_pill)
 	}
 
-	fn legend(&self) -> impl IntoElement + use<> {
-		let theme = self.theme();
-		let row = |key: &'static str, label: SharedString| {
+	fn legend(&self, theme: &Theme) -> impl IntoElement + use<> {
+		let accent = tokens::contrast_tint(theme.accent);
+		let row = move |key: &'static str, label: SharedString| {
 			div()
 				.flex()
 				.flex_row()
@@ -505,43 +419,39 @@ impl Showcase {
 					div()
 						.w(px(46.))
 						.font_weight(FontWeight::SEMIBOLD)
-						.text_color(tokens::contrast_tint(theme.accent))
+						.text_color(accent)
 						.child(key),
 				)
 				.child(div().text_color(tokens::PRIMARY_TEXT).child(label))
 		};
-		let state = |on: bool| if on { "on" } else { "off" };
-		div()
+		glass_panel(theme)
 			.absolute()
 			.top(px(64.))
 			.right(px(20.))
-			.w(px(260.))
-			.p(px(14.))
+			.w(px(270.))
 			.flex()
 			.flex_col()
 			.gap(px(4.))
 			.text_size(px(11.))
-			.rounded(tokens::radius::PANEL)
-			.rounded_smoothing_ios()
-			.glass(theme.surface(Some(theme.hud_tint)))
-			.border_1()
-			.border_color(scale_alpha(tokens::HAIRLINE, tokens::control::HUD_BORDER_OPACITY))
 			.child(
 				div()
 					.pb(px(4.))
 					.font_weight(FontWeight::SEMIBOLD)
-					.text_color(tokens::PRIMARY_TEXT)
 					.child("Showcase controls"),
 			)
 			.child(row("Space", "Primary action".into()))
 			.child(row("A", "Next accent".into()))
-			.child(row("1 2 3", "Music, version, status pill".into()))
-			.child(row("U", "Show the neutral update button".into()))
-			.child(row("G", format!("Glass: {}", self.glass.label()).into()))
+			.child(row("G", format!("Glass: {}", theme.glass.label()).into()))
 			.child(row(
 				"M",
-				format!("Reduce Motion ({})", state(self.reduce_motion)).into(),
+				format!(
+					"Reduce Motion ({})",
+					if theme.reduce_motion { "on" } else { "off" }
+				)
+				.into(),
 			))
+			.child(row("1 2 3", "Music, version, status pill".into()))
+			.child(row("U", "Show the neutral update button".into()))
 			.when(self.custom_artwork.is_some(), |this| {
 				this.child(row("O", "Own artwork or procedural".into()))
 			})
@@ -549,21 +459,16 @@ impl Showcase {
 	}
 }
 
-impl Render for Showcase {
+impl Render for Home {
 	fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-		let theme = self.theme();
-		let (title, detail, emphasized) = self.status();
+		let theme = cx.theme();
 		let (outline, outline_active) = self.outline();
-
-		let mut bar =
-			ControlBar::new(status_text(title, detail, emphasized), theme).progress(outline, outline_active);
-		if self.shows_update_button {
-			bar = bar.action(
-				CapsuleButton::new("install-update", "Install Update", Tone::Neutral, theme)
-					.icon(Icon::ArrowDown),
-			);
-		}
-		bar = bar.action(self.primary_button(cx));
+		let bar = control_bar(self.status())
+			.progress(outline, outline_active)
+			.when(self.shows_update_button, |bar| {
+				bar.action(button("install-update", "Install Update").icon(Icon::ArrowDown))
+			})
+			.action(self.primary_button(cx));
 
 		let top_bar = div()
 			.absolute()
@@ -578,7 +483,7 @@ impl Render for Showcase {
 			.justify_between()
 			.child(div().pt(px(34.)).pl(px(6.)).child(wordmark(tokens::text::TITLE)))
 			.child(
-				IconButton::hud("settings", Icon::Gear, theme).on_click(cx.listener(|this, _, _, cx| {
+				icon_button("settings", Icon::Gear, "Settings").on_click(cx.listener(|this, _, _, cx| {
 					this.shows_legend = !this.shows_legend;
 					cx.notify();
 				})),
@@ -604,20 +509,19 @@ impl Render for Showcase {
 			.font_family(UI_FONT)
 			.text_color(tokens::PRIMARY_TEXT)
 			.track_focus(&self.focus)
-			.key_context("Showcase")
+			.key_context("Home")
 			.on_action(cx.listener(|this, _: &PrimaryAction, _, cx| this.primary_action(cx)))
 			.on_action(cx.listener(|this, _: &CycleAccent, _, cx| {
-				this.accent_index = (this.accent_index + 1) % ACCENTS.len();
+				this.accent_index = (this.accent_index + 1) % accents().len();
 				this.halo_generation += 1;
-				cx.notify();
+				let accent = accents()[this.accent_index];
+				Theme::update(cx, |theme| *theme = theme.with_accent(accent));
 			}))
-			.on_action(cx.listener(|this, _: &CycleGlassStyle, _, cx| {
-				this.glass = this.glass.next();
-				cx.notify();
+			.on_action(cx.listener(|_, _: &CycleGlass, _, cx| {
+				Theme::update(cx, |theme| theme.glass = theme.glass.next())
 			}))
-			.on_action(cx.listener(|this, _: &ToggleReduceMotion, _, cx| {
-				this.reduce_motion = !this.reduce_motion;
-				cx.notify();
+			.on_action(cx.listener(|_, _: &ToggleReduceMotion, _, cx| {
+				Theme::update(cx, |theme| theme.reduce_motion = !theme.reduce_motion)
 			}))
 			.on_action(cx.listener(|this, _: &ToggleUpdateButton, _, cx| {
 				this.shows_update_button = !this.shows_update_button;
@@ -640,7 +544,7 @@ impl Render for Showcase {
 				cx.notify();
 			}))
 			.child(artwork_layer(&self.artwork, theme.accent))
-			.child(readability_field(self.glass == GlassStyle::ReducedTransparency))
+			.child(readability_field(theme.reduce_transparency()))
 			// Like the SwiftUI HUD, a click outside an expanded pill collapses it.
 			.when(self.expanded.is_some(), |this| {
 				this.child(div().absolute().size_full().on_mouse_down(
@@ -653,7 +557,7 @@ impl Render for Showcase {
 			})
 			.child(top_bar)
 			.child(hud)
-			.when(self.shows_legend, |this| this.child(self.legend()))
+			.when(self.shows_legend, |this| this.child(self.legend(&theme)))
 	}
 }
 
@@ -682,20 +586,22 @@ fn main() {
 	gpui_platform::application()
 		.with_assets(Assets::default().with(SLASH_ASSET, SLASH_SVG))
 		.run(move |cx: &mut App| {
-			cx.bind_keys([
-				KeyBinding::new("space", PrimaryAction, Some("Showcase")),
-				KeyBinding::new("a", CycleAccent, Some("Showcase")),
-				KeyBinding::new("g", CycleGlassStyle, Some("Showcase")),
-				KeyBinding::new("m", ToggleReduceMotion, Some("Showcase")),
-				KeyBinding::new("u", ToggleUpdateButton, Some("Showcase")),
-				KeyBinding::new("1", ToggleMusicPill, Some("Showcase")),
-				KeyBinding::new("2", ToggleVersionPill, Some("Showcase")),
-				KeyBinding::new("3", ToggleStatusPill, Some("Showcase")),
-				KeyBinding::new("o", ToggleArtwork, Some("Showcase")),
-				KeyBinding::new("h", ToggleLegend, Some("Showcase")),
-				KeyBinding::new("cmd-q", Quit, None),
-				KeyBinding::new("ctrl-q", Quit, None),
-			]);
+			calcite::init(cx);
+			keymap!(cx, {
+				"Home" => {
+					"space" => PrimaryAction,
+					"a" => CycleAccent,
+					"g" => CycleGlass,
+					"m" => ToggleReduceMotion,
+					"u" => ToggleUpdateButton,
+					"1" => ToggleMusicPill,
+					"2" => ToggleVersionPill,
+					"3" => ToggleStatusPill,
+					"o" => ToggleArtwork,
+					"h" => ToggleLegend,
+				},
+				_ => { "cmd-q" => Quit, "ctrl-q" => Quit },
+			});
 			cx.on_action(|_: &Quit, cx| cx.quit());
 			cx.on_window_closed(|cx, _| {
 				if cx.windows().is_empty() {
@@ -716,9 +622,9 @@ fn main() {
 					}),
 					..Default::default()
 				},
-				move |window, cx| cx.new(|cx| Showcase::new(custom_artwork, window, cx)),
+				move |window, cx| cx.new(|cx| Home::new(custom_artwork, window, cx)),
 			)
-			.expect("failed to open the showcase window");
+			.expect("failed to open the home window");
 			cx.activate(true);
 		});
 }

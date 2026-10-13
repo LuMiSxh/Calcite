@@ -6,7 +6,7 @@ its own repository with `git subtree split --prefix proto`.
 
 | Crate            | Contents                                                                                     |
 | ---------------- | -------------------------------------------------------------------------------------------- |
-| `vitro-ui`       | Tokens, Liquid Glass (macOS 26, macOS 27 Clear/Default/Tinted, Reduce Transparency), motion, controls, HUD surfaces, progress outline, icons |
+| `calcite`        | The glass UI library: Liquid Glass styles, spring motion, controls, forms, menus, panels, modals, HUD surfaces, Lucide icons. See [its README](crates/calcite/README.md) |
 | `vitro-exec`     | Execution layer: `TaskSlot`, `ActivityStore` with leases, `Throttle`, `bounded`              |
 | `vitro-showcase` | `home` (launcher home screen with a simulated install) and `gallery` (every component once) |
 | `patches/`       | The gpui-ce patch that adds `Filter::Glass`, and the pinned gpui-ce commit                    |
@@ -72,7 +72,7 @@ more for the normal) and three backdrop samples. There is no extra render pass. 
 shaders once in Rust (`wgsl_rs`) and generates WGSL, MSL, and HLSL at build time. So the same glass
 code runs on Metal, Direct3D 11, and wgpu.
 
-`vitro-ui/src/glass.rs` chooses the parameters per system look:
+`calcite/src/glass.rs` chooses the parameters per system look:
 
 | Style               | Backplate (neutral / chromatic, minimum tint) | Blur | Refraction | Notes                                    |
 | ------------------- | --------------------------------------------- | ---: | ---------: | ---------------------------------------- |
@@ -114,9 +114,8 @@ slot before it ends the lease.
 
 ## Known gaps
 
-- gpui-ce has no element scale. Press feedback dims the control instead of scaling it to 0.95.
-- Filter parameters do not animate. The pointer light and the hover fill appear at once.
-- Under Reduce Motion, SwiftUI pins the pointer light to the center. Vitro hides it instead.
-- AccessKit labels are not wired yet.
+- Under Reduce Motion, SwiftUI pins the pointer light to the center. Calcite hides it instead.
 - The parameters are tuned against renders on Linux, not against macOS 26/27 screenshots. Tune them
   on a Mac next.
+- Calcite needs the patched gpui-ce. Push it to a fork with `scripts/publish-gpui-fork.sh` before
+  you use Calcite as a Git dependency.

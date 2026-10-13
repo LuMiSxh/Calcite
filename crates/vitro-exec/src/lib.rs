@@ -6,230 +6,54 @@
 //! results reach state only through `Entity::update`. Each type maps one-to-one to a
 //! Swift counterpart in Arknights Client, so a feature reads the same on both sides:
 //!
-//! | Rust              | Swift                                  | Contract                                         |
-//! | ----------------- | -------------------------------------- | ------------------------------------------------ |
-//! | [`TaskSlot`]      | `TaskSlot`                             | Replacing work cancels it; stale results lose.   |
-//! | [`ActivityStore`] | `LauncherLifecycleStore` + `ActivityLease` | One exclusive activity; a stale lease changes nothing. |
-//! | [`Throttle`]      | progress throttling (~10 Hz)           | High-frequency values reach the UI at a bound rate. |
-//! | [`bounded`]       | windowed task group + `AppConstants` limit | Seed N, add one per completion; never unbounded. |
+//! | Rust                                   | Swift                                        |
+//! | -------------------------------------- | -------------------------------------------- |
+//! | [`TaskSlot`], [`Job`]                  | `TaskSlot` (`replace`, `owns`, `invalidate`) |
+//! | [`ActivityStore`], [`ActivityLease`]   | `LauncherLifecycleStore`, `ActivityLease`    |
+//! | [`Throttle`]                           | progress throttling to about 10 Hz           |
+//! | [`bounded`]                            | windowed task group with an `AppConstants` limit |
 //!
 //! Rules, as in the Swift code: capture a token or lease before every `await` and check it
-//! after; cancellation alone is not ownership. Call [`TaskSlot::invalidate`] before you clear
-//! or replace the state that work would publish into.
+//! after; cancellation alone is not ownership. [`Job`] does the check on every publish, and
+//! `?` on [`Stale`] ends replaced work quietly. Call [`TaskSlot::invalidate`] before you
+//! clear or replace the state that work would publish into.
+//!
+//! ```ignore
+//! use vitro_exec::prelude::*;
+//!
+//! fn start(&mut self, cx: &mut Context<Self>) {
+//!     let Some(lease) = self.activity.begin(Activity::Downloading) else { return };
+//!     self.download.run(cx, |view| &mut view.download, async move |job| {
+//!         job.guard(move |view: &Self| view.activity.holds(lease));
+//!         let mut throttle = Throttle::progress();
+//!         for step in 1..=100 {
+//!             job.sleep(Duration::from_millis(20)).await;
+//!             job.update_throttled(&mut throttle, |view, cx| {
+//!                 view.progress = step as f32 / 100.;
+//!                 cx.notify();
+//!             })?;
+//!         }
+//!         job.update(|view, cx| {
+//!             view.activity.end(lease);
+//!             cx.notify();
+//!         })
+//!     });
+//! }
+//! ```
 
-use std::{
-	future::Future,
-	time::{Duration, Instant},
-};
+mod activity;
+mod bounded;
+mod slot;
+mod throttle;
 
-use futures::{StreamExt, stream};
-use gpui::{AsyncApp, Context, Task, WeakEntity};
+pub use activity::{ActivityLease, ActivityStore};
+pub use bounded::bounded;
+pub use slot::{Job, JobResult, SlotSelector, SlotToken, Stale, TaskSlot};
+pub use throttle::Throttle;
 
-// MARK: - TaskSlot
-
-/// Identity of one run of a [`TaskSlot`]. Compare it with [`TaskSlot::owns`] after each
-/// suspension before publishing anything.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct SlotToken(u64);
-
-/// Owns at most one in-flight task and rejects results from replaced or invalidated work.
-#[derive(Default)]
-pub struct TaskSlot {
-	task: Option<Task<()>>,
-	current: u64,
-	active: bool,
-}
-
-impl TaskSlot {
-	pub fn new() -> Self {
-		Self::default()
-	}
-
-	/// Cancels the running task and returns a fresh token for work the caller runs itself.
-	pub fn begin(&mut self) -> SlotToken {
-		// Dropping a GPUI task cancels it at its next suspension point.
-		self.task = None;
-		self.current += 1;
-		self.active = true;
-		SlotToken(self.current)
-	}
-
-	/// Cancels the running task and starts `operation` under a fresh token. The task lives as
-	/// long as the slot, so dropping the view also cancels it.
-	pub fn replace<V, F>(&mut self, cx: &mut Context<V>, operation: F) -> SlotToken
-	where
-		V: 'static,
-		F: AsyncFnOnce(SlotToken, WeakEntity<V>, &mut AsyncApp) + 'static,
-	{
-		let token = self.begin();
-		self.task = Some(cx.spawn(async move |this, cx| operation(token, this, cx).await));
-		token
-	}
-
-	pub fn owns(&self, token: SlotToken) -> bool {
-		self.active && self.current == token.0
-	}
-
-	pub fn is_running(&self) -> bool {
-		self.active && self.task.is_some()
-	}
-
-	/// Marks the slot idle once its work finished normally. A stale token changes nothing.
-	pub fn finish(&mut self, token: SlotToken) -> bool {
-		if !self.owns(token) {
-			return false;
-		}
-		self.active = false;
-		self.task = None;
-		true
-	}
-
-	/// Cancels the running task and makes every outstanding token stale.
-	pub fn invalidate(&mut self) {
-		self.task = None;
-		self.active = false;
-		self.current += 1;
-	}
-}
-
-/// Publishes into the view only while `token` still owns the slot that `slot` selects.
-/// Returns `false` when the view is gone or the work was replaced or invalidated.
-pub fn publish<V: 'static>(
-	this: &WeakEntity<V>,
-	cx: &mut AsyncApp,
-	slot: impl FnOnce(&V) -> &TaskSlot,
-	token: SlotToken,
-	update: impl FnOnce(&mut V, &mut Context<V>),
-) -> bool {
-	this.update(cx, |view, cx| {
-		if !slot(view).owns(token) {
-			return false;
-		}
-		update(view, cx);
-		true
-	})
-	.unwrap_or(false)
-}
-
-// MARK: - Activity leases
-
-/// Proof that one operation owns the exclusive activity. The store rejects any change that
-/// carries a lease it did not issue last.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ActivityLease(u64);
-
-/// One exclusive activity at a time (install, launch, run, stop...). `A::default()` is idle.
-#[derive(Debug, Default)]
-pub struct ActivityStore<A> {
-	activity: A,
-	lease: Option<ActivityLease>,
-	issued: u64,
-}
-
-impl<A: Clone + Default + PartialEq> ActivityStore<A> {
-	pub fn new() -> Self {
-		Self {
-			activity: A::default(),
-			lease: None,
-			issued: 0,
-		}
-	}
-
-	pub fn activity(&self) -> &A {
-		&self.activity
-	}
-
-	pub fn is_idle(&self) -> bool {
-		self.lease.is_none()
-	}
-
-	/// Claims the exclusive activity. Returns `None` while another activity runs.
-	pub fn begin(&mut self, activity: A) -> Option<ActivityLease> {
-		if self.lease.is_some() {
-			return None;
-		}
-		self.issued += 1;
-		let lease = ActivityLease(self.issued);
-		self.lease = Some(lease);
-		self.activity = activity;
-		Some(lease)
-	}
-
-	/// Changes the activity for the lease holder. A stale lease changes nothing.
-	pub fn update(&mut self, lease: ActivityLease, activity: A) -> bool {
-		if self.lease != Some(lease) {
-			return false;
-		}
-		self.activity = activity;
-		true
-	}
-
-	/// Releases the activity for the lease holder. A stale lease never sets idle.
-	pub fn end(&mut self, lease: ActivityLease) -> bool {
-		if self.lease != Some(lease) {
-			return false;
-		}
-		self.lease = None;
-		self.activity = A::default();
-		true
-	}
-}
-
-// MARK: - Throttle
-
-/// Admits high-frequency values (progress, transfer rates) at a bounded rate. The caller
-/// passes the time, so tests use a manual clock and never sleep.
-#[derive(Clone, Debug)]
-pub struct Throttle {
-	interval: Duration,
-	last: Option<Instant>,
-}
-
-impl Throttle {
-	/// About 10 Hz: what a small leaf view should redraw for per-tick progress.
-	pub const PROGRESS: Duration = Duration::from_millis(100);
-
-	pub fn new(interval: Duration) -> Self {
-		Self { interval, last: None }
-	}
-
-	pub fn progress() -> Self {
-		Self::new(Self::PROGRESS)
-	}
-
-	/// Whether a value produced at `now` should reach the UI. Final values bypass it via
-	/// [`Throttle::force`].
-	pub fn admit(&mut self, now: Instant) -> bool {
-		match self.last {
-			Some(last) if now.saturating_duration_since(last) < self.interval => false,
-			_ => {
-				self.last = Some(now);
-				true
-			}
-		}
-	}
-
-	/// Admits a value unconditionally, for example the final 100 %.
-	pub fn force(&mut self, now: Instant) {
-		self.last = Some(now);
-	}
-}
-
-// MARK: - Bounded parallelism
-
-/// Runs `work` for every item with at most `limit` futures in flight: it seeds `limit` and
-/// starts one more per completion. Results arrive in completion order.
-pub async fn bounded<I, T, F, Fut>(limit: usize, items: I, work: F) -> Vec<T>
-where
-	I: IntoIterator,
-	F: FnMut(I::Item) -> Fut,
-	Fut: Future<Output = T>,
-{
-	stream::iter(items)
-		.map(work)
-		.buffer_unordered(limit.max(1))
-		.collect()
-		.await
+/// Everything a view needs to run work: `use vitro_exec::prelude::*;`.
+pub mod prelude {
+	pub use crate::{ActivityLease, ActivityStore, Job, JobResult, Stale, TaskSlot, Throttle, bounded};
 }
 
 #[cfg(test)]
@@ -239,6 +63,8 @@ mod tests {
 		rc::Rc,
 		time::{Duration, Instant},
 	};
+
+	use gpui::AppContext as _;
 
 	use super::*;
 
@@ -316,5 +142,80 @@ mod tests {
 		}));
 		assert_eq!(results.len(), 12);
 		assert_eq!(peak.get(), 3);
+	}
+
+	struct Counter {
+		slot: TaskSlot,
+		value: u32,
+	}
+
+	#[gpui::test]
+	async fn replaced_work_cannot_publish_and_the_slot_turns_idle(cx: &mut gpui::TestAppContext) {
+		let view = cx.new(|_| Counter {
+			slot: TaskSlot::new(),
+			value: 0,
+		});
+		view.update(cx, |counter, cx| {
+			counter.slot.run(
+				cx,
+				|counter| &mut counter.slot,
+				async move |job| {
+					job.sleep(Duration::from_millis(10)).await;
+					job.update(|counter, _| counter.value = 1)
+				},
+			);
+		});
+		view.update(cx, |counter, cx| {
+			counter.slot.run(
+				cx,
+				|counter| &mut counter.slot,
+				async move |job| {
+					job.sleep(Duration::from_millis(20)).await;
+					job.update(|counter, _| counter.value = 2)
+				},
+			);
+		});
+		cx.executor().advance_clock(Duration::from_millis(50));
+		cx.run_until_parked();
+		view.read_with(cx, |counter, _| {
+			assert_eq!(counter.value, 2);
+			assert!(!counter.slot.is_running());
+		});
+	}
+
+	#[gpui::test]
+	async fn a_failed_guard_stops_publishing(cx: &mut gpui::TestAppContext) {
+		#[derive(Clone, Default, PartialEq)]
+		enum Work {
+			#[default]
+			Idle,
+			Busy,
+		}
+		struct View {
+			slot: TaskSlot,
+			activity: ActivityStore<Work>,
+			published: bool,
+		}
+		let view = cx.new(|_| View {
+			slot: TaskSlot::new(),
+			activity: ActivityStore::new(),
+			published: false,
+		});
+		view.update(cx, |view, cx| {
+			let lease = view.activity.begin(Work::Busy).unwrap();
+			view.slot.run(
+				cx,
+				|view| &mut view.slot,
+				async move |job| {
+					job.guard(move |view: &View| view.activity.holds(lease));
+					job.sleep(Duration::from_millis(10)).await;
+					job.update(|view, _| view.published = true)
+				},
+			);
+			view.activity.end(lease);
+		});
+		cx.executor().advance_clock(Duration::from_millis(20));
+		cx.run_until_parked();
+		view.read_with(cx, |view, _| assert!(!view.published));
 	}
 }

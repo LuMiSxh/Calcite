@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/vitro-ui", "crates/vitro-exec", "crates/vitro-showcase"]
+members = ["crates/calcite", "crates/vitro-exec", "crates/vitro-showcase"]
 default-members = ["crates/vitro-showcase"]
 exclude = ["vendor"]
 
@@ -15,9 +15,12 @@ publish = false
 # Run scripts/bootstrap.sh (macOS, Linux) or scripts/bootstrap.ps1 (Windows) first.
 gpui = { package = "gpui-ce", path = "vendor/gpui-ce/crates/gpui", features = ["image-default-formats"] }
 gpui_platform = { package = "gpui_ce_platform", path = "vendor/gpui-ce/crates/gpui_platform", features = ["font-kit", "wayland", "x11"] }
+gpui_ce_elements = { path = "vendor/gpui-ce/crates/gpui_elements" }
 futures = "0.3"
-vitro-ui = { path = "crates/vitro-ui" }
+calcite = { path = "crates/calcite" }
 vitro-exec = { path = "crates/vitro-exec" }
 
 [profile.dev.package."*"]
 opt-level = 2
+# Dependencies build without debug info: it keeps target/ small and links faster.
+debug = false
