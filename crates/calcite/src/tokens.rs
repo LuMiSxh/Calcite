@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Design tokens ported from `LauncherVisuals.swift` and `AppConstants.swift`.
+//! Design tokens ported from `LauncherVisuals.swift` and `AppConstants.swift`: radii,
+//! opacities, type sizes, and color math. Colors live in [`Palette`](crate::palette::Palette).
 //!
 //! Colors stay in straight (non-premultiplied) sRGB so that the glass module can
 //! composite the macOS 27 layer stack into one fill.
@@ -21,20 +22,6 @@ pub const fn black(a: f32) -> Rgba {
 
 pub const CLEAR: Rgba = rgba(0., 0., 0., 0.);
 
-/// Fallback accent. Use it only when no artwork or theme accent exists.
-pub const CYAN: Rgba = rgba(0.094, 0.82, 1., 1.);
-pub const CONTROL_TINT: Rgba = rgba(0.72, 0.74, 0.77, 1.);
-/// macOS 27 replaces near-neutral border tints with this quieter neutral.
-pub const QUIET_CONTROL_TINT: Rgba = rgba(0.58, 0.61, 0.65, 1.);
-pub const HAIRLINE: Rgba = white(0.12);
-pub const DANGER: Rgba = rgba(0.69, 0.141, 0.231, 1.);
-pub const DANGER_FOREGROUND: Rgba = rgba(0.98, 0.42, 0.48, 1.);
-pub const WARNING: Rgba = rgba(0.91, 0.61, 0.21, 1.);
-pub const SUCCESS: Rgba = rgba(0.28, 0.78, 0.55, 1.);
-pub const ARTWORK_FALLBACK: Rgba = rgba(0.035, 0.04, 0.045, 1.);
-pub const SECONDARY_TEXT: Rgba = white(0.55);
-pub const PRIMARY_TEXT: Rgba = white(0.92);
-
 pub mod radius {
 	use super::*;
 	pub const CONTROL: Pixels = px(10.);
@@ -49,10 +36,6 @@ pub mod control {
 	pub const COMPACT_HORIZONTAL_PADDING: f32 = 10.;
 	pub const COMPACT_VERTICAL_PADDING: f32 = 5.;
 	pub const SEMANTIC_BORDER_OPACITY: f32 = 0.28;
-	pub const PANEL_BORDER: gpui::Rgba = super::white(0.08);
-	pub const NAVIGATION_HOVER_FILL: gpui::Rgba = super::white(0.06);
-	pub const NAVIGATION_RAIL_BACKGROUND: gpui::Rgba = super::black(0.28);
-	pub const MODAL_BACKGROUND: gpui::Rgba = super::rgba(0.07, 0.07, 0.08, 1.);
 	pub const OVERLAY_DIM: f32 = 0.55;
 	pub const ENABLED_NEUTRAL_SURFACE_OPACITY: f32 = 0.07;
 	pub const DISABLED_NEUTRAL_SURFACE_OPACITY: f32 = 0.025;
@@ -66,8 +49,6 @@ pub mod control {
 	pub const HUD_HOVER_SURFACE_OPACITY: f32 = 0.06;
 	pub const DISABLED_FOREGROUND_OPACITY: f32 = 0.44;
 	pub const DISABLED_NEUTRAL_FOREGROUND_OPACITY: f32 = 0.36;
-	pub const OPAQUE_NEUTRAL_SURFACE: gpui::Rgba = super::rgba(0.13, 0.14, 0.16, 1.);
-	pub const OPAQUE_DISABLED_SURFACE: gpui::Rgba = super::rgba(0.094, 0.098, 0.114, 1.);
 }
 
 /// Point sizes of the macOS text styles the launcher uses.
@@ -189,15 +170,6 @@ pub fn hue(color: Rgba) -> f32 {
 	h / 6.
 }
 
-/// Port of `ExtractedAccent.backgroundTint`: the HUD glass tint stays near black and takes
-/// a whisper of the accent hue.
-pub fn hud_tint_for(accent: Option<Rgba>) -> Rgba {
-	match accent {
-		Some(accent) if is_chromatic(accent) => hsb(hue(accent), 0.1, 0.1, 0.52),
-		_ => black(0.52),
-	}
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -207,10 +179,5 @@ mod tests {
 		let fill = stack(&[white(0.06), black(0.68)]);
 		assert!((fill.alpha - 0.6992).abs() < 1e-4);
 		assert!((fill.red - 0.0192 / 0.6992).abs() < 1e-4);
-	}
-
-	#[test]
-	fn hud_tint_is_not_chromatic() {
-		assert!(!is_chromatic(hud_tint_for(Some(CYAN))));
 	}
 }

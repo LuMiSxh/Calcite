@@ -19,7 +19,7 @@
 //! clear or replace the state that work would publish into.
 //!
 //! ```ignore
-//! use vitro_exec::prelude::*;
+//! use calcite_exec::prelude::*;
 //!
 //! fn start(&mut self, cx: &mut Context<Self>) {
 //!     let Some(lease) = self.activity.begin(Activity::Downloading) else { return };
@@ -51,7 +51,7 @@ pub use bounded::bounded;
 pub use slot::{Job, JobResult, SlotSelector, SlotToken, Stale, TaskSlot};
 pub use throttle::Throttle;
 
-/// Everything a view needs to run work: `use vitro_exec::prelude::*;`.
+/// Everything a view needs to run work: `use calcite_exec::prelude::*;`.
 pub mod prelude {
 	pub use crate::{ActivityLease, ActivityStore, Job, JobResult, Stale, TaskSlot, Throttle, bounded};
 }

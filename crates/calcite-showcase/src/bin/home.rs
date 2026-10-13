@@ -11,12 +11,14 @@ use std::{
 };
 
 use calcite::{UI_FONT, prelude::*, tokens::hud};
+use calcite_exec::prelude::*;
+use calcite_showcase::artwork::{
+	Artwork, SLASH_ASSET, SLASH_SVG, artwork_layer, readability_field, wordmark,
+};
 use gpui::{
 	App, Bounds, Context, FocusHandle, FontWeight, IntoElement, MouseButton, SharedString, Task,
 	TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgba, size,
 };
-use vitro_exec::prelude::*;
-use vitro_showcase::artwork::{Artwork, SLASH_ASSET, SLASH_SVG, artwork_layer, readability_field, wordmark};
 
 actions!(
 	home,
@@ -284,6 +286,7 @@ impl Home {
 	}
 
 	fn pill_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+		let theme = cx.theme();
 		let receded = |pill: Pill| self.expanded.is_some() && self.expanded != Some(pill);
 		let now = SystemTime::now()
 			.duration_since(UNIX_EPOCH)
@@ -308,7 +311,7 @@ impl Home {
 				.gap(px(8.))
 				.child(
 					div()
-						.text_color(tokens::SECONDARY_TEXT)
+						.text_color(theme.palette.secondary_text)
 						.child("Playing from YouTube · fades out when the game starts"),
 				)
 				.child(
@@ -347,7 +350,7 @@ impl Home {
 				.gap(px(8.))
 				.child(
 					div()
-						.text_color(tokens::SECONDARY_TEXT)
+						.text_color(theme.palette.secondary_text)
 						.child("Installed 2.6.81 · Latest 2.6.81"),
 				)
 				.child(
@@ -382,7 +385,7 @@ impl Home {
 				.child(div().font_weight(FontWeight::SEMIBOLD).child(region_name))
 				.child(
 					div()
-						.text_color(tokens::SECONDARY_TEXT)
+						.text_color(theme.palette.secondary_text)
 						.child(countdown(now, reset_hour)),
 				),
 		)
@@ -422,7 +425,7 @@ impl Home {
 						.text_color(accent)
 						.child(key),
 				)
-				.child(div().text_color(tokens::PRIMARY_TEXT).child(label))
+				.child(div().text_color(theme.palette.primary_text).child(label))
 		};
 		glass_panel(theme)
 			.absolute()
@@ -507,7 +510,7 @@ impl Render for Home {
 			.overflow_hidden()
 			.bg(gpui::black())
 			.font_family(UI_FONT)
-			.text_color(tokens::PRIMARY_TEXT)
+			.text_color(theme.palette.primary_text)
 			.track_focus(&self.focus)
 			.key_context("Home")
 			.on_action(cx.listener(|this, _: &PrimaryAction, _, cx| this.primary_action(cx)))

@@ -1,14 +1,14 @@
 # Calcite
 
 Calcite is a glass UI library on [gpui-ce](https://github.com/gpui-ce/gpui-ce). This workspace
-holds the library, the Vitro execution layer, and the Vitro showcase. It started as the Rust study
+holds the library, its execution layer, and the showcase. It started as the Rust study
 for [Arknights Client](https://github.com/LuMiSxh/Arknights-MacOS-Client) and does not depend on it.
 
 | Crate            | Contents                                                                                     |
 | ---------------- | -------------------------------------------------------------------------------------------- |
 | `calcite`        | The glass UI library: Liquid Glass styles, spring motion, controls, forms, menus, panels, modals, HUD surfaces, Lucide icons. See [its README](crates/calcite/README.md) |
-| `vitro-exec`     | Execution layer: `TaskSlot`, `ActivityStore` with leases, `Throttle`, `bounded`              |
-| `vitro-showcase` | `home` (launcher home screen with a simulated install) and `gallery` (every component once) |
+| `calcite-exec`     | Execution layer: `TaskSlot`, `ActivityStore` with leases, `Throttle`, `bounded`              |
+| `calcite-showcase` | `home` (launcher home screen with a simulated install) and `gallery` (every component once) |
 | `patches/`       | The gpui-ce patch that adds `Filter::Glass`, and the pinned gpui-ce commit                    |
 
 ## Set up and run
@@ -88,7 +88,7 @@ with the same light and no lensing.
 
 ## Execution layer
 
-`vitro-exec` adds no runtime of its own. Work runs as ordinary GPUI tasks owned by a view. Results
+`calcite-exec` adds no runtime of its own. Work runs as ordinary GPUI tasks owned by a view. Results
 reach state only through `Entity::update`. Each type maps to one Swift type in Arknights Client:
 
 | Rust                                       | Swift                                      |

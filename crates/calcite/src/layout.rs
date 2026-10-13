@@ -23,6 +23,7 @@ use crate::{
 	icons::{Icon, IconRef},
 	interaction::spring_value,
 	motion::Curve,
+	palette::Palette,
 	theme::{ActiveTheme, Theme},
 	tokens::{self, control, radius, scale_alpha, white, with_alpha},
 };
@@ -38,19 +39,19 @@ pub enum PanelTone {
 }
 
 impl PanelTone {
-	fn color(self) -> Rgba {
+	fn color(self, palette: &Palette) -> Rgba {
 		match self {
-			Self::Neutral => tokens::PRIMARY_TEXT,
-			Self::Success => tokens::SUCCESS,
-			Self::Warning => tokens::WARNING,
-			Self::Danger => tokens::DANGER_FOREGROUND,
+			Self::Neutral => palette.primary_text,
+			Self::Success => palette.success,
+			Self::Warning => palette.warning,
+			Self::Danger => palette.danger_text,
 		}
 	}
 
-	fn border(self) -> Rgba {
+	fn border(self, palette: &Palette) -> Rgba {
 		match self {
-			Self::Neutral => control::PANEL_BORDER,
-			tone => with_alpha(tone.color(), control::SEMANTIC_BORDER_OPACITY),
+			Self::Neutral => palette.panel_border,
+			tone => with_alpha(tone.color(palette), control::SEMANTIC_BORDER_OPACITY),
 		}
 	}
 }
@@ -70,7 +71,7 @@ pub fn page_header(title: impl Into<SharedString>, subtitle: impl Into<SharedStr
 		.child(
 			div()
 				.text_size(tokens::text::BODY)
-				.text_color(tokens::SECONDARY_TEXT)
+				.text_color(theme.palette.secondary_text)
 				.child(subtitle.into()),
 		)
 		.child(
@@ -86,8 +87,8 @@ pub fn page_header(title: impl Into<SharedString>, subtitle: impl Into<SharedStr
 }
 
 /// A one-pixel row separator (`SettingsHairline`).
-pub fn hairline() -> Div {
-	div().w_full().h(px(1.)).bg(tokens::HAIRLINE)
+pub fn hairline(theme: &Theme) -> Div {
+	div().w_full().h(px(1.)).bg(theme.palette.hairline)
 }
 
 /// A scrolling settings page with its header (`SettingsPage`).
@@ -201,7 +202,7 @@ impl ParentElement for SettingsPanel {
 impl RenderOnce for SettingsPanel {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
-		let color = self.tone.color();
+		let color = self.tone.color(&theme.palette);
 		let shows_content = self.expanded.unwrap_or(true);
 		let rotation = spring_value(
 			(self.id.clone(), "disclosure"),
@@ -243,7 +244,7 @@ impl RenderOnce for SettingsPanel {
 					} else {
 						Icon::ChevronRight
 					}
-					.render(px(10.), tokens::SECONDARY_TEXT),
+					.render(px(10.), theme.palette.secondary_text),
 				)
 				.on_click(on_toggle)
 				.into_any_element(),
@@ -259,7 +260,7 @@ impl RenderOnce for SettingsPanel {
 			.rounded_smoothing_ios()
 			.glass(theme.surface(None).elevation(Elevation::None))
 			.border_1()
-			.border_color(self.tone.border())
+			.border_color(self.tone.border(&theme.palette))
 			.child(header)
 			.when(shows_content, |panel| panel.children(self.children))
 	}
@@ -295,7 +296,8 @@ impl ActionRow {
 }
 
 impl RenderOnce for ActionRow {
-	fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+		let theme = cx.theme();
 		div()
 			.w_full()
 			.flex()
@@ -314,7 +316,7 @@ impl RenderOnce for ActionRow {
 						label.child(
 							div()
 								.text_size(tokens::text::CAPTION)
-								.text_color(tokens::SECONDARY_TEXT)
+								.text_color(theme.palette.secondary_text)
 								.child(detail),
 						)
 					}),
@@ -332,7 +334,7 @@ impl RenderOnce for ActionRow {
 }
 
 /// The Settings navigation rail.
-pub fn nav_rail() -> Div {
+pub fn nav_rail(theme: &Theme) -> Div {
 	div()
 		.h_full()
 		.w(px(200.))
@@ -341,9 +343,9 @@ pub fn nav_rail() -> Div {
 		.gap(px(2.))
 		.p(px(10.))
 		.pt(px(44.))
-		.bg(control::NAVIGATION_RAIL_BACKGROUND)
+		.bg(theme.palette.navigation_rail)
 		.border_r_1()
-		.border_color(tokens::HAIRLINE)
+		.border_color(theme.palette.hairline)
 }
 
 /// One rail entry; the selection carries the accent fill and marker.
@@ -391,7 +393,7 @@ impl RenderOnce for NavItem {
 		let foreground = if self.selected {
 			accent
 		} else {
-			tokens::PRIMARY_TEXT
+			theme.palette.primary_text
 		};
 		let selected = self.selected;
 		div()
@@ -418,7 +420,7 @@ impl RenderOnce for NavItem {
 				tokens::CLEAR
 			})
 			.when(!selected, |item| {
-				item.hover(|style| style.bg(control::NAVIGATION_HOVER_FILL))
+				item.hover(|style| style.bg(theme.palette.navigation_hover))
 			})
 			.cursor_pointer()
 			.role(Role::Tab)
@@ -512,11 +514,15 @@ impl RenderOnce for ListRow {
 				div()
 					.flex_1()
 					.font_weight(FontWeight::SEMIBOLD)
-					.text_color(if selected { accent } else { tokens::PRIMARY_TEXT })
+					.text_color(if selected {
+						accent
+					} else {
+						theme.palette.primary_text
+					})
 					.child(self.label),
 			)
 			.when_some(self.value, |row, value| {
-				row.child(div().text_color(tokens::SECONDARY_TEXT).child(value))
+				row.child(div().text_color(theme.palette.secondary_text).child(value))
 			})
 	}
 }
@@ -618,7 +624,7 @@ impl RenderOnce for DocumentLink {
 					.text_color(Curve::Hover.transition(reduce_motion))
 			})
 			.hover(move |style| style.bg(hover_fill).text_color(accent))
-			.child(self.icon.render(px(13.), tokens::SECONDARY_TEXT))
+			.child(self.icon.render(px(13.), theme.palette.secondary_text))
 			.child(div().flex_1().child(self.title))
 			.child(Icon::ChevronRight.render(px(9.), white(0.32)))
 			.when_some(self.on_click, |row, on_click| row.on_click(on_click))
@@ -633,7 +639,7 @@ pub fn glass_panel(theme: &Theme) -> Div {
 		.rounded_smoothing_ios()
 		.glass(theme.hud_surface().elevation(Elevation::Raised))
 		.border_1()
-		.border_color(scale_alpha(tokens::HAIRLINE, control::HUD_BORDER_OPACITY))
+		.border_color(scale_alpha(theme.palette.hairline, control::HUD_BORDER_OPACITY))
 }
 
 theme_override!(SettingsPage, SettingsPanel, NavItem, ListRow, Link, DocumentLink);

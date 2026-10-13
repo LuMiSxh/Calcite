@@ -1,5 +1,5 @@
 [package]
-name = "vitro-exec"
+name = "calcite-exec"
 description = "Minimal execution layer for gpui-ce views: task slots, activity leases, progress throttling, bounded parallelism"
 version.workspace = true
 edition.workspace = true

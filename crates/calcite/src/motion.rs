@@ -103,6 +103,24 @@ impl Curve {
 		}
 	}
 
+	/// How long the curve runs; springs report their settle time.
+	pub fn duration(self) -> Duration {
+		match self.kind() {
+			Kind::Spring { duration, .. } => Duration::from_secs_f32(duration * 1.6),
+			Kind::Eased { duration, .. } => Duration::from_secs_f32(duration),
+		}
+	}
+
+	/// Progress from 0 to 1 after `elapsed`, for values a view samples itself (colors,
+	/// theme transitions). Springs ease in and out over their settle time.
+	pub fn progress(self, elapsed: Duration) -> f32 {
+		let t = (elapsed.as_secs_f32() / self.duration().as_secs_f32()).clamp(0., 1.);
+		match self.kind() {
+			Kind::Eased { easing, .. } => easing(t),
+			Kind::Spring { .. } => ease_in_out(t),
+		}
+	}
+
 	/// Motion for a one-shot `with_animation`, sampled over the spring's settle time.
 	pub fn timed(self, reduce_motion: bool) -> Motion {
 		if reduce_motion {

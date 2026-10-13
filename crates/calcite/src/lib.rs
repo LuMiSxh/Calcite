@@ -36,6 +36,7 @@ pub mod layout;
 pub mod menu;
 pub mod motion;
 pub mod overlay;
+pub mod palette;
 pub mod progress;
 pub mod theme;
 pub mod tokens;
@@ -47,8 +48,17 @@ pub use theme::{ActiveTheme, Theme, ThemedView};
 /// Installs the default theme with the system's Reduce Motion setting, unless the app
 /// installed one already, and binds the text editing keys of [`forms::text_field`].
 pub fn init(cx: &mut gpui::App) {
-	if !cx.has_global::<Theme>() {
-		Theme::set(cx, Theme::from_system(cx));
+	let theme = Theme::from_system(cx);
+	init_with(cx, theme);
+}
+
+/// Like [`init`], with your own theme, for example one built from a `const` [`Palette`].
+/// An existing app theme stays.
+///
+/// [`Palette`]: palette::Palette
+pub fn init_with(cx: &mut gpui::App, theme: Theme) {
+	if !theme::is_installed(cx) {
+		Theme::set_immediately(cx, theme);
 	}
 	use gpui_ce_elements::editable_text::actions::{DEFAULT_INPUT_CONTEXT, default_bindings};
 	cx.bind_keys(default_bindings().as_keybindings(Some(DEFAULT_INPUT_CONTEXT)));
@@ -75,6 +85,7 @@ pub mod prelude {
 		menu::{action_menu, menu_picker},
 		motion::Curve,
 		overlay::{done_button, floating_action_bar, modal, modal_layer},
+		palette::Palette,
 		progress::OutlineMode,
 		tokens,
 	};

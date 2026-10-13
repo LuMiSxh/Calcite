@@ -7,14 +7,28 @@
 mod interactive;
 mod sections;
 
-use calcite::{EditableTextState, UI_FONT, keymap, prelude::*};
+use calcite::{EditableTextState, UI_FONT, keymap, prelude::*, tokens::rgba as color};
+use calcite_showcase::artwork::{SLASH_ASSET, SLASH_SVG};
 use gpui::{
 	App, Bounds, Context, Entity, FocusHandle, IntoElement, ParentElement, Rgba, Styled, TitlebarOptions,
 	Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgba, size,
 };
-use vitro_showcase::artwork::{SLASH_ASSET, SLASH_SVG};
 
-actions!(gallery, [CycleGlass, CycleAccent, ToggleReduceMotion, Quit]);
+actions!(
+	gallery,
+	[CycleGlass, CycleAccent, CyclePalette, ToggleReduceMotion, Quit]
+);
+
+/// A second look, picked at compile time: warm neutrals and an amber fallback accent.
+const EMBER: Palette = Palette {
+	accent: color(0.96, 0.62, 0.30, 1.),
+	control: color(0.78, 0.72, 0.66, 1.),
+	quiet_control: color(0.64, 0.58, 0.52, 1.),
+	backdrop: color(0.05, 0.035, 0.03, 1.),
+	panel_background: color(0.09, 0.07, 0.06, 1.),
+	navigation_rail: color(0.10, 0.05, 0.02, 0.32),
+	..Palette::ARKNIGHTS
+};
 
 pub const WIDTH: f32 = 1480.;
 pub const HEIGHT: f32 = 3060.;
@@ -139,7 +153,10 @@ impl Render for Gallery {
 			.gap(px(30.))
 			.child(sections::section(
 				"Glass styles",
-				format!("G cycles the page style · current: {}", theme.glass.label()),
+				format!(
+					"G cycles the glass · A the accent · P the palette · current: {}",
+					theme.glass.label()
+				),
 				sections::glass_styles(theme),
 			))
 			.child(sections::section(
@@ -170,7 +187,7 @@ impl Render for Gallery {
 			.child(sections::section(
 				"Icons",
 				"icons! macro · built-in Icon set",
-				sections::icons_section(),
+				sections::icons_section(&theme),
 			))
 			.child(sections::section(
 				"Tokens",
@@ -188,13 +205,23 @@ impl Render for Gallery {
 			.relative()
 			.overflow_hidden()
 			.font_family(UI_FONT)
-			.text_color(tokens::PRIMARY_TEXT)
+			.text_color(theme.palette.primary_text)
 			.track_focus(&self.focus)
 			.key_context("Gallery")
 			.on_action(cx.listener(|this, _: &CycleAccent, _, cx| {
 				this.accent_index = (this.accent_index + 1) % accents().len();
 				let accent = accents()[this.accent_index];
 				Theme::update(cx, |theme| *theme = theme.with_accent(accent));
+			}))
+			.on_action(cx.listener(|_, _: &CyclePalette, _, cx| {
+				Theme::update(cx, |theme| {
+					let next = if theme.palette == EMBER {
+						Palette::ARKNIGHTS
+					} else {
+						EMBER
+					};
+					*theme = theme.with_palette(next);
+				})
 			}))
 			.on_action(cx.listener(|_, _: &CycleGlass, _, cx| {
 				Theme::update(cx, |theme| theme.glass = theme.glass.next())
@@ -208,7 +235,7 @@ impl Render for Gallery {
 						.relative()
 						.w_full()
 						.h(px(HEIGHT))
-						.child(sections::backdrop(theme.accent))
+						.child(sections::backdrop(&theme))
 						.child(content),
 				),
 			)
@@ -250,7 +277,7 @@ fn main() {
 		.run(|cx: &mut App| {
 			calcite::init(cx);
 			keymap!(cx, {
-				"Gallery" => { "g" => CycleGlass, "a" => CycleAccent, "m" => ToggleReduceMotion },
+				"Gallery" => { "g" => CycleGlass, "a" => CycleAccent, "p" => CyclePalette, "m" => ToggleReduceMotion },
 				_ => { "cmd-q" => Quit, "ctrl-q" => Quit },
 			});
 			cx.on_action(|_: &Quit, cx| cx.quit());

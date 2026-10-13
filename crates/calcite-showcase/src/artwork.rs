@@ -12,7 +12,10 @@ use gpui::{
 	linear_color_stop, linear_gradient, px,
 };
 
-use calcite::tokens::{self, black, rgba, scale_alpha, white};
+use calcite::{
+	palette::Palette,
+	tokens::{black, rgba, scale_alpha, white},
+};
 
 /// Asset path of the accent slash in the fallback artwork.
 pub const SLASH_ASSET: &str = "artwork/slash.svg";
@@ -53,7 +56,7 @@ fn procedural(accent: Rgba) -> impl IntoElement {
 		.bg(linear_gradient(
 			165.,
 			linear_color_stop(rgba(0.07, 0.10, 0.16, 1.), 0.),
-			linear_color_stop(tokens::ARTWORK_FALLBACK, 1.),
+			linear_color_stop(Palette::ARKNIGHTS.backdrop, 1.),
 		))
 		.child(blob(520., -120., 620., scale_alpha(accent, 0.55), 120.))
 		.child(blob(-140., 300., 520., rgba(0.96, 0.52, 0.18, 0.45), 110.))
@@ -100,7 +103,7 @@ pub fn artwork_layer(artwork: &Artwork, accent: Rgba) -> impl IntoElement {
 		Artwork::Image(path) => div()
 			.absolute()
 			.size_full()
-			.bg(tokens::ARTWORK_FALLBACK)
+			.bg(Palette::ARKNIGHTS.backdrop)
 			.child(img(path.clone()).size_full().object_fit(ObjectFit::Cover))
 			.into_any_element(),
 	}

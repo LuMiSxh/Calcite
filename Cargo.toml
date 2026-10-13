@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/calcite", "crates/vitro-exec", "crates/vitro-showcase"]
-default-members = ["crates/vitro-showcase"]
+members = ["crates/calcite", "crates/calcite-exec", "crates/calcite-tint", "crates/calcite-showcase"]
+default-members = ["crates/calcite-showcase"]
 exclude = ["vendor"]
 
 [workspace.package]
@@ -18,7 +18,8 @@ gpui_platform = { package = "gpui_ce_platform", path = "vendor/gpui-ce/crates/gp
 gpui_ce_elements = { path = "vendor/gpui-ce/crates/gpui_elements" }
 futures = "0.3"
 calcite = { path = "crates/calcite" }
-vitro-exec = { path = "crates/vitro-exec" }
+calcite-exec = { path = "crates/calcite-exec" }
+calcite-tint = { path = "crates/calcite-tint" }
 
 [profile.dev.package."*"]
 opt-level = 2

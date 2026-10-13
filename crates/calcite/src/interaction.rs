@@ -90,7 +90,7 @@ impl ControlState {
 
 	/// The state of the control `id`, kept for as long as the control renders.
 	pub fn of(id: &ElementId, window: &mut Window, cx: &mut App) -> Entity<Self> {
-		window.use_keyed_state((id.clone(), "vitro-control"), cx, |_, _| Self::new())
+		window.use_keyed_state((id.clone(), "calcite-control"), cx, |_, _| Self::new())
 	}
 
 	/// Advances the springs toward the current targets and returns this frame's values.

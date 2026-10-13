@@ -8,11 +8,11 @@ use calcite::{
 	prelude::*,
 	tokens::{radius, rgba, scale_alpha, white},
 };
+use calcite_showcase::artwork::SLASH_ASSET;
 use gpui::{
-	Bounds, FontWeight, IntoElement, ParentElement, PathBuilder, Pixels, Rgba, SharedString, Styled, Window,
-	canvas, div, linear_color_stop, linear_gradient, point, px,
+	App, Bounds, FontWeight, IntoElement, ParentElement, PathBuilder, Pixels, RenderOnce, Rgba, SharedString,
+	Styled, Window, canvas, div, linear_color_stop, linear_gradient, point, px,
 };
-use vitro_showcase::artwork::SLASH_ASSET;
 
 use super::{HEIGHT, WIDTH};
 
@@ -21,6 +21,7 @@ pub fn section(
 	note: impl Into<SharedString>,
 	content: impl IntoElement,
 ) -> impl IntoElement {
+	let note = label(note);
 	div()
 		.flex()
 		.flex_col()
@@ -37,26 +38,32 @@ pub fn section(
 						.font_weight(FontWeight::BOLD)
 						.child(title),
 				)
-				.child(
-					div()
-						.text_size(px(11.))
-						.text_color(tokens::SECONDARY_TEXT)
-						.child(note.into()),
-				),
+				.child(note),
 		)
 		.child(content)
 }
 
-pub fn label(text: impl Into<SharedString>) -> impl IntoElement {
-	div()
-		.text_size(px(10.))
-		.text_color(tokens::SECONDARY_TEXT)
-		.child(text.into())
+/// A caption in the theme's secondary text color.
+#[derive(IntoElement)]
+pub struct Label(SharedString);
+
+pub fn label(text: impl Into<SharedString>) -> Label {
+	Label(text.into())
+}
+
+impl RenderOnce for Label {
+	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+		div()
+			.text_size(px(10.))
+			.text_color(cx.theme().palette.secondary_text)
+			.child(self.0)
+	}
 }
 
 /// A bright, detailed backdrop over the whole page, so every glass surface has something
 /// to refract.
-pub fn backdrop(accent: Rgba) -> impl IntoElement {
+pub fn backdrop(theme: &Theme) -> impl IntoElement {
+	let accent = theme.accent;
 	let blob = |left: f32, top: f32, size: f32, color: Rgba, blur: f32| {
 		div()
 			.absolute()
@@ -74,7 +81,7 @@ pub fn backdrop(accent: Rgba) -> impl IntoElement {
 		.bg(linear_gradient(
 			170.,
 			linear_color_stop(rgba(0.07, 0.10, 0.16, 1.), 0.),
-			linear_color_stop(tokens::ARTWORK_FALLBACK, 1.),
+			linear_color_stop(theme.palette.backdrop, 1.),
 		))
 		.child(blob(900., -160., 700., scale_alpha(accent, 0.6), 130.))
 		.child(blob(-200., 380., 640., rgba(0.96, 0.52, 0.18, 0.45), 120.))
@@ -144,7 +151,10 @@ pub fn glass_styles(theme: Theme) -> impl IntoElement {
 						.rounded_smoothing_ios()
 						.glass(styled.hud_surface().elevation(Elevation::Raised))
 						.border_1()
-						.border_color(scale_alpha(tokens::HAIRLINE, tokens::control::HUD_BORDER_OPACITY))
+						.border_color(scale_alpha(
+							theme.palette.hairline,
+							tokens::control::HUD_BORDER_OPACITY,
+						))
 						.child(
 							div()
 								.text_size(px(13.))
@@ -175,7 +185,7 @@ pub fn glass_styles(theme: Theme) -> impl IntoElement {
 		}))
 }
 
-pub fn icons_section() -> impl IntoElement {
+pub fn icons_section(theme: &Theme) -> impl IntoElement {
 	let tile = |glyph: gpui::Svg, name: &'static str| {
 		div()
 			.w(px(84.))
@@ -219,29 +229,35 @@ pub fn icons_section() -> impl IntoElement {
 			div().flex().flex_row().flex_wrap().gap(px(10.)).children(
 				Icon::ALL
 					.iter()
-					.map(|icon| tile(icon.render(px(20.), tokens::PRIMARY_TEXT), icon.name())),
+					.map(|icon| tile(icon.render(px(20.), theme.palette.primary_text), icon.name())),
 			),
 		)
 		.child(label(format!("Lucide: {} icons, a sample", Lucide::ALL.len())))
 		.child(
-			div().flex().flex_row().flex_wrap().gap(px(10.)).children(
-				lucide
-					.into_iter()
-					.map(|icon| tile(icon.render(px(20.), tokens::PRIMARY_TEXT), IconSet::name(icon))),
-			),
+			div()
+				.flex()
+				.flex_row()
+				.flex_wrap()
+				.gap(px(10.))
+				.children(lucide.into_iter().map(|icon| {
+					tile(
+						icon.render(px(20.), theme.palette.primary_text),
+						IconSet::name(icon),
+					)
+				})),
 		)
 }
 
 pub fn tokens_section(theme: Theme) -> impl IntoElement {
 	let swatches = [
 		("Accent", theme.accent),
-		("Cyan fallback", tokens::CYAN),
-		("Control tint", tokens::CONTROL_TINT),
-		("Quiet tint", tokens::QUIET_CONTROL_TINT),
-		("Success", tokens::SUCCESS),
-		("Warning", tokens::WARNING),
-		("Danger", tokens::DANGER),
-		("Danger text", tokens::DANGER_FOREGROUND),
+		("Cyan fallback", theme.palette.accent),
+		("Control tint", theme.palette.control),
+		("Quiet tint", theme.palette.quiet_control),
+		("Success", theme.palette.success),
+		("Warning", theme.palette.warning),
+		("Danger", theme.palette.danger),
+		("Danger text", theme.palette.danger_text),
 		("HUD tint", theme.hud_tint),
 	];
 	let type_ramp = [

@@ -101,9 +101,9 @@ fn menu_panel(id: ElementId, theme: &Theme, open: Entity<bool>, items: Vec<Item>
 					.rounded_smoothing_ios()
 					.glass(theme.hud_surface().elevation(Elevation::Raised))
 					.border_1()
-					.border_color(scale_alpha(tokens::HAIRLINE, control::HUD_BORDER_OPACITY))
+					.border_color(scale_alpha(theme.palette.hairline, control::HUD_BORDER_OPACITY))
 					.text_size(px(12.))
-					.text_color(tokens::PRIMARY_TEXT)
+					.text_color(theme.palette.primary_text)
 					.role(Role::Menu)
 					.on_mouse_down_out(move |_, _, cx| {
 						close.update(cx, |open, cx| {
@@ -118,7 +118,7 @@ fn menu_panel(id: ElementId, theme: &Theme, open: Entity<bool>, items: Vec<Item>
 								.h(px(1.))
 								.mx(px(6.))
 								.my(px(3.))
-								.bg(tokens::HAIRLINE)
+								.bg(theme.palette.hairline)
 								.into_any_element()
 						});
 						let action = item.action.clone();
@@ -139,7 +139,7 @@ fn menu_panel(id: ElementId, theme: &Theme, open: Entity<bool>, items: Vec<Item>
 								this.child(Icon::Checkmark.render(px(10.), accent))
 							}))
 							.when_some(item.icon, |row, icon| {
-								row.child(icon.render(px(12.), tokens::SECONDARY_TEXT))
+								row.child(icon.render(px(12.), theme.palette.secondary_text))
 							})
 							.child(div().flex_1().child(item.label))
 							.on_click(move |_, window, cx| {

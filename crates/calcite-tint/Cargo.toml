@@ -1,0 +1,9 @@
+[package]
+name = "calcite-tint"
+description = "Dynamic theme colors from artwork: the dominant hue as a legible accent and a near-black background tint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

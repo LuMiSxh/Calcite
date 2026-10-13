@@ -193,6 +193,8 @@ pub struct Glass {
 	pub pointer_tint: Rgba,
 	/// A fill composited above the glass fill, for hover and selection.
 	pub overlay: Option<Rgba>,
+	/// The neutral edge the macOS 27 border falls back to: the palette's quiet control tint.
+	pub quiet_edge: Rgba,
 }
 
 impl Glass {
@@ -205,6 +207,7 @@ impl Glass {
 			pointer: None,
 			pointer_tint: white(1.),
 			overlay: None,
+			quiet_edge: crate::palette::Palette::ARKNIGHTS.quiet_control,
 		}
 	}
 
@@ -324,7 +327,7 @@ impl Glass {
 			}
 			GlassStyle::MacOS27(_) if self.shows_border => {
 				let tint = self.tint.filter(|tint| is_chromatic(*tint));
-				Some(with_alpha(tint.unwrap_or(tokens::QUIET_CONTROL_TINT), 0.72))
+				Some(with_alpha(tint.unwrap_or(self.quiet_edge), 0.72))
 			}
 			_ => None,
 		}
@@ -375,7 +378,10 @@ pub trait GlassExt: Styled + Sized {
 	fn glass_hud(self, theme: &crate::theme::Theme) -> Self {
 		self.glass(theme.hud_surface())
 			.border_1()
-			.border_color(scale_alpha(tokens::HAIRLINE, tokens::control::HUD_BORDER_OPACITY))
+			.border_color(scale_alpha(
+				theme.palette.hairline,
+				tokens::control::HUD_BORDER_OPACITY,
+			))
 	}
 
 	/// Chromatic glass in `tint`, with the semantic edge of an accent surface.

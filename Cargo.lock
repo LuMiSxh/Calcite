@@ -768,6 +768,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "calcite-exec"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "gpui-ce",
+]
+
+[[package]]
+name = "calcite-showcase"
+version = "0.1.0"
+dependencies = [
+ "calcite",
+ "calcite-exec",
+ "gpui-ce",
+ "gpui_ce_platform",
+]
+
+[[package]]
+name = "calcite-tint"
+version = "0.1.0"
+
+[[package]]
 name = "calloop"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5763,24 +5785,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vitro-exec"
-version = "0.1.0"
-dependencies = [
- "futures",
- "gpui-ce",
-]
-
-[[package]]
-name = "vitro-showcase"
-version = "0.1.0"
-dependencies = [
- "calcite",
- "gpui-ce",
- "gpui_ce_platform",
- "vitro-exec",
-]
 
 [[package]]
 name = "vswhom"

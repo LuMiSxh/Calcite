@@ -1,24 +1,33 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The theme every component reads: accent, HUD tint, glass style, and accessibility.
+//! The theme every component reads: palette, accent, HUD tint, glass style, and
+//! accessibility.
 //!
 //! The theme lives in a GPUI global. Components read it with [`ActiveTheme::theme`] and
 //! accept `.theme(...)` to override it, for example to show several styles side by side.
 
-use gpui::{App, Context, Global, Rgba, Window};
+use std::time::{Duration, Instant};
+
+use gpui::{App, AsyncApp, AsyncWindowContext, Context, Global, Rgba, Window};
 
 use crate::{
 	glass::{self, GlassStyle, Transparency},
-	tokens,
+	motion::Curve,
+	palette::Palette,
+	tokens::mix,
 };
 
 /// Values every component reads.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Theme {
-	/// Dynamic accent from the artwork, or [`tokens::CYAN`] as the fallback.
+	/// Every color the components draw with.
+	pub palette: Palette,
+	/// The accent in use: the dynamic accent, or the palette accent without one.
 	pub accent: Rgba,
 	/// Near-black HUD glass tint with a whisper of the accent hue.
 	pub hud_tint: Rgba,
+	/// The dynamic accent, for example from the artwork. `None` uses the palette accent.
+	pub dynamic_accent: Option<Rgba>,
 	pub glass: GlassStyle,
 	pub reduce_motion: bool,
 	/// Accessibility "Show borders" / Increase Contrast.
@@ -30,17 +39,19 @@ pub struct Theme {
 
 impl Default for Theme {
 	fn default() -> Self {
-		Self::new(None)
+		Self::new(Palette::ARKNIGHTS)
 	}
 }
 
-impl Global for Theme {}
-
 impl Theme {
-	pub fn new(accent: Option<Rgba>) -> Self {
+	/// A theme with `palette` and no dynamic accent. Pass a `const` palette to pick the
+	/// look at compile time.
+	pub fn new(palette: Palette) -> Self {
 		Self {
-			accent: accent.unwrap_or(tokens::CYAN),
-			hud_tint: tokens::hud_tint_for(accent),
+			palette,
+			accent: palette.accent,
+			hud_tint: palette.hud_tint,
+			dynamic_accent: None,
 			glass: GlassStyle::MacOS27(Transparency::Default),
 			reduce_motion: false,
 			shows_borders: false,
@@ -56,10 +67,26 @@ impl Theme {
 		}
 	}
 
-	/// Sets the accent and derives the HUD tint from it. `None` uses the fallback cyan.
+	/// Sets the dynamic accent and derives the HUD tint from it. `None` uses the palette
+	/// accent.
 	pub fn with_accent(mut self, accent: Option<Rgba>) -> Self {
-		self.accent = accent.unwrap_or(tokens::CYAN);
-		self.hud_tint = tokens::hud_tint_for(accent);
+		self.dynamic_accent = accent;
+		self.resolve()
+	}
+
+	/// Replaces the palette and keeps the dynamic accent.
+	pub fn with_palette(mut self, palette: Palette) -> Self {
+		self.palette = palette;
+		self.resolve()
+	}
+
+	fn resolve(mut self) -> Self {
+		self.accent = self.dynamic_accent.unwrap_or(self.palette.accent);
+		// Like the launcher: only a dynamic accent tints the HUD; the fallback keeps it neutral.
+		self.hud_tint = match self.dynamic_accent {
+			Some(accent) => self.palette.hud_tint_for(accent),
+			None => self.palette.hud_tint,
+		};
 		self
 	}
 
@@ -76,6 +103,7 @@ impl Theme {
 	pub fn surface(&self, tint: Option<Rgba>) -> glass::Glass {
 		glass::Glass {
 			shows_border: self.shows_borders,
+			quiet_edge: self.palette.quiet_control,
 			..glass::Glass::new(tint, self.glass)
 		}
 	}
@@ -91,28 +119,150 @@ impl Theme {
 		!self.reduce_motion && !self.pauses_decorative_motion && window.is_window_active()
 	}
 
-	/// Installs `theme` as the app theme and redraws every window.
+	/// This theme part of the way toward `to`: colors mix, everything else is `to`'s.
+	pub fn mix(&self, to: &Self, t: f32) -> Self {
+		Self {
+			palette: self.palette.mix(&to.palette, t),
+			accent: mix(self.accent, to.accent, t),
+			hud_tint: mix(self.hud_tint, to.hud_tint, t),
+			..*to
+		}
+	}
+
+	/// Installs `theme` as the app theme. Color changes crossfade over
+	/// [`Curve::Crossfade`]; under Reduce Motion they apply at once.
 	pub fn set(cx: &mut App, theme: Theme) {
-		cx.set_global(theme);
+		let from = cx.theme();
+		let animates = !theme.reduce_motion && cx.has_global::<ThemeState>() && from != theme;
+		if !animates {
+			return Self::set_immediately(cx, theme);
+		}
+		let generation = cx.try_global::<ThemeState>().map_or(0, |state| state.generation) + 1;
+		cx.set_global(ThemeState {
+			from,
+			to: theme,
+			started: Instant::now(),
+			generation,
+		});
+		cx.refresh_windows();
+		// Redraw every frame until the crossfade ends or a newer change replaces it.
+		cx.spawn(async move |cx| {
+			loop {
+				cx.background_executor().timer(FRAME).await;
+				let running = cx.update(|cx| {
+					let Some(state) = cx.try_global::<ThemeState>() else {
+						return false;
+					};
+					if state.generation != generation {
+						return false;
+					}
+					let running = state.started.elapsed() < CROSSFADE.duration();
+					cx.refresh_windows();
+					running
+				});
+				if !running {
+					break;
+				}
+			}
+		})
+		.detach();
+	}
+
+	/// Installs `theme` without a transition.
+	pub fn set_immediately(cx: &mut App, theme: Theme) {
+		let generation = cx.try_global::<ThemeState>().map_or(0, |state| state.generation) + 1;
+		cx.set_global(ThemeState {
+			from: theme,
+			to: theme,
+			started: Instant::now(),
+			generation,
+		});
 		cx.refresh_windows();
 	}
 
-	/// Changes the app theme in place and redraws every window.
+	/// Changes the app theme in place, starting from the theme it is heading to.
 	pub fn update(cx: &mut App, update: impl FnOnce(&mut Theme)) {
-		let mut theme = cx.theme();
+		let mut theme = cx.target_theme();
 		update(&mut theme);
 		Self::set(cx, theme);
 	}
+
+	/// Sets only the dynamic accent, for example the color picked from the artwork. The HUD
+	/// tint takes its hue; the palette stays.
+	pub fn set_dynamic_accent(cx: &mut App, accent: Option<Rgba>) {
+		Self::update(cx, |theme| *theme = theme.with_accent(accent));
+	}
 }
 
-/// Reads the app theme from any context.
+const CROSSFADE: Curve = Curve::Crossfade;
+const FRAME: Duration = Duration::from_millis(16);
+
+/// Whether the app has a theme yet.
+pub(crate) fn is_installed(cx: &App) -> bool {
+	cx.has_global::<ThemeState>()
+}
+
+/// The app theme and the crossfade toward it.
+struct ThemeState {
+	from: Theme,
+	to: Theme,
+	started: Instant,
+	generation: u64,
+}
+
+impl Global for ThemeState {}
+
+impl ThemeState {
+	fn current(&self) -> Theme {
+		let t = CROSSFADE.progress(self.started.elapsed());
+		if t >= 1. {
+			self.to
+		} else {
+			self.from.mix(&self.to, t)
+		}
+	}
+}
+
+/// Reads the app theme from any GPUI context: `App`, `Context<V>` (through `App`),
+/// `AsyncApp`, and `AsyncWindowContext`.
 pub trait ActiveTheme {
+	/// The theme to draw with now, part of the way through a crossfade.
 	fn theme(&self) -> Theme;
+	/// The theme a running crossfade is heading to.
+	fn target_theme(&self) -> Theme;
 }
 
 impl ActiveTheme for App {
 	fn theme(&self) -> Theme {
-		self.try_global::<Theme>().copied().unwrap_or_default()
+		self.try_global::<ThemeState>()
+			.map(ThemeState::current)
+			.unwrap_or_default()
+	}
+
+	fn target_theme(&self) -> Theme {
+		self.try_global::<ThemeState>()
+			.map(|state| state.to)
+			.unwrap_or_default()
+	}
+}
+
+impl ActiveTheme for AsyncApp {
+	fn theme(&self) -> Theme {
+		self.update(|cx| cx.theme())
+	}
+
+	fn target_theme(&self) -> Theme {
+		self.update(|cx| cx.target_theme())
+	}
+}
+
+impl ActiveTheme for AsyncWindowContext {
+	fn theme(&self) -> Theme {
+		(**self).theme()
+	}
+
+	fn target_theme(&self) -> Theme {
+		(**self).target_theme()
 	}
 }
 

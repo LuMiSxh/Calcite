@@ -1,6 +1,6 @@
 [package]
-name = "vitro-showcase"
-description = "Showcase and component gallery for Calcite and vitro-exec"
+name = "calcite-showcase"
+description = "Showcase and component gallery for Calcite and calcite-exec"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,4 +18,4 @@ path = "src/bin/gallery/main.rs"
 gpui.workspace = true
 gpui_platform.workspace = true
 calcite.workspace = true
-vitro-exec.workspace = true
+calcite-exec.workspace = true

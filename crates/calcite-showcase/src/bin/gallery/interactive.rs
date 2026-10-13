@@ -220,7 +220,7 @@ impl Gallery {
 
 	pub fn settings_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
 		let theme = cx.theme();
-		let rail = nav_rail()
+		let rail = nav_rail(&theme)
 			.pt(px(14.))
 			.children(Page::ALL.iter().enumerate().map(|(index, page)| {
 				nav_item(
@@ -261,7 +261,7 @@ impl Gallery {
 							)
 							.action(button("check-now", "Check Now").accent().compact()),
 					)
-					.child(hairline())
+					.child(hairline(&theme))
 					.child(
 						action_row("Release channel")
 							.detail("Canary features stay opt-in")
@@ -294,11 +294,11 @@ impl Gallery {
 			.overflow_hidden()
 			.rounded(tokens::radius::MODAL)
 			.bg(calcite::tokens::stack(&[
-				tokens::control::MODAL_BACKGROUND,
+				theme.palette.panel_background,
 				theme.hud_tint,
 			]))
 			.border_1()
-			.border_color(tokens::HAIRLINE)
+			.border_color(theme.palette.hairline)
 			.child(rail)
 			.child(page)
 	}

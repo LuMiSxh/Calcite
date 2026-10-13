@@ -133,9 +133,9 @@ impl RenderOnce for Badge {
 		let color = match self.tone {
 			Tone::Accent => theme.accent,
 			Tone::Color(color) => color,
-			Tone::Neutral => tokens::CONTROL_TINT,
-			Tone::Warning => tokens::WARNING,
-			Tone::Danger => tokens::DANGER_FOREGROUND,
+			Tone::Neutral => theme.palette.control,
+			Tone::Warning => theme.palette.warning,
+			Tone::Danger => theme.palette.danger_text,
 		};
 		div()
 			.px(px(7.))
@@ -166,9 +166,12 @@ impl Render for GlassTooltip {
 			.rounded(radius::CONTROL)
 			.glass(theme.hud_surface().elevation(Elevation::Resting))
 			.border_1()
-			.border_color(scale_alpha(tokens::HAIRLINE, tokens::control::HUD_BORDER_OPACITY))
+			.border_color(scale_alpha(
+				theme.palette.hairline,
+				tokens::control::HUD_BORDER_OPACITY,
+			))
 			.text_size(px(11.))
-			.text_color(tokens::PRIMARY_TEXT)
+			.text_color(theme.palette.primary_text)
 			.child(self.text.clone())
 	}
 }

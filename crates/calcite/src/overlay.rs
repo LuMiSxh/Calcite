@@ -40,7 +40,7 @@ pub fn floating_action_bar(theme: &Theme) -> Div {
 		.rounded_full()
 		.glass(theme.hud_surface().elevation(Elevation::Resting))
 		.border_1()
-		.border_color(scale_alpha(tokens::HAIRLINE, control::HUD_BORDER_OPACITY))
+		.border_color(scale_alpha(theme.palette.hairline, control::HUD_BORDER_OPACITY))
 }
 
 /// The standard confirmation action of a floating footer.
@@ -103,7 +103,7 @@ impl RenderOnce for Modal {
 			self.width.min(viewport.width - px(60.)).max(px(480.)),
 			self.height.min(viewport.height - px(60.)).max(px(320.)),
 		);
-		let background = stack(&[control::MODAL_BACKGROUND, theme.hud_tint]);
+		let background = stack(&[theme.palette.panel_background, theme.hud_tint]);
 		let entrance = Animation::new(Curve::Present.timed(reduce_motion));
 		let header = div()
 			.flex()
@@ -128,9 +128,9 @@ impl RenderOnce for Modal {
 						div()
 							.w(px(48.))
 							.h(px(2.))
-							.bg(scale_alpha(tokens::CONTROL_TINT, 0.62)),
+							.bg(scale_alpha(theme.palette.control, 0.62)),
 					)
-					.child(div().flex_1().h(px(1.)).bg(tokens::HAIRLINE)),
+					.child(div().flex_1().h(px(1.)).bg(theme.palette.hairline)),
 			)
 			.with_animation((self.id.clone(), "header"), entrance.clone(), |header, t| {
 				header.opacity(t).mt(px(6. * (1. - t)))
@@ -189,11 +189,11 @@ impl RenderOnce for Modal {
 			.rounded_smoothing_ios()
 			.bg(background)
 			.border_1()
-			.border_color(tokens::HAIRLINE)
+			.border_color(theme.palette.hairline)
 			.shadow(vec![
 				gpui::BoxShadow::new(px(0.), px(10.), tokens::black(0.45)).blur_radius(px(48.)),
 			])
-			.text_color(tokens::PRIMARY_TEXT)
+			.text_color(theme.palette.primary_text)
 			.role(Role::Dialog)
 			.aria_label(self.title)
 			.child(header)

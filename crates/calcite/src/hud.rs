@@ -30,9 +30,9 @@ use crate::{
 	tokens::{self, control, hud, radius, scale_alpha},
 };
 
-fn hud_border(progress_visible: bool) -> Rgba {
+fn hud_border(theme: &Theme, progress_visible: bool) -> Rgba {
 	scale_alpha(
-		tokens::HAIRLINE,
+		theme.palette.hairline,
 		if progress_visible {
 			0.5
 		} else {
@@ -146,7 +146,7 @@ impl RenderOnce for Pill {
 			.when(expanded, |surface| surface.rounded_smoothing_ios())
 			.glass(glass)
 			.border_1()
-			.border_color(hud_border(false))
+			.border_color(hud_border(&theme, false))
 			.transitions(move |transitions| transitions.rounded(Curve::Present.transition(reduce_motion)));
 
 		let chevron = if expanded {
@@ -183,7 +183,7 @@ impl RenderOnce for Pill {
 			.flex()
 			.flex_col()
 			.text_size(tokens::text::CAPTION)
-			.text_color(tokens::PRIMARY_TEXT)
+			.text_color(theme.palette.primary_text)
 			.opacity(1. - 0.38 * recede)
 			.transitions(move |transitions| {
 				transitions
@@ -269,7 +269,7 @@ impl RenderOnce for ControlBar {
 			.rounded_full()
 			.glass(theme.hud_surface())
 			.border_1()
-			.border_color(hud_border(self.progress.is_some()))
+			.border_color(hud_border(&theme, self.progress.is_some()))
 			.child(div().flex_1().min_w_0().child(self.status))
 			.child(
 				div()
@@ -281,7 +281,7 @@ impl RenderOnce for ControlBar {
 			)
 			.when_some(self.progress, |bar, (mode, active)| {
 				bar.child(progress_outline(
-					"vitro-control-bar-outline",
+					"calcite-control-bar-outline",
 					mode,
 					&theme,
 					active,
@@ -326,7 +326,8 @@ impl Status {
 }
 
 impl RenderOnce for Status {
-	fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+		let theme = cx.theme();
 		div()
 			.flex()
 			.flex_col()
@@ -339,7 +340,7 @@ impl RenderOnce for Status {
 						tokens::text::STATUS_TITLE
 					})
 					.font_weight(FontWeight::SEMIBOLD)
-					.text_color(tokens::PRIMARY_TEXT)
+					.text_color(theme.palette.primary_text)
 					.truncate()
 					.child(self.title),
 			)
@@ -347,7 +348,7 @@ impl RenderOnce for Status {
 				this.child(
 					div()
 						.text_size(tokens::text::CAPTION)
-						.text_color(tokens::SECONDARY_TEXT)
+						.text_color(theme.palette.secondary_text)
 						.truncate()
 						.child(detail),
 				)

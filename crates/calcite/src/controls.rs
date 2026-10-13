@@ -44,15 +44,15 @@ impl Tone {
 		match self {
 			Self::Accent => theme.accent,
 			Self::Color(color) => color,
-			Self::Neutral => tokens::CONTROL_TINT,
-			Self::Warning => tokens::WARNING,
-			Self::Danger => tokens::DANGER_FOREGROUND,
+			Self::Neutral => theme.palette.control,
+			Self::Warning => theme.palette.warning,
+			Self::Danger => theme.palette.danger_text,
 		}
 	}
 
 	fn surface(self, theme: &Theme) -> Rgba {
 		match self {
-			Self::Danger => tokens::DANGER,
+			Self::Danger => theme.palette.danger,
 			_ => self.foreground(theme),
 		}
 	}
@@ -114,7 +114,7 @@ impl Surface {
 		let reduced = theme.reduce_transparency();
 		if !enabled {
 			let fill = if reduced {
-				control::OPAQUE_DISABLED_SURFACE
+				theme.palette.opaque_disabled_surface
 			} else if chromatic {
 				white(control::DISABLED_CHROMATIC_SURFACE_OPACITY)
 			} else {
@@ -147,7 +147,7 @@ impl Surface {
 			control::ENABLED_NEUTRAL_BORDER_OPACITY
 		};
 		let paint = if reduced {
-			Paint::Plain(control::OPAQUE_NEUTRAL_SURFACE)
+			Paint::Plain(theme.palette.opaque_surface)
 		} else {
 			Paint::Flat(white(control::ENABLED_NEUTRAL_SURFACE_OPACITY))
 		};
@@ -392,7 +392,7 @@ impl RenderOnce for IconButton {
 		));
 		let border = glass
 			.border()
-			.unwrap_or(scale_alpha(tokens::HAIRLINE, control::HUD_BORDER_OPACITY));
+			.unwrap_or(scale_alpha(theme.palette.hairline, control::HUD_BORDER_OPACITY));
 		let surface = layer(frame.surface_insets())
 			.rounded_full()
 			.shadow(glass.shadows())
@@ -426,7 +426,7 @@ impl RenderOnce for IconButton {
 					.child(
 						div()
 							.relative()
-							.child(self.icon.render(px(glyph), tokens::PRIMARY_TEXT)),
+							.child(self.icon.render(px(glyph), theme.palette.primary_text)),
 					)
 					.control_state(&state, false)
 					.when_some(self.on_click, |button, on_click| button.on_click(on_click)),
@@ -484,7 +484,7 @@ impl RenderOnce for Halo {
 			.when(!reduced, |this| {
 				if pulses {
 					this.child(glow(resting).with_animation(
-						("vitro-halo", self.generation),
+						("calcite-halo", self.generation),
 						Animation::new(Duration::from_secs_f32(cycle::BREATHING)).with_easing(ease_in_out),
 						move |element, t| {
 							let intensity = resting + (1. - resting) * (std::f32::consts::PI * t).sin();

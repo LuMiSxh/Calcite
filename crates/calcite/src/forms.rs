@@ -179,7 +179,7 @@ impl RenderOnce for Toggle {
 		let center = inset + thumb_width / 2. + travel * position.clamp(-0.08, 1.08);
 
 		let off_track = if theme.reduce_transparency() {
-			control::OPAQUE_NEUTRAL_SURFACE
+			theme.palette.opaque_surface
 		} else {
 			white(0.16)
 		};
@@ -455,7 +455,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 		let accent = tokens::contrast_tint(theme.accent);
 		let reduced = theme.reduce_transparency();
 		let container_fill = if reduced {
-			control::OPAQUE_NEUTRAL_SURFACE
+			theme.palette.opaque_surface
 		} else {
 			white(control::ENABLED_NEUTRAL_SURFACE_OPACITY)
 		};
@@ -477,7 +477,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 			.bg(container_fill)
 			.border_1()
 			.border_color(with_alpha(
-				tokens::CONTROL_TINT,
+				theme.palette.control,
 				control::ENABLED_NEUTRAL_BORDER_OPACITY,
 			))
 			.children(
@@ -492,7 +492,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 						} else if selected {
 							accent
 						} else {
-							tokens::SECONDARY_TEXT
+							theme.palette.secondary_text
 						};
 						let segment = div()
 							.id((id.clone(), SharedString::from(index.to_string())))
@@ -603,7 +603,7 @@ impl RenderOnce for TextField {
 		let icon_color = if focused {
 			tokens::contrast_tint(theme.accent)
 		} else {
-			tokens::SECONDARY_TEXT
+			theme.palette.secondary_text
 		};
 		let field = div()
 			.id(self.id.clone())
@@ -617,7 +617,7 @@ impl RenderOnce for TextField {
 			.border_1()
 			.border_color(border)
 			.text_size(px(12.))
-			.text_color(tokens::PRIMARY_TEXT)
+			.text_color(theme.palette.primary_text)
 			.when_some(self.width, |field, width| field.w(width))
 			.when_some(self.icon, |field, icon| {
 				field.child(icon.render(px(11.), icon_color))
@@ -626,7 +626,7 @@ impl RenderOnce for TextField {
 				text_input((self.id, "input"))
 					.state(self.state.downgrade())
 					.placeholder(self.placeholder)
-					.placeholder_color(tokens::SECONDARY_TEXT)
+					.placeholder_color(theme.palette.secondary_text)
 					.caret_color(gpui::rgb_to_hsla(tokens::contrast_tint(theme.accent)))
 					.selection_color(gpui::rgb_to_hsla(scale_alpha(theme.accent, 0.35)))
 					.flex_1()

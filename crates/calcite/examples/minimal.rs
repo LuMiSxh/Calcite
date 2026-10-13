@@ -17,6 +17,7 @@ struct Minimal {
 
 impl Render for Minimal {
 	fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+		let theme = cx.theme();
 		div()
 			.size_full()
 			.flex()
@@ -30,7 +31,7 @@ impl Render for Minimal {
 				gpui::linear_color_stop(gpui::rgb(0x5F1E3A), 1.),
 			))
 			.font_family(UI_FONT)
-			.text_color(tokens::PRIMARY_TEXT)
+			.text_color(theme.palette.primary_text)
 			.child(
 				div()
 					.flex()
