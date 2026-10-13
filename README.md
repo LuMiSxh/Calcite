@@ -25,6 +25,7 @@
 - A palette you choose at compile time with a `const`, or replace at runtime. Theme changes crossfade.
 - Dynamic Theme: `calcite-tint` takes the accent from artwork, like the Arknights Client launcher.
 - Keyboard focus rings, keyboard activation, and accessibility roles and labels.
+- Auto-updates: an Ed25519-signed feed, per-file zstd deltas (unchanged files cost nothing), verified staging, and install on quit.
 - App icons outside a bundle, and `cargo calcite bundle` for DMG, Windows installers, deb, and AppImage.
 - 2100+ [Lucide](https://lucide.dev) icons and an `icons!` macro for your own icons.
 
@@ -33,6 +34,7 @@
 | `calcite`          | The UI library. See [its guide](crates/calcite/README.md).                                     |
 | `calcite-tint`     | Dynamic theme colors from artwork. No dependencies, no UI code.                                |
 | `calcite-bundle`   | `cargo calcite bundle`: `.app` and DMG, NSIS and MSI, deb and AppImage. Embeds the Windows icon. |
+| `calcite-update`   | Signed updates with per-file deltas, staged next to the app and installed on quit. Sparkle's model on every platform. |
 | `calcite-exec`     | Execution layer for views: `TaskSlot`, `ActivityStore` with leases, `Throttle`, `bounded`.     |
 | `calcite-showcase` | `gallery` (every component once) and `home` (a launcher home screen with a simulated install). |
 | `patches/`         | The gpui-ce patch that adds `Filter::Glass`, and the pinned gpui-ce commit.                    |
@@ -85,6 +87,35 @@ The first build compiles gpui-ce and takes several minutes. Run the bootstrap sc
 | home    | O         | Toggle between your image and the procedural art; the accent follows the artwork |
 | home    | H         | Show or hide the controls panel                     |
 | both    | Command-Q | Quit                                                |
+
+## Updates
+
+`calcite-update` follows Sparkle's model on macOS, Windows, and Linux:
+
+1. The app downloads `update.json`: the feed and its Ed25519 signature. It checks the
+   signature before it reads the feed, then the product, the channel, and the version.
+2. The feed lists the complete new file tree with a SHA-256 per file, a full package, and
+   deltas from older releases. A delta holds only new and changed files, as zstd patches
+   against the installed files. Unchanged files, such as a bundled runtime, cost nothing.
+3. The new tree is staged next to the app. Every file is checked against the signed tree.
+   If the installed copy does not match, the update falls back to the full package.
+4. When the app quits and nothing runs, the staged tree replaces the installed one with a
+   rename. On Windows, each file moves aside first; `cleanup` removes the old files at the
+   next launch.
+
+Publish a release:
+
+```sh
+cargo install --git https://github.com/LuMiSxh/Calcite calcite-update --features publish
+calcite-update keygen                                    # once; store the seed as a secret
+calcite-update extract --feed old/update.json --package old/App-1.0.0-macos-aarch64.full.zst --into prev/1.0.0
+calcite-update release --product dev.example.app --channel stable --version 1.1.0 \
+	--name App --bundle target/calcite-bundle/release/App.app --out dist --previous 1.0.0=prev/1.0.0
+calcite-update sign --feed dist/feed.json --out dist/update.json   # seed from CALCITE_UPDATE_KEY
+```
+
+Run `release` once per target into the same `dist` folder, then `sign` once. Upload
+`dist/*` to the GitHub release; clients read `releases/latest/download/update.json`.
 
 ## Liquid Glass
 

@@ -70,12 +70,21 @@ fn parse(args: &[String]) -> Result<Option<Options>, String> {
 	let mut options = Options::default();
 	let mut args = args.iter();
 	while let Some(arg) = args.next() {
-		let mut value = |name: &str| args.next().cloned().ok_or_else(|| format!("{name} needs a value"));
+		let mut value = |name: &str| {
+			args.next()
+				.cloned()
+				.ok_or_else(|| format!("{name} needs a value"))
+		};
 		match arg.as_str() {
 			"-p" | "--package" => options.package = Some(value(arg)?),
 			"--bin" => options.bin = Some(value(arg)?),
 			"-f" | "--format" | "--formats" => {
-				options.formats = Some(value(arg)?.split(',').map(|format| format.trim().to_string()).collect())
+				options.formats = Some(
+					value(arg)?
+						.split(',')
+						.map(|format| format.trim().to_string())
+						.collect(),
+				)
 			}
 			"--debug" => options.debug = true,
 			"--no-build" => options.no_build = true,

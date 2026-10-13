@@ -43,18 +43,27 @@ pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 	let metadata = cargo_metadata()?;
 	let package = select_package(&metadata, options.package.as_deref())?;
 	let manifest_dir = PathBuf::from(
-		package["manifest_path"].as_str().ok_or("cargo metadata: package has no manifest_path")?,
+		package["manifest_path"]
+			.as_str()
+			.ok_or("cargo metadata: package has no manifest_path")?,
 	)
 	.parent()
 	.ok_or("cargo metadata: manifest_path has no parent")?
 	.to_path_buf();
-	let target_dir = PathBuf::from(metadata["target_directory"].as_str().ok_or("cargo metadata: no target_directory")?);
-	let settings = package["metadata"]["calcite"]["bundle"].as_object().cloned().ok_or_else(|| {
-		format!(
-			"{}: add a [package.metadata.calcite.bundle] table with at least `identifier`",
-			package["name"].as_str().unwrap_or("package")
-		)
-	})?;
+	let target_dir = PathBuf::from(
+		metadata["target_directory"]
+			.as_str()
+			.ok_or("cargo metadata: no target_directory")?,
+	);
+	let settings = package["metadata"]["calcite"]["bundle"]
+		.as_object()
+		.cloned()
+		.ok_or_else(|| {
+			format!(
+				"{}: add a [package.metadata.calcite.bundle] table with at least `identifier`",
+				package["name"].as_str().unwrap_or("package")
+			)
+		})?;
 	let bin = select_bin(package, options.bin.as_deref())?;
 	let profile = if options.debug { "debug" } else { "release" };
 
@@ -101,13 +110,18 @@ fn cargo_metadata() -> Result<Value> {
 		.output()
 		.map_err(|error| format!("cargo metadata: {error}"))?;
 	if !output.status.success() {
-		return Err(format!("cargo metadata failed:\n{}", String::from_utf8_lossy(&output.stderr)));
+		return Err(format!(
+			"cargo metadata failed:\n{}",
+			String::from_utf8_lossy(&output.stderr)
+		));
 	}
 	serde_json::from_slice(&output.stdout).map_err(|error| format!("cargo metadata: {error}"))
 }
 
 fn select_package<'a>(metadata: &'a Value, name: Option<&str>) -> Result<&'a Value> {
-	let packages = metadata["packages"].as_array().ok_or("cargo metadata: no packages")?;
+	let packages = metadata["packages"]
+		.as_array()
+		.ok_or("cargo metadata: no packages")?;
 	if let Some(name) = name {
 		return packages
 			.iter()
@@ -115,7 +129,9 @@ fn select_package<'a>(metadata: &'a Value, name: Option<&str>) -> Result<&'a Val
 			.ok_or_else(|| format!("no package named `{name}` in this workspace"));
 	}
 	// Like cargo: the package whose manifest is in the current directory.
-	let here = std::env::current_dir().map_err(|error| error.to_string())?.join("Cargo.toml");
+	let here = std::env::current_dir()
+		.map_err(|error| error.to_string())?
+		.join("Cargo.toml");
 	packages
 		.iter()
 		.find(|package| package["manifest_path"].as_str().map(Path::new) == Some(here.as_path()))
@@ -128,16 +144,26 @@ fn select_bin(package: &Value, name: Option<&str>) -> Result<String> {
 		.as_array()
 		.into_iter()
 		.flatten()
-		.filter(|target| target["kind"].as_array().is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin")))
+		.filter(|target| {
+			target["kind"]
+				.as_array()
+				.is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
+		})
 		.filter_map(|target| target["name"].as_str())
 		.collect();
 	let package_name = package["name"].as_str().unwrap_or_default();
 	match name {
 		Some(name) if bins.contains(&name) => Ok(name.to_string()),
-		Some(name) => Err(format!("`{package_name}` has no binary `{name}`; it has: {}", bins.join(", "))),
+		Some(name) => Err(format!(
+			"`{package_name}` has no binary `{name}`; it has: {}",
+			bins.join(", ")
+		)),
 		None if bins.len() == 1 => Ok(bins[0].to_string()),
 		None if bins.contains(&package_name) => Ok(package_name.to_string()),
-		None => Err(format!("`{package_name}` has several binaries; pass --bin with one of: {}", bins.join(", "))),
+		None => Err(format!(
+			"`{package_name}` has several binaries; pass --bin with one of: {}",
+			bins.join(", ")
+		)),
 	}
 }
 
@@ -147,18 +173,33 @@ fn build(package: &str, bin: &str, debug: bool) -> Result<()> {
 	if !debug {
 		command.arg("--release");
 	}
-	let status = command.status().map_err(|error| format!("cargo build: {error}"))?;
-	if status.success() { Ok(()) } else { Err(format!("cargo build failed ({status})")) }
+	let status = command
+		.status()
+		.map_err(|error| format!("cargo build: {error}"))?;
+	if status.success() {
+		Ok(())
+	} else {
+		Err(format!("cargo build failed ({status})"))
+	}
 }
 
 /// Resizes the source icon to every size the packager needs.
 fn generate_icons(source: &Path, directory: &Path) -> Result<Vec<PathBuf>> {
 	let image = image::open(source).map_err(|error| format!("icon {}: {error}", source.display()))?;
 	if image.width() != image.height() {
-		return Err(format!("icon {}: must be square, is {}×{}", source.display(), image.width(), image.height()));
+		return Err(format!(
+			"icon {}: must be square, is {}×{}",
+			source.display(),
+			image.width(),
+			image.height()
+		));
 	}
 	if image.width() < 512 {
-		return Err(format!("icon {}: must be at least 512 px, is {} px", source.display(), image.width()));
+		return Err(format!(
+			"icon {}: must be at least 512 px, is {} px",
+			source.display(),
+			image.width()
+		));
 	}
 	fs::create_dir_all(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
 	ICON_SIZES
@@ -199,8 +240,10 @@ fn packager_config(input: PackagerInput) -> Result<Value> {
 		formats,
 	} = input;
 	let text = |key: &str| settings.get(key).and_then(Value::as_str).map(str::to_string);
-	let identifier = text("identifier").ok_or("[package.metadata.calcite.bundle]: `identifier` is required")?;
-	let product_name = text("name").unwrap_or_else(|| package["name"].as_str().unwrap_or_default().to_string());
+	let identifier =
+		text("identifier").ok_or("[package.metadata.calcite.bundle]: `identifier` is required")?;
+	let product_name =
+		text("name").unwrap_or_else(|| package["name"].as_str().unwrap_or_default().to_string());
 
 	let mut config = json!({
 		"productName": product_name,
@@ -220,9 +263,18 @@ fn packager_config(input: PackagerInput) -> Result<Value> {
 	set("description", package["description"].clone());
 	set("homepage", package["homepage"].clone());
 	set("authors", package["authors"].clone());
-	set("publisher", settings.get("publisher").cloned().unwrap_or(Value::Null));
-	set("copyright", settings.get("copyright").cloned().unwrap_or(Value::Null));
-	set("category", settings.get("category").cloned().unwrap_or(Value::Null));
+	set(
+		"publisher",
+		settings.get("publisher").cloned().unwrap_or(Value::Null),
+	);
+	set(
+		"copyright",
+		settings.get("copyright").cloned().unwrap_or(Value::Null),
+	);
+	set(
+		"category",
+		settings.get("category").cloned().unwrap_or(Value::Null),
+	);
 	if let Some(file) = package["license_file"].as_str() {
 		set("licenseFile", json!(manifest_dir.join(file)));
 	}

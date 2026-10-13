@@ -50,7 +50,12 @@ pub fn windows_icon(png: impl AsRef<Path>) {
 pub fn write_ico(png: &Path, ico: &Path) -> Result<(), String> {
 	let image = image::open(png).map_err(|error| format!("icon {}: {error}", png.display()))?;
 	if image.width() != image.height() {
-		return Err(format!("icon {}: must be square, is {}×{}", png.display(), image.width(), image.height()));
+		return Err(format!(
+			"icon {}: must be square, is {}×{}",
+			png.display(),
+			image.width(),
+			image.height()
+		));
 	}
 	let frames = ICO_SIZES
 		.iter()
@@ -65,4 +70,3 @@ pub fn write_ico(png: &Path, ico: &Path) -> Result<(), String> {
 		.encode_images(&frames)
 		.map_err(|error| format!("{}: {error}", ico.display()))
 }
-
