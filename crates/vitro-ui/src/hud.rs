@@ -10,8 +10,8 @@ use gpui::{
 };
 
 use crate::{
-	Appearance,
-	glass::{Elevation, Glass, GlassExt},
+	Theme,
+	glass::{Elevation, GlassExt},
 	icons::Icon,
 	motion::Curve,
 	progress::{OutlineMode, capsule_progress_outline},
@@ -41,17 +41,12 @@ pub struct HudPill {
 	expanded: bool,
 	receded: bool,
 	expanded_size: (Pixels, Pixels),
-	appearance: Appearance,
+	theme: Theme,
 	on_toggle: Option<ClickHandler>,
 }
 
 impl HudPill {
-	pub fn new(
-		id: impl Into<ElementId>,
-		icon: Icon,
-		title: impl IntoElement,
-		appearance: Appearance,
-	) -> Self {
+	pub fn new(id: impl Into<ElementId>, icon: Icon, title: impl IntoElement, theme: Theme) -> Self {
 		Self {
 			id: id.into(),
 			icon,
@@ -60,7 +55,7 @@ impl HudPill {
 			expanded: false,
 			receded: false,
 			expanded_size: (hud::EXPANDED_STATUS_WIDTH, px(180.)),
-			appearance,
+			theme,
 			on_toggle: None,
 		}
 	}
@@ -91,12 +86,12 @@ impl HudPill {
 
 impl RenderOnce for HudPill {
 	fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-		let appearance = self.appearance;
-		let reduce_motion = appearance.reduce_motion;
+		let theme = self.theme;
+		let reduce_motion = theme.reduce_motion;
 		let can_expand = self.detail.is_some();
 		let expanded = self.expanded && can_expand;
-		let accent_foreground = tokens::contrast_tint(appearance.accent);
-		let glass = Glass::new(Some(appearance.hud_tint), appearance.treatment()).elevation(if expanded {
+		let accent_foreground = tokens::contrast_tint(theme.accent);
+		let glass = theme.surface(Some(theme.hud_tint)).elevation(if expanded {
 			Elevation::Raised
 		} else {
 			Elevation::Resting
@@ -179,16 +174,16 @@ pub struct ControlBar {
 	status: AnyElement,
 	actions: Vec<AnyElement>,
 	progress: Option<(OutlineMode, bool)>,
-	appearance: Appearance,
+	theme: Theme,
 }
 
 impl ControlBar {
-	pub fn new(status: impl IntoElement, appearance: Appearance) -> Self {
+	pub fn new(status: impl IntoElement, theme: Theme) -> Self {
 		Self {
 			status: status.into_any_element(),
 			actions: Vec::new(),
 			progress: None,
-			appearance,
+			theme,
 		}
 	}
 
@@ -206,8 +201,8 @@ impl ControlBar {
 
 impl RenderOnce for ControlBar {
 	fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-		let appearance = self.appearance;
-		let glass = Glass::new(Some(appearance.hud_tint), appearance.treatment());
+		let theme = self.theme;
+		let glass = theme.surface(Some(theme.hud_tint));
 		div()
 			.relative()
 			.w_full()
@@ -233,9 +228,9 @@ impl RenderOnce for ControlBar {
 				bar.child(capsule_progress_outline(
 					"control-bar-outline",
 					mode,
-					appearance.accent,
+					theme.accent,
 					active,
-					appearance.reduce_motion,
+					theme.reduce_motion,
 				))
 			})
 	}
@@ -280,12 +275,12 @@ pub fn pill_row(
 	label: impl Into<SharedString>,
 	value: impl Into<SharedString>,
 	selected: bool,
-	appearance: Appearance,
+	theme: Theme,
 	on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-	let accent = tokens::contrast_tint(appearance.accent);
-	let reduce_motion = appearance.reduce_motion;
-	let selected_fill = scale_alpha(appearance.accent, 0.13);
+	let accent = tokens::contrast_tint(theme.accent);
+	let reduce_motion = theme.reduce_motion;
+	let selected_fill = scale_alpha(theme.accent, 0.13);
 	div()
 		.id(id)
 		.h(px(26.))

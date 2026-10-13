@@ -1,0 +1,21 @@
+[package]
+name = "vitro-showcase"
+description = "Showcase and component gallery for the Vitro kit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "home"
+path = "src/bin/home.rs"
+
+[[bin]]
+name = "gallery"
+path = "src/bin/gallery.rs"
+
+[dependencies]
+gpui.workspace = true
+gpui_platform.workspace = true
+vitro-ui.workspace = true
+vitro-exec.workspace = true

@@ -1,0 +1,526 @@
+diff --git a/crates/gpui/src/scene.rs b/crates/gpui/src/scene.rs
+index da07fdd02a..79de3be156 100644
+--- a/crates/gpui/src/scene.rs
++++ b/crates/gpui/src/scene.rs
+@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
+ 
+ use crate::{
+     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Pixels, Point,
+-    Radians, ScaledFilter, ScaledPixels, Size, bounds_tree::BoundsTree, point,
++    Radians, ScaledFilter, ScaledGlassFilter, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+ };
+ use smallvec::SmallVec;
+ use std::{
+@@ -897,6 +897,11 @@ impl BackdropFilter {
+     pub fn max_blur_radius(&self) -> f32 {
+         max_blur_radius(&self.filters)
+     }
++
++    /// The glass material to composite instead of a plain blur, if the chain has one.
++    pub fn glass(&self) -> Option<ScaledGlassFilter> {
++        glass_filter(&self.filters)
++    }
+ }
+ 
+ impl From<BackdropFilter> for Primitive {
+@@ -940,6 +945,16 @@ impl FilterBoundary {
+ fn max_blur_radius(filters: &[ScaledFilter]) -> f32 {
+     filters.iter().fold(0.0, |radius, filter| match filter {
+         ScaledFilter::Blur(filter_radius) => radius.max(filter_radius.0),
++        // The renderer needs a blur pass to sample from, so glass always blurs a little.
++        ScaledFilter::Glass(glass) => radius.max(glass.blur.0.max(1.0)),
++    })
++}
++
++/// The glass material of a filter chain, if any. The last glass filter wins.
++fn glass_filter(filters: &[ScaledFilter]) -> Option<ScaledGlassFilter> {
++    filters.iter().rev().find_map(|filter| match filter {
++        ScaledFilter::Blur(_) => None,
++        ScaledFilter::Glass(glass) => Some(*glass),
+     })
+ }
+ 
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index b14111a3ee..5052bd7dd8 100644
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -554,6 +554,100 @@ impl BoxShadow {
+ pub enum Filter {
+     /// A gaussian blur with the given radius, in logical pixels. Maps to CSS `blur(<px>)`.
+     Blur(Pixels),
++    /// A refractive glass material over the backdrop: blur, lensing at the bezel, dispersion,
++    /// saturation, a fill, a Fresnel rim, a specular highlight, and an optional pointer light.
++    /// Only meaningful as a backdrop filter; as a content filter it acts as its blur.
++    Glass(GlassFilter),
++}
++
++/// Parameters of [`Filter::Glass`], in logical pixels. Colors are straight-alpha sRGB.
++#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
++pub struct GlassFilter {
++    /// Gaussian blur radius of the backdrop seen through the glass. Must be positive.
++    pub blur: Pixels,
++    /// Width of the curved bezel along the edge, where the backdrop bends.
++    pub bezel: Pixels,
++    /// Largest backdrop displacement at the outer edge of the bezel.
++    pub refraction: Pixels,
++    /// Fraction of the displacement by which red and blue separate (0 disables dispersion).
++    pub dispersion: f32,
++    /// Saturation of the backdrop: 1 keeps it, above 1 makes the glass more vivid.
++    pub saturation: f32,
++    /// Brightness multiplier of the backdrop before the fill.
++    pub brightness: f32,
++    /// Fill composited over the refracted backdrop (tint and backplate in one color).
++    pub fill: [f32; 4],
++    /// Strength of the thin Fresnel rim light.
++    pub rim: f32,
++    /// Strength of the specular highlight on the bezel facing the light.
++    pub specular: f32,
++    /// Light direction in radians, measured clockwise from the positive x axis (y down).
++    pub light_angle: f32,
++    /// Pointer position in window coordinates; `None` hides the pointer light.
++    pub pointer: Option<[f32; 2]>,
++    /// Radius of the pointer light.
++    pub pointer_radius: Pixels,
++    /// Color and strength (alpha) of the pointer light; it is added to the glass.
++    pub pointer_color: [f32; 4],
++}
++
++impl Default for GlassFilter {
++    fn default() -> Self {
++        Self {
++            blur: Pixels(12.0),
++            bezel: Pixels(14.0),
++            refraction: Pixels(10.0),
++            dispersion: 0.12,
++            saturation: 1.2,
++            brightness: 1.0,
++            fill: [1.0, 1.0, 1.0, 0.06],
++            rim: 0.5,
++            specular: 0.45,
++            light_angle: -2.36,
++            pointer: None,
++            pointer_radius: Pixels(60.0),
++            pointer_color: [1.0, 1.0, 1.0, 0.0],
++        }
++    }
++}
++
++impl GlassFilter {
++    fn scale(&self, factor: f32) -> ScaledGlassFilter {
++        ScaledGlassFilter {
++            blur: self.blur.scale(factor),
++            bezel: self.bezel.scale(factor),
++            refraction: self.refraction.scale(factor),
++            dispersion: self.dispersion,
++            saturation: self.saturation,
++            brightness: self.brightness,
++            fill: self.fill,
++            rim: self.rim,
++            specular: self.specular,
++            light_angle: self.light_angle,
++            pointer: self.pointer.map(|[x, y]| [x * factor, y * factor]),
++            pointer_radius: self.pointer_radius.scale(factor),
++            pointer_color: self.pointer_color,
++        }
++    }
++}
++
++/// The scene-space form of [`GlassFilter`]: lengths and the pointer in device pixels.
++#[derive(Clone, Copy, Debug, PartialEq)]
++#[expect(missing_docs)]
++pub struct ScaledGlassFilter {
++    pub blur: ScaledPixels,
++    pub bezel: ScaledPixels,
++    pub refraction: ScaledPixels,
++    pub dispersion: f32,
++    pub saturation: f32,
++    pub brightness: f32,
++    pub fill: [f32; 4],
++    pub rim: f32,
++    pub specular: f32,
++    pub light_angle: f32,
++    pub pointer: Option<[f32; 2]>,
++    pub pointer_radius: ScaledPixels,
++    pub pointer_color: [f32; 4],
+ }
+ 
+ impl Filter {
+@@ -566,6 +660,7 @@ impl Filter {
+     pub fn is_identity(&self) -> bool {
+         match self {
+             Filter::Blur(radius) => *radius <= Pixels::ZERO,
++            Filter::Glass(_) => false,
+         }
+     }
+ 
+@@ -574,6 +669,7 @@ impl Filter {
+     pub fn scale(&self, factor: f32) -> ScaledFilter {
+         match self {
+             Filter::Blur(radius) => ScaledFilter::Blur(radius.scale(factor)),
++            Filter::Glass(glass) => ScaledFilter::Glass(glass.scale(factor)),
+         }
+     }
+ }
+@@ -589,6 +685,8 @@ impl Filter {
+ pub enum ScaledFilter {
+     /// A gaussian blur with the given radius, in scaled (device) pixels.
+     Blur(ScaledPixels),
++    /// A refractive glass material; see [`Filter::Glass`].
++    Glass(ScaledGlassFilter),
+ }
+ 
+ /// How to handle whitespace in text
+diff --git a/crates/gpui_apple/src/metal_renderer.rs b/crates/gpui_apple/src/metal_renderer.rs
+index 9b4d523084..ab732d91c3 100644
+--- a/crates/gpui_apple/src/metal_renderer.rs
++++ b/crates/gpui_apple/src/metal_renderer.rs
+@@ -1051,6 +1051,7 @@ impl MetalRenderer {
+                                 filter.max_blur_radius(),
+                                 filter.opacity,
+                                 true,
++                                filter.glass(),
+                             );
+                         }
+                     }
+@@ -1111,6 +1112,7 @@ impl MetalRenderer {
+                             boundary.max_blur_radius(),
+                             boundary.opacity,
+                             false,
++                            None,
+                         );
+                     }
+                     current_target = parent;
+@@ -1267,6 +1269,7 @@ impl MetalRenderer {
+         opacity: f32,
+         // Backdrop clips to the rounded rect; content (`filter`) bleeds past its bounds.
+         clip_rounded: bool,
++        glass: Option<gpui::ScaledGlassFilter>,
+     ) {
+         let Some(kernel) = BlurKernel::for_radius(blur_radius) else {
+             return;
+@@ -1281,7 +1284,8 @@ impl MetalRenderer {
+             width: DevicePixels(blur_size[0] as i32),
+             height: DevicePixels(blur_size[1] as i32),
+         };
+-        let dilation = GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * blur_radius;
++        let dilation = GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * blur_radius
++            + gpui_render::blur::glass_sampling_margin(glass);
+         let scissor =
+             ScissorRectangle::for_blurred_bounds(bounds, dilation, full_width, full_height);
+         if scissor.is_empty() {
+@@ -1349,7 +1353,8 @@ impl MetalRenderer {
+             clip,
+             blur_size,
+             [full_width as f32, full_height as f32],
+-        );
++        )
++        .with_glass(glass);
+         let encoder = new_command_encoder_for_texture(
+             command_buffer,
+             target,
+diff --git a/crates/gpui_render/src/blur.rs b/crates/gpui_render/src/blur.rs
+index ba20ef8a45..db0535d564 100644
+--- a/crates/gpui_render/src/blur.rs
++++ b/crates/gpui_render/src/blur.rs
+@@ -5,8 +5,8 @@ pub use crate::shaders::{
+         Corners as ShaderCorners, DownsampleMode,
+     },
+ };
+-use gpui::{Bounds, Corners, ScaledPixels};
+-use wgsl_rs::std::vec2f;
++use gpui::{Bounds, Corners, ScaledGlassFilter, ScaledPixels};
++use wgsl_rs::std::{vec2f, vec4f};
+ 
+ pub const DOWNSAMPLE_FACTOR: u32 = 2;
+ 
+@@ -39,6 +39,13 @@ pub struct FilterCompositeParameters {
+     pub blur_radius: f32,
+     pub opacity: f32,
+     pub clip: FilterCompositeClip,
++    /// Composites refractive glass instead of the plain blur.
++    pub glass: Option<ScaledGlassFilter>,
++}
++
++/// Extra blurred margin a glass composite samples beyond its bounds.
++pub fn glass_sampling_margin(glass: Option<ScaledGlassFilter>) -> f32 {
++    glass.map_or(0.0, |glass| glass.refraction.0.abs() * (1.0 + glass.dispersion.abs()))
+ }
+ 
+ #[derive(Clone, Copy)]
+@@ -125,6 +132,34 @@ impl BlurUniforms {
+     }
+ }
+ 
++impl BlurUniforms {
++    /// Enables the glass branch of the composite shader. `None` keeps the plain blur.
++    pub fn with_glass(mut self, glass: Option<ScaledGlassFilter>) -> Self {
++        let Some(glass) = glass else {
++            return self;
++        };
++        let [pointer_x, pointer_y] = glass.pointer.unwrap_or([0.0, 0.0]);
++        let pointer_radius = if glass.pointer.is_some() {
++            glass.pointer_radius.0.max(1.0)
++        } else {
++            0.0
++        };
++        let [fill_r, fill_g, fill_b, fill_a] = glass.fill;
++        let [pointer_r, pointer_g, pointer_b, pointer_a] = glass.pointer_color;
++        self.glass_fill = vec4f(fill_r, fill_g, fill_b, fill_a.clamp(0.0, 1.0));
++        self.glass_pointer_color = vec4f(pointer_r, pointer_g, pointer_b, pointer_a.max(0.0));
++        self.glass_shape = vec4f(glass.bezel.0, glass.refraction.0, glass.dispersion, 1.0);
++        self.glass_light = vec4f(glass.rim, glass.specular, glass.light_angle, glass.saturation);
++        self.glass_pointer = vec4f(
++            pointer_x,
++            pointer_y,
++            pointer_radius,
++            glass.brightness,
++        );
++        self
++    }
++}
++
+ #[derive(Clone, Copy)]
+ pub struct ScissorRectangle {
+     pub x: u32,
+@@ -229,6 +264,11 @@ fn empty_uniforms(downsample_mode: DownsampleMode) -> BlurUniforms {
+         padding0: 0,
+         padding1: 0,
+         padding2: 0,
++        glass_fill: vec4f(0.0, 0.0, 0.0, 0.0),
++        glass_pointer_color: vec4f(0.0, 0.0, 0.0, 0.0),
++        glass_shape: vec4f(0.0, 0.0, 0.0, 0.0),
++        glass_light: vec4f(0.0, 0.0, 0.0, 1.0),
++        glass_pointer: vec4f(0.0, 0.0, 0.0, 1.0),
+     }
+ }
+ 
+diff --git a/crates/gpui_render/src/shaders/filters.rs b/crates/gpui_render/src/shaders/filters.rs
+index c9eb097b02..73739f7223 100644
+--- a/crates/gpui_render/src/shaders/filters.rs
++++ b/crates/gpui_render/src/shaders/filters.rs
+@@ -109,6 +109,16 @@ pub mod blur {
+         pub padding0: u32,
+         pub padding1: u32,
+         pub padding2: u32,
++        /// Straight-alpha fill over the refracted backdrop.
++        pub glass_fill: Vec4f,
++        /// Pointer light color (rgb) and strength (a).
++        pub glass_pointer_color: Vec4f,
++        /// x: bezel width, y: refraction, z: dispersion, w: 1 when glass is enabled.
++        pub glass_shape: Vec4f,
++        /// x: rim, y: specular, z: light angle, w: saturation.
++        pub glass_light: Vec4f,
++        /// xy: pointer position in target pixels, z: pointer radius (0 hides it), w: brightness.
++        pub glass_pointer: Vec4f,
+     }
+     uniform!(group(1), binding(0), BLUR_LOCALS: BlurUniforms);
+     texture!(group(1), binding(1), BLUR_TEXTURE: Texture2D<f32>);
+@@ -133,7 +143,91 @@ pub mod blur {
+         }
+     }
+ 
++    /// Straight-alpha sample of the blurred backdrop at a target-space position.
++    pub fn glass_backdrop(position: Vec2f) -> Vec3f {
++        let sample = texture_sample_level(
++            BLUR_TEXTURE,
++            BLUR_SAMPLER,
++            position / get!(BLUR_LOCALS).target_size,
++            0.0,
++        );
++        let alpha = max(sample.w, MIN_NORMALIZED_WEIGHT);
++        select(
++            sample.rgb(),
++            sample.rgb() / alpha,
++            is_enabled(get!(GLOBALS).premultiplied_alpha),
++        )
++    }
++
++    pub fn glass_distance(position: Vec2f) -> f32 {
++        rounded_rectangle_signed_distance(
++            position,
++            get!(BLUR_LOCALS).bounds,
++            get!(BLUR_LOCALS).corner_radii,
++        )
++    }
++
++    /// Refractive glass: the bezel bends the backdrop along the shape normal, red and blue
++    /// separate slightly, a thin Fresnel rim and a specular highlight light the edge, and an
++    /// optional pointer light glows inside.
++    pub fn glass_composite_color(position: Vec2f, coverage: f32) -> Vec4f {
++        let locals = get!(BLUR_LOCALS);
++        let bezel = max(locals.glass_shape.x, 1.0);
++        let refraction = locals.glass_shape.y;
++        let dispersion = locals.glass_shape.z;
++        let distance = glass_distance(position);
++        let gradient = vec2f(
++            glass_distance(position + vec2f(1.0, 0.0)) - glass_distance(position - vec2f(1.0, 0.0)),
++            glass_distance(position + vec2f(0.0, 1.0)) - glass_distance(position - vec2f(0.0, 1.0)),
++        );
++        let normal = gradient / max(length(gradient), MIN_NORMALIZED_WEIGHT);
++        // 0 on the outer edge, 1 where the bezel meets the flat face.
++        let depth = saturate(-distance / bezel);
++        let bend = pow(1.0 - depth, 2.4);
++        let offset = normal * (refraction * bend);
++
++        let base = glass_backdrop(position + offset);
++        let red = glass_backdrop(position + offset * (1.0 + dispersion)).x;
++        let blue = glass_backdrop(position + offset * (1.0 - dispersion)).z;
++        let mut color = vec3f(red, base.y, blue);
++
++        let luma = dot(color, REC_601_LUMA_WEIGHTS);
++        let saturation = locals.glass_light.w;
++        color = mix(vec3f(luma, luma, luma), color, vec3f(saturation, saturation, saturation))
++            * locals.glass_pointer.w;
++        let fill_alpha = locals.glass_fill.w;
++        color = mix(color, locals.glass_fill.rgb(), vec3f(fill_alpha, fill_alpha, fill_alpha));
++
++        let light = vec2f(cos(locals.glass_light.z), sin(locals.glass_light.z));
++        let facing = dot(normal, light);
++        // A one-pixel Fresnel rim all around, brighter where the edge faces the light.
++        let rim_band = 1.0 - smoothstep(0.0, 1.6, -distance);
++        let rim = rim_band * locals.glass_light.x * (0.45 + 0.55 * abs(facing));
++        // The bezel catches the light on the lit side and, fainter, on the opposite side.
++        let highlight = pow(max(facing, 0.0), 3.0) + 0.35 * pow(max(-facing, 0.0), 3.0);
++        let specular = locals.glass_light.y * highlight * pow(1.0 - depth, 1.5);
++        color = color + vec3f(rim + specular, rim + specular, rim + specular);
++
++        if locals.glass_pointer.z > 0.0 {
++            let reach = length(position - locals.glass_pointer.xy()) / locals.glass_pointer.z;
++            let glow = pow(1.0 - smoothstep(0.0, 1.0, reach), 2.0);
++            color = color + locals.glass_pointer_color.rgb() * (locals.glass_pointer_color.w * glow);
++        }
++
++        // The composite pipeline blends premultiplied color, like the plain blur path.
++        let alpha = coverage * locals.opacity;
++        vec4f(
++            saturate(color.x) * alpha,
++            saturate(color.y) * alpha,
++            saturate(color.z) * alpha,
++            alpha,
++        )
++    }
++
+     pub fn blur_composite_color(position: Vec2f, coverage: f32) -> Vec4f {
++        if get!(BLUR_LOCALS).glass_shape.w > 0.5 {
++            return glass_composite_color(position, coverage);
++        }
+         let blurred = texture_sample_level(
+             BLUR_TEXTURE,
+             BLUR_SAMPLER,
+diff --git a/crates/gpui_render/src/shaders/interface.rs b/crates/gpui_render/src/shaders/interface.rs
+index 225f0b2a4f..ce76ad7141 100644
+--- a/crates/gpui_render/src/shaders/interface.rs
++++ b/crates/gpui_render/src/shaders/interface.rs
+@@ -230,7 +230,12 @@ pub const RENDER_BUFFER_LAYOUTS: &[gpui::SceneBufferLayout] = &[
+         corner_smoothing,
+         padding0,
+         padding1,
+-        padding2
++        padding2,
++        glass_fill,
++        glass_pointer_color,
++        glass_shape,
++        glass_light,
++        glass_pointer
+     ),
+     render_layout!(crate::path_types::PathSprite, "PathSprite", bounds),
+     render_layout!(
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer/filters.rs b/crates/gpui_wgpu/src/wgpu_renderer/filters.rs
+index 3145acfb7a..ae0d6fafb6 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer/filters.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer/filters.rs
+@@ -4,6 +4,7 @@ use gpui_render::{
+     blur::{
+         BlurAxis, BlurKernel, FilterCompositeClip, FilterCompositeParameters,
+         GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS, ScissorRectangle, downsampled_dimension,
++        glass_sampling_margin,
+     },
+     shaders::blur::BlurUniforms,
+ };
+@@ -18,7 +19,7 @@ pub(super) struct FrameUniformRequirements {
+     pub(super) surface_count: u64,
+ }
+ 
+-const _: () = assert!(std::mem::size_of::<BlurUniforms>() == 112);
++const _: () = assert!(std::mem::size_of::<BlurUniforms>() == 192);
+ 
+ impl WgpuRenderer {
+     fn make_blur_bind_group(
+@@ -80,7 +81,8 @@ impl WgpuRenderer {
+             downsampled_dimension(full_width) as f32,
+             downsampled_dimension(full_height) as f32,
+         ];
+-        let dilation = GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * parameters.blur_radius;
++        let dilation = GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * parameters.blur_radius
++            + glass_sampling_margin(parameters.glass);
+         let scissor = ScissorRectangle::for_blurred_bounds(
+             parameters.bounds,
+             dilation,
+@@ -145,7 +147,8 @@ impl WgpuRenderer {
+             parameters.clip,
+             blur_size,
+             [full_width as f32, full_height as f32],
+-        );
++        )
++        .with_glass(parameters.glass);
+         let (bind_group, uniform_offset) = self.make_blur_bind_group(uniforms, &horizontal_target);
+         let resources = self.resources();
+         let pipeline = if uniforms.corner_smoothing > 0.0 {
+@@ -187,6 +190,7 @@ impl WgpuRenderer {
+                 blur_radius: filter.max_blur_radius(),
+                 opacity: filter.opacity,
+                 clip: FilterCompositeClip::RoundedBounds,
++                glass: filter.glass(),
+             },
+         );
+     }
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer/frame.rs b/crates/gpui_wgpu/src/wgpu_renderer/frame.rs
+index 3a40dd2fa0..fa11d7601b 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer/frame.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer/frame.rs
+@@ -481,6 +481,7 @@ impl<'a> FrameEncoder<'a> {
+                             blur_radius: boundary.max_blur_radius(),
+                             opacity: boundary.opacity,
+                             clip: FilterCompositeClip::ContentShape,
++                            glass: None,
+                         },
+                     );
+                     pass = begin_scene_render_pass(
+diff --git a/crates/gpui_windows/src/directx_renderer.rs b/crates/gpui_windows/src/directx_renderer.rs
+index f37956a6da..b1ba2defc7 100644
+--- a/crates/gpui_windows/src/directx_renderer.rs
++++ b/crates/gpui_windows/src/directx_renderer.rs
+@@ -694,6 +694,7 @@ impl DirectXRenderer {
+                                 filter.max_blur_radius(),
+                                 filter.opacity,
+                                 true,
++                                filter.glass(),
+                             )?;
+                         }
+                         Ok::<(), anyhow::Error>(())
+@@ -739,6 +740,7 @@ impl DirectXRenderer {
+                         boundary.max_blur_radius(),
+                         boundary.opacity,
+                         false,
++                        None,
+                     );
+                     current_rtv = parent_rtv;
+                     current_srv = parent_srv;
+@@ -1312,6 +1314,7 @@ impl DirectXRenderer {
+         opacity: f32,
+         // Backdrop clips to the rounded rect; content (`filter`) bleeds past its bounds.
+         clip_rounded: bool,
++        glass: Option<ScaledGlassFilter>,
+     ) -> Result<()> {
+         let full_width = self.width;
+         let full_height = self.height;
+@@ -1405,7 +1408,8 @@ impl DirectXRenderer {
+             clip,
+             blur_size,
+             [full_width as f32, full_height as f32],
+-        );
++        )
++        .with_glass(glass);
+         let (composite_vertex, composite_fragment) = if composite_uniforms.corner_smoothing > 0.0 {
+             (
+                 &self.pipelines.smoothed_blur_composite_vertex,

@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["crates/vitro-ui", "crates/vitro-exec", "crates/vitro-showcase"]
+default-members = ["crates/vitro-showcase"]
+exclude = ["vendor"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+publish = false
+
+[workspace.dependencies]
+# gpui-ce at the commit in patches/GPUI_CE_REVISION, with patches/*.patch applied.
+# Run scripts/bootstrap.sh (macOS, Linux) or scripts/bootstrap.ps1 (Windows) first.
+gpui = { package = "gpui-ce", path = "vendor/gpui-ce/crates/gpui", features = ["image-default-formats"] }
+gpui_platform = { package = "gpui_ce_platform", path = "vendor/gpui-ce/crates/gpui_platform", features = ["font-kit", "wayland", "x11"] }
+futures = "0.3"
+vitro-ui = { path = "crates/vitro-ui" }
+vitro-exec = { path = "crates/vitro-exec" }
+
+[profile.dev.package."*"]
+opt-level = 2

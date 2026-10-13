@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Full-bleed hero artwork, the readability field, and the wordmark.
+//! Full-bleed hero artwork for the showcase, the readability field, and the wordmark.
 //!
 //! The repository must not ship official artwork, so the default backdrop is procedural.
 //! Pass a local image to see the glass over real artwork.
@@ -12,10 +12,11 @@ use gpui::{
 	linear_color_stop, linear_gradient, px,
 };
 
-use crate::{
-	icons::Icon,
-	tokens::{self, black, rgba, scale_alpha, white},
-};
+use vitro_ui::tokens::{self, black, rgba, scale_alpha, white};
+
+/// Asset path of the accent slash in the fallback artwork.
+pub const SLASH_ASSET: &str = "artwork/slash.svg";
+pub const SLASH_SVG: &[u8] = include_bytes!("../assets/artwork-slash.svg");
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Artwork {
@@ -84,11 +85,12 @@ fn procedural(accent: Rgba) -> impl IntoElement {
 				.child("A"),
 		)
 		.child(
-			div()
-				.absolute()
-				.left(px(300.))
-				.top(px(40.))
-				.child(Icon::ArtworkSlash.render(px(620.), scale_alpha(accent, 0.4))),
+			div().absolute().left(px(300.)).top(px(40.)).child(
+				gpui::svg()
+					.path(SLASH_ASSET)
+					.size(px(620.))
+					.text_color(scale_alpha(accent, 0.4)),
+			),
 		)
 }
 

@@ -7,22 +7,23 @@
 
 use std::{
 	path::PathBuf,
-	time::{Duration, SystemTime, UNIX_EPOCH},
+	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use ak_ui::{
-	Appearance, UI_FONT,
-	artwork::{Artwork, artwork_layer, readability_field, wordmark},
+use gpui::{
+	App, Bounds, Context, FocusHandle, FontWeight, IntoElement, KeyBinding, MouseButton, SharedString, Task,
+	TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
+};
+use vitro_exec::{ActivityLease, ActivityStore, TaskSlot, Throttle, publish};
+use vitro_showcase::artwork::{Artwork, SLASH_ASSET, SLASH_SVG, artwork_layer, readability_field, wordmark};
+use vitro_ui::{
+	GlassStyle, Theme, UI_FONT,
 	controls::{CapsuleButton, IconButton, Size, Tone, accent_halo},
-	glass::{Glass, GlassExt},
+	glass::GlassExt,
 	hud::{ControlBar, HudPill, pill_row, status_text},
 	icons::{Assets, Icon},
 	progress::OutlineMode,
 	tokens::{self, hud, rgba, scale_alpha},
-};
-use gpui::{
-	App, Bounds, Context, FocusHandle, FontWeight, IntoElement, KeyBinding, MouseButton, SharedString, Task,
-	TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
 
 actions!(
@@ -30,7 +31,7 @@ actions!(
 	[
 		PrimaryAction,
 		CycleAccent,
-		ToggleReduceTransparency,
+		CycleGlassStyle,
 		ToggleReduceMotion,
 		ToggleUpdateButton,
 		ToggleMusicPill,
@@ -44,9 +45,20 @@ actions!(
 
 const DOWNLOAD_BYTES: f64 = 3.42e9;
 const DOWNLOAD_RATE: f64 = 38.6e6;
-const TICK: Duration = Duration::from_millis(100);
+/// Raw progress arrives faster than the UI should redraw; `Throttle` bounds it to ~10 Hz.
+const TICK: Duration = Duration::from_millis(25);
 /// The simulated transfer runs faster than the displayed rate so the demo stays short.
 const DEMO_SPEEDUP: f64 = 9.;
+
+/// The exclusive activity, as in `LauncherLifecycleStore`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Activity {
+	#[default]
+	Idle,
+	Downloading,
+	Verifying,
+	Running,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -88,7 +100,7 @@ struct Showcase {
 	phase: Phase,
 	progress: f64,
 	accent_index: usize,
-	reduce_transparency: bool,
+	glass: GlassStyle,
 	reduce_motion: bool,
 	shows_update_button: bool,
 	expanded: Option<Pill>,
@@ -98,7 +110,9 @@ struct Showcase {
 	artwork: Artwork,
 	custom_artwork: Option<PathBuf>,
 	music_playing: bool,
-	transfer: Option<Task<()>>,
+	activity: ActivityStore<Activity>,
+	lease: Option<ActivityLease>,
+	transfer: TaskSlot,
 	_clock: Task<()>,
 }
 
@@ -120,7 +134,7 @@ impl Showcase {
 			phase: Phase::NotInstalled,
 			progress: 0.,
 			accent_index: 0,
-			reduce_transparency: false,
+			glass: GlassStyle::MacOS27(vitro_ui::Transparency::Default),
 			reduce_motion: cx.reduce_motion(),
 			shows_update_button: false,
 			expanded: None,
@@ -130,16 +144,24 @@ impl Showcase {
 			artwork: custom_artwork.clone().map_or(Artwork::Procedural, Artwork::Image),
 			custom_artwork,
 			music_playing: true,
-			transfer: None,
+			activity: ActivityStore::new(),
+			lease: None,
+			transfer: TaskSlot::new(),
 			_clock: clock,
 		}
 	}
 
-	fn appearance(&self) -> Appearance {
-		Appearance {
-			reduce_transparency: self.reduce_transparency,
+	fn theme(&self) -> Theme {
+		Theme {
+			glass: self.glass,
 			reduce_motion: self.reduce_motion,
-			..Appearance::new(ACCENTS[self.accent_index])
+			..Theme::new(ACCENTS[self.accent_index])
+		}
+	}
+
+	fn end_activity(&mut self) {
+		if let Some(lease) = self.lease.take() {
+			self.activity.end(lease);
 		}
 	}
 
@@ -147,12 +169,22 @@ impl Showcase {
 		match self.phase {
 			Phase::NotInstalled | Phase::Paused => self.start_transfer(cx),
 			Phase::Downloading => {
-				self.transfer = None;
+				// Invalidate first, so suspended work cannot republish stale progress.
+				self.transfer.invalidate();
+				self.end_activity();
 				self.phase = Phase::Paused;
 			}
 			Phase::Verifying => {}
-			Phase::Ready => self.phase = Phase::Running,
-			Phase::Running => self.enter_ready(),
+			Phase::Ready => {
+				self.lease = self.activity.begin(Activity::Running);
+				if self.lease.is_some() {
+					self.phase = Phase::Running;
+				}
+			}
+			Phase::Running => {
+				self.end_activity();
+				self.enter_ready();
+			}
 		}
 		cx.notify();
 	}
@@ -162,36 +194,68 @@ impl Showcase {
 		self.halo_generation += 1;
 	}
 
-	/// Simulates a download at 10 Hz, then a short verification.
+	/// Simulates a download whose raw progress is throttled to ~10 Hz, then a verification.
 	fn start_transfer(&mut self, cx: &mut Context<Self>) {
+		let Some(lease) = self.activity.begin(Activity::Downloading) else {
+			return;
+		};
+		self.lease = Some(lease);
 		self.phase = Phase::Downloading;
-		self.transfer = Some(cx.spawn(async move |this, cx| {
-			loop {
+		let mut progress = self.progress;
+		self.transfer.replace(cx, async move |token, this, cx| {
+			let mut throttle = Throttle::progress();
+			let (started_at, start) = (Instant::now(), progress);
+			let rate = DOWNLOAD_RATE * DEMO_SPEEDUP / DOWNLOAD_BYTES;
+			while progress < 1. {
 				cx.background_executor().timer(TICK).await;
-				let finished = this.update(cx, |this, cx| {
-					this.progress = (this.progress
-						+ DOWNLOAD_RATE * TICK.as_secs_f64() * DEMO_SPEEDUP / DOWNLOAD_BYTES)
-						.min(1.);
-					cx.notify();
-					this.progress >= 1.
-				});
-				match finished {
-					Ok(true) => break,
-					Ok(false) => continue,
-					Err(_) => return,
+				let now = Instant::now();
+				progress = (start + now.duration_since(started_at).as_secs_f64() * rate).min(1.);
+				if progress < 1. && !throttle.admit(now) {
+					continue;
+				}
+				let published = publish(
+					&this,
+					cx,
+					|view| &view.transfer,
+					token,
+					|view, cx| {
+						view.progress = progress;
+						cx.notify();
+					},
+				);
+				if !published {
+					return;
 				}
 			}
-			let _ = this.update(cx, |this, cx| {
-				this.phase = Phase::Verifying;
-				cx.notify();
-			});
+			let verifying = publish(
+				&this,
+				cx,
+				|view| &view.transfer,
+				token,
+				|view, cx| {
+					view.progress = 1.;
+					view.phase = Phase::Verifying;
+					view.activity.update(lease, Activity::Verifying);
+					cx.notify();
+				},
+			);
+			if !verifying {
+				return;
+			}
 			cx.background_executor().timer(Duration::from_millis(2600)).await;
-			let _ = this.update(cx, |this, cx| {
-				this.transfer = None;
-				this.enter_ready();
-				cx.notify();
-			});
-		}));
+			publish(
+				&this,
+				cx,
+				|view| &view.transfer,
+				token,
+				|view, cx| {
+					view.transfer.finish(token);
+					view.end_activity();
+					view.enter_ready();
+					cx.notify();
+				},
+			);
+		});
 	}
 
 	fn toggle_pill(&mut self, pill: Pill, cx: &mut Context<Self>) {
@@ -254,8 +318,8 @@ impl Showcase {
 	}
 
 	fn primary_button(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-		let appearance = self.appearance();
-		let accent = Tone::Accent(appearance.accent);
+		let theme = self.theme();
+		let accent = Tone::Accent(theme.accent);
 		let (title, icon, tone, enabled) = match self.phase {
 			Phase::NotInstalled => ("Install", Icon::ArrowDown, accent, true),
 			Phase::Downloading => ("Pause", Icon::Pause, Tone::Neutral, true),
@@ -264,13 +328,13 @@ impl Showcase {
 			Phase::Ready => ("Play", Icon::Play, accent, true),
 			Phase::Running => ("Stop", Icon::Stop, Tone::Neutral, true),
 		};
-		let button = CapsuleButton::new("primary-action", title, tone, appearance)
+		let button = CapsuleButton::new("primary-action", title, tone, theme)
 			.icon(icon)
 			.size(Size::Large)
 			.enabled(enabled)
 			.on_click(cx.listener(|this, _, _, cx| this.primary_action(cx)));
 		if self.phase == Phase::Ready {
-			accent_halo(appearance.accent, self.halo_generation, &appearance, button).into_any_element()
+			accent_halo(theme.accent, self.halo_generation, &theme, button).into_any_element()
 		} else {
 			button.into_any_element()
 		}
@@ -286,7 +350,7 @@ impl Showcase {
 	}
 
 	fn pill_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-		let appearance = self.appearance();
+		let theme = self.theme();
 		let receded = |pill: Pill| self.expanded.is_some() && self.expanded != Some(pill);
 		let now = SystemTime::now()
 			.duration_since(UNIX_EPOCH)
@@ -301,7 +365,7 @@ impl Showcase {
 				.truncate()
 				.font_weight(FontWeight::MEDIUM)
 				.child("Sanity Restored — Lobby Theme"),
-			appearance,
+			theme,
 		)
 		.detail(
 			div()
@@ -323,7 +387,7 @@ impl Showcase {
 								"music-play",
 								if self.music_playing { "Pause" } else { "Play" },
 								Tone::Neutral,
-								appearance,
+								theme,
 							)
 							.icon(if self.music_playing {
 								Icon::Pause
@@ -337,7 +401,7 @@ impl Showcase {
 							})),
 						)
 						.child(
-							CapsuleButton::new("music-next", "Next", Tone::Neutral, appearance)
+							CapsuleButton::new("music-next", "Next", Tone::Neutral, theme)
 								.icon(Icon::Forward)
 								.size(Size::Compact),
 						),
@@ -353,7 +417,7 @@ impl Showcase {
 			"version-pill",
 			Icon::Tag,
 			div().font_weight(FontWeight::MEDIUM).child("2.6.81"),
-			appearance,
+			theme,
 		)
 		.detail(
 			div()
@@ -366,7 +430,7 @@ impl Showcase {
 						.child("Installed 2.6.81 · Latest 2.6.81"),
 				)
 				.child(
-					CapsuleButton::new("check-updates", "Check for Updates", Tone::Neutral, appearance)
+					CapsuleButton::new("check-updates", "Check for Updates", Tone::Neutral, theme)
 						.icon(Icon::ArrowClockwise)
 						.size(Size::Compact),
 				),
@@ -391,7 +455,7 @@ impl Showcase {
 						.text_color(tokens::SECONDARY_TEXT)
 						.child(countdown(now, reset_hour)),
 				),
-			appearance,
+			theme,
 		)
 		.detail(
 			div()
@@ -404,7 +468,7 @@ impl Showcase {
 						*name,
 						countdown(now, *hour),
 						index == self.region,
-						appearance,
+						theme,
 						cx.listener(move |this, _, _, cx| {
 							this.region = index;
 							cx.notify();
@@ -431,7 +495,7 @@ impl Showcase {
 	}
 
 	fn legend(&self) -> impl IntoElement + use<> {
-		let appearance = self.appearance();
+		let theme = self.theme();
 		let row = |key: &'static str, label: SharedString| {
 			div()
 				.flex()
@@ -441,7 +505,7 @@ impl Showcase {
 					div()
 						.w(px(46.))
 						.font_weight(FontWeight::SEMIBOLD)
-						.text_color(tokens::contrast_tint(appearance.accent))
+						.text_color(tokens::contrast_tint(theme.accent))
 						.child(key),
 				)
 				.child(div().text_color(tokens::PRIMARY_TEXT).child(label))
@@ -459,7 +523,7 @@ impl Showcase {
 			.text_size(px(11.))
 			.rounded(tokens::radius::PANEL)
 			.rounded_smoothing_ios()
-			.glass(Glass::new(Some(appearance.hud_tint), appearance.treatment()))
+			.glass(theme.surface(Some(theme.hud_tint)))
 			.border_1()
 			.border_color(scale_alpha(tokens::HAIRLINE, tokens::control::HUD_BORDER_OPACITY))
 			.child(
@@ -473,10 +537,7 @@ impl Showcase {
 			.child(row("A", "Next accent".into()))
 			.child(row("1 2 3", "Music, version, status pill".into()))
 			.child(row("U", "Show the neutral update button".into()))
-			.child(row(
-				"T",
-				format!("Reduce Transparency ({})", state(self.reduce_transparency)).into(),
-			))
+			.child(row("G", format!("Glass: {}", self.glass.label()).into()))
 			.child(row(
 				"M",
 				format!("Reduce Motion ({})", state(self.reduce_motion)).into(),
@@ -490,15 +551,15 @@ impl Showcase {
 
 impl Render for Showcase {
 	fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-		let appearance = self.appearance();
+		let theme = self.theme();
 		let (title, detail, emphasized) = self.status();
 		let (outline, outline_active) = self.outline();
 
-		let mut bar = ControlBar::new(status_text(title, detail, emphasized), appearance)
-			.progress(outline, outline_active);
+		let mut bar =
+			ControlBar::new(status_text(title, detail, emphasized), theme).progress(outline, outline_active);
 		if self.shows_update_button {
 			bar = bar.action(
-				CapsuleButton::new("install-update", "Install Update", Tone::Neutral, appearance)
+				CapsuleButton::new("install-update", "Install Update", Tone::Neutral, theme)
 					.icon(Icon::ArrowDown),
 			);
 		}
@@ -517,12 +578,10 @@ impl Render for Showcase {
 			.justify_between()
 			.child(div().pt(px(34.)).pl(px(6.)).child(wordmark(tokens::text::TITLE)))
 			.child(
-				IconButton::hud("settings", Icon::Gear, appearance).on_click(cx.listener(
-					|this, _, _, cx| {
-						this.shows_legend = !this.shows_legend;
-						cx.notify();
-					},
-				)),
+				IconButton::hud("settings", Icon::Gear, theme).on_click(cx.listener(|this, _, _, cx| {
+					this.shows_legend = !this.shows_legend;
+					cx.notify();
+				})),
 			);
 
 		let hud = div()
@@ -552,8 +611,8 @@ impl Render for Showcase {
 				this.halo_generation += 1;
 				cx.notify();
 			}))
-			.on_action(cx.listener(|this, _: &ToggleReduceTransparency, _, cx| {
-				this.reduce_transparency = !this.reduce_transparency;
+			.on_action(cx.listener(|this, _: &CycleGlassStyle, _, cx| {
+				this.glass = this.glass.next();
 				cx.notify();
 			}))
 			.on_action(cx.listener(|this, _: &ToggleReduceMotion, _, cx| {
@@ -580,8 +639,8 @@ impl Render for Showcase {
 				this.shows_legend = !this.shows_legend;
 				cx.notify();
 			}))
-			.child(artwork_layer(&self.artwork, appearance.accent))
-			.child(readability_field(self.reduce_transparency))
+			.child(artwork_layer(&self.artwork, theme.accent))
+			.child(readability_field(self.glass == GlassStyle::ReducedTransparency))
 			// Like the SwiftUI HUD, a click outside an expanded pill collapses it.
 			.when(self.expanded.is_some(), |this| {
 				this.child(div().absolute().size_full().on_mouse_down(
@@ -621,12 +680,12 @@ fn main() {
 		.map(PathBuf::from);
 
 	gpui_platform::application()
-		.with_assets(Assets)
+		.with_assets(Assets::default().with(SLASH_ASSET, SLASH_SVG))
 		.run(move |cx: &mut App| {
 			cx.bind_keys([
 				KeyBinding::new("space", PrimaryAction, Some("Showcase")),
 				KeyBinding::new("a", CycleAccent, Some("Showcase")),
-				KeyBinding::new("t", ToggleReduceTransparency, Some("Showcase")),
+				KeyBinding::new("g", CycleGlassStyle, Some("Showcase")),
 				KeyBinding::new("m", ToggleReduceMotion, Some("Showcase")),
 				KeyBinding::new("u", ToggleUpdateButton, Some("Showcase")),
 				KeyBinding::new("1", ToggleMusicPill, Some("Showcase")),

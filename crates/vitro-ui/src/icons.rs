@@ -10,7 +10,6 @@ use gpui::{AssetSource, Pixels, Rgba, SharedString, Styled, Svg, svg};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
 	ArrowClockwise,
-	ArtworkSlash,
 	ArrowDown,
 	Checkmark,
 	ChevronDown,
@@ -27,9 +26,8 @@ pub enum Icon {
 }
 
 impl Icon {
-	const ALL: [Self; 15] = [
+	pub const ALL: [Self; 14] = [
 		Self::ArrowClockwise,
-		Self::ArtworkSlash,
 		Self::ArrowDown,
 		Self::Checkmark,
 		Self::ChevronDown,
@@ -56,7 +54,6 @@ impl Icon {
 		}
 		match self {
 			Self::ArrowClockwise => icon!("arrow-clockwise"),
-			Self::ArtworkSlash => icon!("artwork-slash"),
 			Self::ArrowDown => icon!("arrow-down"),
 			Self::Checkmark => icon!("checkmark"),
 			Self::ChevronDown => icon!("chevron-down"),
@@ -82,22 +79,39 @@ impl Icon {
 	}
 }
 
-/// Serves the embedded icons to GPUI's `svg()` element.
-pub struct Assets;
+/// Serves the embedded icons, plus any app assets, to GPUI's `svg()` and `img()` elements.
+#[derive(Default)]
+pub struct Assets {
+	extra: Vec<(&'static str, &'static [u8])>,
+}
+
+impl Assets {
+	/// Adds an app-owned asset served at `path`.
+	pub fn with(mut self, path: &'static str, bytes: &'static [u8]) -> Self {
+		self.extra.push((path, bytes));
+		self
+	}
+
+	fn entries(&self) -> impl Iterator<Item = (&'static str, &'static [u8])> + '_ {
+		Icon::ALL
+			.iter()
+			.map(|icon| icon.file())
+			.chain(self.extra.iter().copied())
+	}
+}
 
 impl AssetSource for Assets {
 	fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
-		Ok(Icon::ALL
-			.iter()
-			.map(|icon| icon.file())
+		Ok(self
+			.entries()
 			.find(|(name, _)| *name == path)
 			.map(|(_, bytes)| Cow::Borrowed(bytes)))
 	}
 
 	fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
-		Ok(Icon::ALL
-			.iter()
-			.map(|icon| icon.path())
+		Ok(self
+			.entries()
+			.map(|(name, _)| name)
 			.filter(|name| name.starts_with(path))
 			.map(SharedString::from)
 			.collect())

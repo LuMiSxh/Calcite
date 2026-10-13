@@ -1,0 +1,14 @@
+[package]
+name = "vitro-exec"
+description = "Minimal execution layer for gpui-ce views: task slots, activity leases, progress throttling, bounded parallelism"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
