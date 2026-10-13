@@ -1,8 +1,8 @@
-# Vitro
+# Calcite
 
-Vitro is a glass UI framework on [gpui-ce](https://github.com/gpui-ce/gpui-ce). It is a standalone
-Cargo workspace: it does not depend on the Arknights Client repository. You can move this folder to
-its own repository with `git subtree split --prefix proto`.
+Calcite is a glass UI library on [gpui-ce](https://github.com/gpui-ce/gpui-ce). This workspace
+holds the library, the Vitro execution layer, and the Vitro showcase. It started as the Rust study
+for [Arknights Client](https://github.com/LuMiSxh/Arknights-MacOS-Client) and does not depend on it.
 
 | Crate            | Contents                                                                                     |
 | ---------------- | -------------------------------------------------------------------------------------------- |

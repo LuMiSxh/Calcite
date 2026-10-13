@@ -162,6 +162,9 @@ const LIGHT_ANGLE: f32 = -2.25;
 const POINTER_RADIUS: Pixels = px(72.);
 const POINTER_STRENGTH: f32 = 0.30;
 
+/// Lens depth of glass inside another surface, relative to resting glass.
+const NESTED_THICKNESS: f32 = 0.35;
+
 /// Strength of the tinted glass layer that `Glass.regular.tint(_:)` lays over the backplate.
 const TINTED_GLASS_OPACITY: f32 = 0.24;
 /// How far that layer is lifted toward white: system tinted glass reads lighter than the tint.
@@ -262,7 +265,14 @@ impl Glass {
 		let optics = optics(self.style);
 		let thickness = match self.elevation {
 			Elevation::Raised => 1.3,
-			_ => 1.,
+			Elevation::Resting => 1.,
+			Elevation::None => NESTED_THICKNESS,
+		};
+		// Glass inside another surface (controls in a panel or a bar) reads almost flat in
+		// the launcher: a tinted fill and its border, with only a trace of rim and light.
+		let (rim, specular, dispersion) = match self.elevation {
+			Elevation::None => (optics.rim * 0.5, optics.specular * 0.4, 0.),
+			_ => (optics.rim, optics.specular, optics.dispersion),
 		};
 		let fill = self.fill();
 		let pointer_color = with_alpha(tokens::contrast_tint(self.pointer_tint), POINTER_STRENGTH);
@@ -270,12 +280,12 @@ impl Glass {
 			blur: px(optics.blur * thickness),
 			bezel: px(optics.bezel * thickness),
 			refraction: px(optics.refraction * thickness),
-			dispersion: optics.dispersion,
+			dispersion,
 			saturation: optics.saturation,
 			brightness: 1.,
 			fill: [fill.red, fill.green, fill.blue, fill.alpha],
-			rim: optics.rim,
-			specular: optics.specular,
+			rim,
+			specular,
 			light_angle: LIGHT_ANGLE,
 			pointer: self.pointer.map(|point| [f32::from(point.x), f32::from(point.y)]),
 			pointer_radius: POINTER_RADIUS,
