@@ -22,6 +22,20 @@ pub const fn black(a: f32) -> Rgba {
 
 pub const CLEAR: Rgba = rgba(0., 0., 0., 0.);
 
+/// Spacing scale (`LauncherVisuals.Spacing`). Use it for gaps and padding instead of raw
+/// pixel values.
+pub mod space {
+	use super::*;
+	pub const HAIRLINE: Pixels = px(1.);
+	pub const COMPACT: Pixels = px(4.);
+	pub const TIGHT: Pixels = px(6.);
+	pub const CONTROL: Pixels = px(8.);
+	pub const CONTENT: Pixels = px(12.);
+	pub const PANEL: Pixels = px(16.);
+	pub const SECTION: Pixels = px(20.);
+	pub const PAGE: Pixels = px(26.);
+}
+
 pub mod radius {
 	use super::*;
 	pub const CONTROL: Pixels = px(10.);
@@ -59,6 +73,13 @@ pub mod text {
 	pub const STATUS_TITLE: Pixels = px(14.);
 	pub const STATUS_PERCENT: Pixels = px(16.);
 	pub const TITLE: Pixels = px(22.);
+	/// Page titles in settings and the setup assistant.
+	pub const PAGE_TITLE: Pixels = px(26.);
+	pub const COMPLETION_LABEL: Pixels = px(15.);
+	pub const HUD_GLYPH: Pixels = px(13.);
+	pub const HUD_PROMINENT_GLYPH: Pixels = px(16.);
+	pub const MENU_CHEVRON: Pixels = px(9.);
+	pub const TAG_GLYPH: Pixels = px(10.);
 }
 
 pub mod hud {

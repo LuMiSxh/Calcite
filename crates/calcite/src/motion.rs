@@ -26,8 +26,48 @@ pub enum Curve {
 	Crossfade,
 	/// Selection changes in lists and segmented controls.
 	Select,
+	/// Page and step transitions.
+	Page,
 	/// Determinate progress fill changes.
 	Progress,
+	/// The dimming backdrop behind popups.
+	Backdrop,
+	/// The expanding ripple on completion.
+	Ripple,
+	/// A quick ease-in as an element settles out.
+	Settle,
+	/// Inline detail content opening or closing.
+	Disclosure,
+}
+
+impl Curve {
+	pub const ALL: [Self; 15] = [
+		Self::Press,
+		Self::Release,
+		Self::Hover,
+		Self::State,
+		Self::Morph,
+		Self::Present,
+		Self::Dismiss,
+		Self::Crossfade,
+		Self::Select,
+		Self::Page,
+		Self::Progress,
+		Self::Backdrop,
+		Self::Ripple,
+		Self::Settle,
+		Self::Disclosure,
+	];
+}
+
+/// SwiftUI `easeOut`: a cubic that starts fast and slows into place.
+pub fn ease_out(t: f32) -> f32 {
+	1. - (1. - t).powi(3)
+}
+
+/// SwiftUI `easeIn`: a cubic that starts slow and leaves fast.
+pub fn ease_in(t: f32) -> f32 {
+	t.powi(3)
 }
 
 /// SwiftUI `spring(duration:bounce:)` with mass 1:
@@ -84,9 +124,30 @@ impl Curve {
 				duration: 0.16,
 				easing: ease_in_out,
 			},
+			Self::Page => Eased {
+				duration: 0.22,
+				easing: ease_in_out,
+			},
 			Self::Progress => Eased {
 				duration: 0.20,
 				easing: linear,
+			},
+			Self::Backdrop => Eased {
+				duration: 0.24,
+				easing: ease_out,
+			},
+			Self::Ripple => Eased {
+				duration: 0.9,
+				easing: ease_out,
+			},
+			Self::Settle => Eased {
+				duration: 0.18,
+				easing: ease_in,
+			},
+			// SwiftUI `snappy` is a spring with a small bounce.
+			Self::Disclosure => Spring {
+				duration: 0.3,
+				bounce: 0.15,
 			},
 		}
 	}
@@ -121,6 +182,24 @@ impl Curve {
 		}
 	}
 
+	/// The delay of the sibling at `index` when siblings enter together, such as HUD pills.
+	pub fn stagger(index: usize, reduce_motion: bool) -> Duration {
+		if reduce_motion {
+			return Duration::ZERO;
+		}
+		Duration::from_secs_f32(index as f32 * STAGGER_STEP)
+	}
+
+	/// A quiet fade that keeps a state change legible under Reduce Motion
+	/// (`LauncherMotion.fade`).
+	pub fn fade(reduce_motion: bool) -> AnyMotion {
+		if reduce_motion {
+			Duration::from_secs_f32(0.15).with_easing(ease_in_out).into()
+		} else {
+			Self::State.transition(false)
+		}
+	}
+
 	/// Motion for a one-shot `with_animation`, sampled over the spring's settle time.
 	pub fn timed(self, reduce_motion: bool) -> Motion {
 		if reduce_motion {
@@ -141,6 +220,8 @@ impl Curve {
 pub mod cycle {
 	/// Period of the halo pulse and the indeterminate pulse.
 	pub const BREATHING: f32 = 3.2;
+	/// Length of the completion feedback.
+	pub const COMPLETION_FEEDBACK: f32 = 0.4;
 	pub const PROGRESS_SWEEP_FADE_IN: f32 = 0.12;
 	pub const PROGRESS_SWEEP_TRAVEL: f32 = 1.40;
 	pub const PROGRESS_SWEEP_FADE_OUT: f32 = 0.25;
@@ -150,6 +231,37 @@ pub mod cycle {
 
 	pub const fn progress_sweep_total() -> f32 {
 		PROGRESS_SWEEP_FADE_IN + PROGRESS_SWEEP_TRAVEL + PROGRESS_SWEEP_FADE_OUT + PROGRESS_SWEEP_PAUSE
+	}
+}
+
+/// Delay in seconds between siblings that enter together.
+const STAGGER_STEP: f32 = 0.045;
+
+/// How content materializes instead of popping in (`AnyTransition.materialize`): blur,
+/// scale, and opacity at a progress from 0 (hidden) to 1 (shown). Reduce Motion keeps only
+/// the opacity.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Materialize {
+	pub opacity: f32,
+	pub scale: f32,
+	pub blur: f32,
+}
+
+impl Materialize {
+	pub fn at(progress: f32, reduce_motion: bool) -> Self {
+		let t = progress.clamp(0., 1.);
+		if reduce_motion {
+			return Self {
+				opacity: t,
+				scale: 1.,
+				blur: 0.,
+			};
+		}
+		Self {
+			opacity: t,
+			scale: lerp(0.94, 1., t),
+			blur: lerp(6., 0., t),
+		}
 	}
 }
 

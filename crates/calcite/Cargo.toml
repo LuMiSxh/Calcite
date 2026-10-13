@@ -5,21 +5,30 @@ description = "A glass UI library for gpui-ce: Liquid Glass looks of macOS 26 an
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-repository = "https://github.com/LuMiSxh/calcite"
+repository = "https://github.com/LuMiSxh/Calcite"
 readme = "README.md"
 keywords = ["gpui", "ui", "glass", "liquid-glass", "gui"]
 categories = ["gui"]
 include = ["src/**/*", "assets/**/*", "examples/**/*", "build.rs", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [features]
-default = ["lucide"]
+default = ["lucide", "tint"]
 # The full Lucide set as the `Lucide` enum (about 2100 icons, 0.9 MB of SVG).
 lucide = []
+# Dynamic theme colors from artwork through calcite-tint.
+tint = ["dep:calcite-tint"]
 
 [dependencies]
 gpui.workspace = true
 gpui_ce_elements.workspace = true
 smallvec = "1"
+calcite-tint = { workspace = true, optional = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData"] }
 
 [dev-dependencies]
 gpui_platform.workspace = true

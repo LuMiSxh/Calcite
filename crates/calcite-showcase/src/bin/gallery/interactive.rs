@@ -156,12 +156,15 @@ impl Gallery {
 							.step(0.05)
 							.width(px(200.))
 							.label("Volume")
+							.leading_icon(Lucide::Volume1)
+							.trailing_icon(Lucide::Volume2)
+							.ticks(11)
+							.value_label(true)
 							.on_change(cx.listener(|this, value: &f32, _, cx| {
 								this.volume = *value;
 								cx.notify();
 							})),
 					)
-					.child(label(format!("{:.0} %", self.volume * 100.)))
 					.into_any_element(),
 			))
 			.child(row(

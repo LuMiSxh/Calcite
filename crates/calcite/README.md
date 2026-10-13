@@ -32,7 +32,7 @@ Calcite and your app must use the same patched gpui-ce.
 
    ```toml
    [dependencies]
-   calcite = { git = "https://github.com/LuMiSxh/calcite", rev = "CALCITE_COMMIT" }
+   calcite = { git = "https://github.com/LuMiSxh/Calcite", rev = "CALCITE_COMMIT" }
    gpui = { package = "gpui-ce", git = "https://github.com/OWNER/gpui-ce", rev = "GPUI_COMMIT" }
    gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/OWNER/gpui-ce", rev = "GPUI_COMMIT" }
    ```
@@ -45,6 +45,7 @@ Cargo features:
 | Feature  | Default | Contents                                                         |
 | -------- | ------- | ---------------------------------------------------------------- |
 | `lucide` | yes     | The `Lucide` enum with every Lucide icon (about 0.9 MB of SVG). |
+| `tint`   | yes     | `calcite::tint` and `Theme::set_artwork_tint` for Dynamic Theme. |
 
 ## Start
 
@@ -83,12 +84,14 @@ cargo run -p calcite --example minimal
 | -------- | ------------------------------------------------------------------------------------------------ |
 | Actions  | `button`, `icon_button`, `halo`, `done_button`                                                   |
 | Forms    | `toggle` (elongated macOS 26 shape, glass lens on press), `slider`, `segmented`, `text_field`   |
+| Choices  | `choice_card` (radio, checkbox, or action), `choice_group`, `tag`, `chip`                         |
+| Steps    | `step_rail`, `step` (done, current, upcoming)                                                    |
 | Menus    | `menu_picker`, `action_menu`                                                                     |
 | HUD      | `pill`, `control_bar`, `status`, `progress_outline`                                              |
 | Layout   | `settings_page`, `settings_panel`, `page_header`, `action_row`, `danger_zone`, `hairline`        |
 | Lists    | `nav_rail`, `nav_item`, `list_row`, `link`, `document_link`                                      |
-| Overlays | `modal`, `modal_layer`, `floating_action_bar`                                                    |
-| Feedback | `badge`, `skeleton`, `.glass_tooltip(text)`                                                      |
+| Overlays | `modal`, `modal_layer`, `floating_action_bar`, `confirm_dialog`                                  |
+| Feedback | `badge`, `banner`, `spinner`, `progress_bar`, `empty_state`, `skeleton`, `.glass_tooltip(text)`  |
 | Surfaces | `.glass(Glass)`, `.glass_hud(&theme)`, `.glass_tinted(&theme, tint)`, `glass_panel`              |
 
 Sizes: `.compact()`, `.size(Size::Regular)` (default), and `.large()`. Tones: `.accent()`,
@@ -96,20 +99,61 @@ Sizes: `.compact()`, `.size(Size::Regular)` (default), and `.large()`. Tones: `.
 
 ## Theme
 
+The theme holds a palette, the accent, the glass style, and the accessibility settings. Every
+component reads it with `cx.theme()`. This works in `App`, `Context<V>`, `AsyncApp`, and
+`AsyncWindowContext`.
+
 ```rust
 Theme::update(cx, |theme| theme.glass = GlassStyle::MacOS27(Transparency::Clear));
-Theme::update(cx, |theme| *theme = theme.with_accent(Some(gpui::rgba(0xF59E38FF))));
+Theme::set_dynamic_accent(cx, Some(gpui::rgba(0xF59E38FF)));
 ```
 
-| Field          | Effect                                                                   |
-| -------------- | ------------------------------------------------------------------------ |
-| `accent`       | The tint of primary actions, selection, progress, and switches.          |
-| `glass`        | `MacOS26`, `MacOS27(Clear / Default / Tinted)`, or `ReducedTransparency`. |
-| `reduce_motion` | Springs settle at once. Scale and stretch effects stop.                 |
-| `shows_borders` | Glass draws its own edge (Increase Contrast).                          |
+Theme changes crossfade over the `Crossfade` curve (0.48 s). Under Reduce Motion they apply at
+once. Use `Theme::set_immediately` to skip the crossfade.
+
+| Field             | Effect                                                                    |
+| ----------------- | ------------------------------------------------------------------------- |
+| `palette`         | Every color the components draw with.                                     |
+| `dynamic_accent`  | The accent from the artwork. `None` uses the palette accent.              |
+| `glass`           | `MacOS26`, `MacOS27(Clear / Default / Tinted)`, or `ReducedTransparency`. |
+| `reduce_motion`   | Springs settle at once. Scale and stretch effects stop.                   |
+| `shows_borders`   | Glass draws its own edge (Increase Contrast).                             |
 
 `Theme::decorative_motion(window)` is false while the window is inactive or Reduce Motion is on.
 Continuous animation must check it.
+
+### Palette
+
+A `Palette` holds every color: the fallback accent, neutrals, semantic colors, text, panels, and
+the HUD tint. Pick one at compile time with a `const`:
+
+```rust
+const EMBER: Palette = Palette {
+	accent: tokens::rgba(0.96, 0.62, 0.30, 1.),
+	panel_background: tokens::rgba(0.09, 0.07, 0.06, 1.),
+	..Palette::ARKNIGHTS
+};
+
+calcite::init_with(cx, Theme::new(EMBER));
+```
+
+Replace it at runtime. The dynamic accent stays:
+
+```rust
+Theme::update(cx, |theme| *theme = theme.with_palette(Palette::ARKNIGHTS));
+```
+
+### Dynamic Theme
+
+Dynamic Theme changes two values only: the accent and the hue of the HUD tint. The palette
+stays. With the default `tint` feature, `calcite::tint` finds them in artwork:
+
+```rust
+let tint = calcite::tint::Extractor::default().extract(&rgba_pixels, width, height);
+Theme::set_artwork_tint(cx, tint); // `None` for artwork without a hue: back to the palette accent
+```
+
+Run the extraction off the UI thread. The `home` showcase shows the pattern.
 
 ## Icons
 
@@ -132,6 +176,63 @@ calcite::icons! {
 
 To vendor a new Lucide version, run `scripts/update-lucide.sh VERSION`. The script checks the npm
 integrity hash.
+
+## App icon and bundling
+
+GPUI shows the generic executable icon until the app sets its own. `AppIcon` covers `cargo run`:
+
+```rust
+static ICON: AppIcon = calcite::app_icon!("assets/icon.png"); // square PNG, 1024 px
+
+application.run(|cx| {
+	calcite::init(cx);
+	ICON.install(cx); // macOS: Dock and app switcher
+	cx.open_window(ICON.window_options(WindowOptions::default()), |_, cx| /* … */);
+});
+```
+
+| Platform | Where the icon comes from                                                                 |
+| -------- | ----------------------------------------------------------------------------------------- |
+| macOS    | `AppIcon::install` without a bundle; the `.icns` of the `.app` in a bundle.               |
+| Windows  | Icon resource 1 of the `.exe`. Embed it in `build.rs` (see below).                        |
+| X11      | `AppIcon::window_options`.                                                                |
+| Wayland  | The `.desktop` file. Set `WindowOptions::app_id` to the binary name, like the bundle does. |
+
+Embed the Windows icon in `build.rs`:
+
+```toml
+[build-dependencies]
+calcite-bundle = { git = "https://github.com/LuMiSxh/Calcite", default-features = false }
+```
+
+```rust
+fn main() {
+	calcite_bundle::build::windows_icon("assets/icon.png");
+}
+```
+
+`calcite-bundle` also packages the app: a `.app` and DMG on macOS, an NSIS installer or MSI on
+Windows, and a deb, AppImage, or pacman package on Linux. It wraps
+[cargo-packager](https://github.com/crabnebula-dev/cargo-packager) and makes every icon size from
+the one PNG:
+
+```toml
+[package.metadata.calcite.bundle]
+name = "My App"
+identifier = "dev.example.app"
+icon = "assets/icon.png"
+resources = ["assets/artwork/**/*"]
+minimum-macos = "13.0"
+```
+
+```sh
+cargo install --git https://github.com/LuMiSxh/Calcite calcite-bundle
+cargo calcite bundle                      # the platform's default formats
+cargo calcite bundle --format dmg --bin my-app
+```
+
+Packages land in `target/calcite-bundle/release`. Signing and notarization go through
+cargo-packager's own settings; the wrapper does not set them yet.
 
 ## Key bindings
 

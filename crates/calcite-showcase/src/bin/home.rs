@@ -10,7 +10,7 @@ use std::{
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use calcite::{UI_FONT, prelude::*, tokens::hud};
+use calcite::{UI_FONT, app_icon::AppIcon, prelude::*, tokens::hud};
 use calcite_exec::prelude::*;
 use calcite_showcase::artwork::{
 	Artwork, SLASH_ASSET, SLASH_SVG, artwork_layer, readability_field, wordmark,
@@ -109,6 +109,29 @@ struct Home {
 }
 
 impl Home {
+	/// Dynamic Theme: the accent and the HUD tint hue follow the artwork; the crossfade comes
+	/// from the theme. A result for artwork that is no longer shown is dropped.
+	fn apply_artwork_theme(&mut self, cx: &mut Context<Self>) {
+		let Artwork::Image(path) = self.artwork.clone() else {
+			Theme::set_artwork_tint(cx, None);
+			return;
+		};
+		cx.spawn(async move |this, cx| {
+			let source = path.clone();
+			let tint = cx
+				.background_executor()
+				.spawn(async move { artwork_tint(&source) })
+				.await;
+			this.update(cx, |this, cx| {
+				if this.artwork == Artwork::Image(path) {
+					Theme::set_artwork_tint(cx, tint);
+				}
+			})
+			.ok();
+		})
+		.detach();
+	}
+
 	fn new(custom_artwork: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
 		let focus = cx.focus_handle();
 		window.focus(&focus, cx);
@@ -539,6 +562,7 @@ impl Render for Home {
 						Artwork::Procedural => Artwork::Image(path.clone()),
 						Artwork::Image(_) => Artwork::Procedural,
 					};
+					this.apply_artwork_theme(cx);
 					cx.notify();
 				}
 			}))
@@ -564,6 +588,19 @@ impl Render for Home {
 	}
 }
 
+/// The artwork's tint from a small thumbnail, or `None` when it has no hue or fails to load.
+fn artwork_tint(path: &std::path::Path) -> Option<calcite::tint::Tint> {
+	let image = match image::open(path) {
+		Ok(image) => image.thumbnail(64, 64).to_rgba8(),
+		Err(error) => {
+			eprintln!("artwork tint: {}: {error}", path.display());
+			return None;
+		}
+	};
+	let (width, height) = image.dimensions();
+	calcite::tint::Extractor::default().extract(image.as_raw(), width as usize, height as usize)
+}
+
 fn gigabytes(bytes: f64) -> String {
 	format!("{:.2} GB", bytes / 1e9)
 }
@@ -580,6 +617,9 @@ fn countdown(now: u64, reset_hour: u64) -> String {
 	)
 }
 
+/// The Dock, task bar, and window icon outside a bundle.
+static ICON: AppIcon = calcite::app_icon!("assets/icon.png");
+
 fn main() {
 	let custom_artwork = std::env::args_os()
 		.nth(1)
@@ -590,6 +630,7 @@ fn main() {
 		.with_assets(Assets::default().with(SLASH_ASSET, SLASH_SVG))
 		.run(move |cx: &mut App| {
 			calcite::init(cx);
+			ICON.install(cx);
 			keymap!(cx, {
 				"Home" => {
 					"space" => PrimaryAction,
@@ -615,7 +656,7 @@ fn main() {
 
 			let bounds = Bounds::centered(None, size(px(1040.), px(680.)), cx);
 			cx.open_window(
-				WindowOptions {
+				ICON.window_options(WindowOptions {
 					window_bounds: Some(WindowBounds::Windowed(bounds)),
 					window_min_size: Some(size(px(880.), px(560.))),
 					titlebar: Some(TitlebarOptions {
@@ -624,8 +665,14 @@ fn main() {
 						traffic_light_position: None,
 					}),
 					..Default::default()
+				}),
+				move |window, cx| {
+					cx.new(|cx| {
+						let mut home = Home::new(custom_artwork, window, cx);
+						home.apply_artwork_theme(cx);
+						home
+					})
 				},
-				move |window, cx| cx.new(|cx| Home::new(custom_artwork, window, cx)),
 			)
 			.expect("failed to open the home window");
 			cx.activate(true);

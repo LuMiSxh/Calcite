@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/calcite", "crates/calcite-exec", "crates/calcite-tint", "crates/calcite-showcase"]
+members = ["crates/calcite", "crates/calcite-exec", "crates/calcite-tint", "crates/calcite-bundle", "crates/calcite-showcase"]
 default-members = ["crates/calcite-showcase"]
 exclude = ["vendor"]
 
@@ -20,6 +20,7 @@ futures = "0.3"
 calcite = { path = "crates/calcite" }
 calcite-exec = { path = "crates/calcite-exec" }
 calcite-tint = { path = "crates/calcite-tint" }
+calcite-bundle = { path = "crates/calcite-bundle", default-features = false }
 
 [profile.dev.package."*"]
 opt-level = 2

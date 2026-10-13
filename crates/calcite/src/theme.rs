@@ -192,6 +192,20 @@ impl Theme {
 	pub fn set_dynamic_accent(cx: &mut App, accent: Option<Rgba>) {
 		Self::update(cx, |theme| *theme = theme.with_accent(accent));
 	}
+
+	/// Sets the dynamic accent from an artwork tint (see [`calcite_tint::Extractor`]).
+	/// `None`, for artwork without a hue, returns to the palette accent.
+	#[cfg(feature = "tint")]
+	pub fn set_artwork_tint(cx: &mut App, tint: Option<calcite_tint::Tint>) {
+		Self::set_dynamic_accent(cx, tint.map(|tint| tint_color(tint.accent)));
+	}
+}
+
+/// An artwork color as an opaque straight-sRGB color.
+#[cfg(feature = "tint")]
+pub fn tint_color(color: calcite_tint::Hsb) -> Rgba {
+	let [red, green, blue] = color.to_rgb();
+	crate::tokens::rgba(red, green, blue, 1.)
 }
 
 const CROSSFADE: Curve = Curve::Crossfade;

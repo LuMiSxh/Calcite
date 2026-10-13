@@ -23,6 +23,7 @@ use crate::{
 	controls::theme_override,
 	glass::{Elevation, GlassExt},
 	icons::{Icon, IconRef},
+	interaction::{FocusShape, KeyHandler, KeyRole, KeyboardFocus, focus_handle, register_key_target},
 	theme::{ActiveTheme, Theme},
 	tokens::{self, control, radius, scale_alpha, white, with_alpha},
 };
@@ -37,13 +38,33 @@ struct Item {
 	action: Action,
 }
 
-/// The open state of a menu, kept across frames.
+/// The open state of a menu, kept across frames. While the menu is open, Escape closes it
+/// before anything under it.
 fn open_state(id: &ElementId, window: &mut Window, cx: &mut App) -> Entity<bool> {
-	window.use_keyed_state((id.clone(), "calcite-menu"), cx, |_, _| false)
+	let open = window.use_keyed_state((id.clone(), "calcite-menu"), cx, |_, _| false);
+	if *open.read(cx) {
+		let close = open.clone();
+		let dismiss: KeyHandler = Rc::new(move |_, cx| {
+			close.update(cx, |open, cx| {
+				*open = false;
+				cx.notify();
+			})
+		});
+		register_key_target(id, KeyRole::Dismiss, Some(dismiss), None, window, cx);
+	}
+	open
 }
 
 /// The compact accent capsule of Settings actions and menu pickers.
-fn chip(id: ElementId, theme: &Theme, enabled: bool, content: impl IntoElement) -> gpui::Stateful<gpui::Div> {
+fn chip(
+	id: ElementId,
+	theme: &Theme,
+	enabled: bool,
+	content: impl IntoElement,
+	window: &mut Window,
+	cx: &mut App,
+) -> gpui::Stateful<gpui::Div> {
+	let focus = focus_handle(&id, window, cx);
 	let foreground = if enabled {
 		tokens::contrast_tint(theme.accent)
 	} else {
@@ -57,6 +78,7 @@ fn chip(id: ElementId, theme: &Theme, enabled: bool, content: impl IntoElement) 
 		.elevation(Elevation::None);
 	let chip = div()
 		.id(id)
+		.relative()
 		.flex()
 		.flex_row()
 		.items_center()
@@ -74,6 +96,9 @@ fn chip(id: ElementId, theme: &Theme, enabled: bool, content: impl IntoElement) 
 		))
 		.child(content)
 		.child(Icon::ChevronUpDown.render(px(9.), foreground));
+	let chip = chip.when(enabled, |chip| {
+		chip.keyboard_focus(&focus, FocusShape::Capsule, theme, window)
+	});
 	match (enabled, glass.filter()) {
 		(true, Some(filter)) => chip.backdrop_filter(vec![Filter::Glass(filter)]).cursor_pointer(),
 		(true, None) => chip.bg(glass.fill()).cursor_pointer(),
@@ -134,6 +159,7 @@ fn menu_panel(id: ElementId, theme: &Theme, open: Entity<bool>, items: Vec<Item>
 							.cursor_pointer()
 							.role(Role::MenuItem)
 							.aria_label(item.label.clone())
+							.aria_selected(item.checked)
 							.hover(|style| style.bg(white(0.08)))
 							.child(div().w(px(12.)).when(item.checked, |this| {
 								this.child(Icon::Checkmark.render(px(10.), accent))
@@ -246,17 +272,25 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for MenuPicker<T> {
 		div()
 			.relative()
 			.child(
-				chip(self.id.clone(), &theme, self.enabled, div().child(title.clone()))
-					.role(Role::ComboBox)
-					.aria_label(title)
-					.when(self.enabled, |chip| {
-						chip.on_click(move |_, _, cx| {
-							toggle.update(cx, |open, cx| {
-								*open = !*open;
-								cx.notify();
-							})
+				chip(
+					self.id.clone(),
+					&theme,
+					self.enabled,
+					div().child(title.clone()),
+					window,
+					cx,
+				)
+				.role(Role::ComboBox)
+				.aria_expanded(is_open)
+				.aria_label(title)
+				.when(self.enabled, |chip| {
+					chip.on_click(move |_, _, cx| {
+						toggle.update(cx, |open, cx| {
+							*open = !*open;
+							cx.notify();
 						})
-					}),
+					})
+				}),
 			)
 			.when(is_open, |this| {
 				this.child(menu_panel(self.id, &theme, open, items))
@@ -362,8 +396,11 @@ impl RenderOnce for ActionMenu {
 						.gap(px(5.))
 						.child(self.icon.render(px(10.), foreground))
 						.child(self.title.clone()),
+					window,
+					cx,
 				)
 				.role(Role::Button)
+				.aria_expanded(is_open)
 				.aria_label(self.title)
 				.when(self.enabled, |chip| {
 					chip.on_click(move |_, _, cx| {

@@ -1,15 +1,46 @@
+<div align="center">
+
+<img src="assets/github/logo.png" width="112" height="112" alt="Calcite logo" />
+
 # Calcite
 
-Calcite is a glass UI library on [gpui-ce](https://github.com/gpui-ce/gpui-ce). This workspace
-holds the library, its execution layer, and the showcase. It started as the Rust study
-for [Arknights Client](https://github.com/LuMiSxh/Arknights-MacOS-Client) and does not depend on it.
+**Liquid Glass for Rust.** Calcite is a glass UI library on [gpui-ce](https://github.com/gpui-ce/gpui-ce). It draws the macOS 26 and macOS 27 glass looks itself, so they look the same on macOS, Linux, and Windows.
 
-| Crate            | Contents                                                                                     |
-| ---------------- | -------------------------------------------------------------------------------------------- |
-| `calcite`        | The glass UI library: Liquid Glass styles, spring motion, controls, forms, menus, panels, modals, HUD surfaces, Lucide icons. See [its README](crates/calcite/README.md) |
-| `calcite-exec`     | Execution layer: `TaskSlot`, `ActivityStore` with leases, `Throttle`, `bounded`              |
-| `calcite-showcase` | `home` (launcher home screen with a simulated install) and `gallery` (every component once) |
-| `patches/`       | The gpui-ce patch that adds `Filter::Glass`, and the pinned gpui-ce commit                    |
+[![CI](https://img.shields.io/github/actions/workflow/status/LuMiSxh/Calcite/ci.yml?branch=main&style=flat-square&labelColor=23252a&color=477acc&label=CI)](https://github.com/LuMiSxh/Calcite/actions/workflows/ci.yml)
+[![Rust 1.97+](https://img.shields.io/badge/Rust-1.97%2B-477acc?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
+[![gpui-ce](https://img.shields.io/badge/gpui--ce-patched-477acc?style=flat-square&labelColor=23252a)](patches/)
+[![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-477acc?style=flat-square&labelColor=23252a)](LICENSE)
+
+<img src="assets/github/gallery.png" width="1480" alt="The Calcite gallery: glass styles, actions, forms, settings panels, and HUD surfaces" />
+
+**[Library guide](crates/calcite/README.md)** · [Changelog](crates/calcite/CHANGELOG.md) · [Gallery](crates/calcite-showcase/src/bin/gallery) · [Arknights Client](https://github.com/LuMiSxh/Arknights-MacOS-Client)
+
+</div>
+
+## Features
+
+- Liquid Glass in one shader pass: lensing at the edge, dispersion, Fresnel rim, and specular light. The styles are macOS 26, macOS 27 Clear, Default, and Tinted, and Reduce Transparency.
+- Actions, toggles, sliders, segmented controls, text fields, menus, choice cards, step rails, settings pages, modals, confirmation dialogs, banners, spinners, HUD pills, and a progress outline.
+- Spring motion with SwiftUI `spring(duration:bounce:)` semantics. Press and hover scale without relayout.
+- A palette you choose at compile time with a `const`, or replace at runtime. Theme changes crossfade.
+- Dynamic Theme: `calcite-tint` takes the accent from artwork, like the Arknights Client launcher.
+- Keyboard focus rings, keyboard activation, and accessibility roles and labels.
+- App icons outside a bundle, and `cargo calcite bundle` for DMG, Windows installers, deb, and AppImage.
+- 2100+ [Lucide](https://lucide.dev) icons and an `icons!` macro for your own icons.
+
+| Crate              | Contents                                                                                       |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| `calcite`          | The UI library. See [its guide](crates/calcite/README.md).                                     |
+| `calcite-tint`     | Dynamic theme colors from artwork. No dependencies, no UI code.                                |
+| `calcite-bundle`   | `cargo calcite bundle`: `.app` and DMG, NSIS and MSI, deb and AppImage. Embeds the Windows icon. |
+| `calcite-exec`     | Execution layer for views: `TaskSlot`, `ActivityStore` with leases, `Throttle`, `bounded`.     |
+| `calcite-showcase` | `gallery` (every component once) and `home` (a launcher home screen with a simulated install). |
+| `patches/`         | The gpui-ce patch that adds `Filter::Glass`, and the pinned gpui-ce commit.                    |
+
+> [!NOTE]
+> Calcite needs gpui-ce with the Liquid Glass patch. Upstream gpui-ce does not have `Filter::Glass` yet. Calcite is not affiliated with Apple, Zed Industries, or the gpui-ce maintainers.
+>
+> This project uses AI coding assistants.
 
 ## Set up and run
 
@@ -45,12 +76,13 @@ The first build compiles gpui-ce and takes several minutes. Run the bootstrap sc
 | Window  | Key       | Action                                              |
 | ------- | --------- | --------------------------------------------------- |
 | both    | G         | Next glass style                                    |
-| both    | A         | Next accent                                         |
+| both    | A         | Next accent (crossfades)                            |
+| gallery | P         | Switch between the Arknights and Ember palettes     |
 | both    | M         | Toggle Reduce Motion                                |
 | home    | Space     | Primary action: Install, Pause, Resume, Play, Stop  |
 | home    | 1, 2, 3   | Expand the music, version, or status pill           |
 | home    | U         | Show the neutral "Install Update" button            |
-| home    | O         | Toggle between your image and the procedural art    |
+| home    | O         | Toggle between your image and the procedural art; the accent follows the artwork |
 | home    | H         | Show or hide the controls panel                     |
 | both    | Command-Q | Quit                                                |
 

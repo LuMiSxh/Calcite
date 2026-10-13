@@ -4,6 +4,9 @@
 //! (`FloatingActionBar`), [`done_button`] (`FloatingDoneButton`), and [`modal_layer`],
 //! which dims the window and centers the modal.
 //!
+//! Escape calls the layer's `on_dismiss`, and Return clicks the `done_button`, once
+//! [`init_keyboard`](crate::interaction::init_keyboard) runs.
+//!
 //! ```ignore
 //! modal_layer("update", modal("update-sheet", "Update available")
 //!         .child(div().child("Version 0.8.0 is ready to install."))
@@ -18,11 +21,13 @@ use gpui::{
 	linear_gradient, prelude::*, px, size,
 };
 use smallvec::SmallVec;
+use std::rc::Rc;
 
 use crate::{
-	controls::{Button, ClickHandler, button, theme_override},
+	controls::{Button, SharedClickHandler, button, theme_override},
 	glass::{Elevation, GlassExt},
 	icons::Icon,
+	interaction::{KeyHandler, KeyRole, register_key_target},
 	motion::Curve,
 	theme::{ActiveTheme, Theme},
 	tokens::{self, control, radius, scale_alpha, stack},
@@ -43,9 +48,13 @@ pub fn floating_action_bar(theme: &Theme) -> Div {
 		.border_color(scale_alpha(theme.palette.hairline, control::HUD_BORDER_OPACITY))
 }
 
-/// The standard confirmation action of a floating footer.
+/// The standard confirmation action of a floating footer. Return clicks it.
 pub fn done_button(id: impl Into<ElementId>) -> Button {
-	button(id, "Done").accent().large().icon(Icon::Checkmark)
+	button(id, "Done")
+		.accent()
+		.large()
+		.icon(Icon::Checkmark)
+		.default_action()
 }
 
 /// A modal with a branded header, scrolling content, and a floating action bar.
@@ -202,14 +211,15 @@ impl RenderOnce for Modal {
 	}
 }
 
-/// Dims the window (black 0.55) and centers `child`. A click on the dimmed area calls
-/// `on_dismiss`; clicks inside the child stay inside it.
+/// Dims the window (black 0.55) and centers `child`. A click on the dimmed area or Escape
+/// calls `on_dismiss`; clicks inside the child stay inside it. The layer takes keyboard
+/// focus when it appears, so Return and Tab stop reaching the page below.
 #[derive(IntoElement)]
 pub struct ModalLayer {
 	id: ElementId,
 	child: AnyElement,
 	theme: Option<Theme>,
-	on_dismiss: Option<ClickHandler>,
+	on_dismiss: Option<SharedClickHandler>,
 }
 
 pub fn modal_layer(id: impl Into<ElementId>, child: impl IntoElement) -> ModalLayer {
@@ -223,17 +233,44 @@ pub fn modal_layer(id: impl Into<ElementId>, child: impl IntoElement) -> ModalLa
 
 impl ModalLayer {
 	pub fn on_dismiss(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
-		self.on_dismiss = Some(Box::new(handler));
+		self.on_dismiss = Some(Rc::new(handler));
 		self
 	}
 }
 
 impl RenderOnce for ModalLayer {
-	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let reduce_motion = theme.reduce_motion;
+		// Focusable but not a tab stop: Tab from the layer moves into the modal.
+		let focus = window
+			.use_keyed_state((self.id.clone(), "calcite-layer-focus"), cx, |_, cx| {
+				cx.focus_handle()
+			})
+			.read(cx)
+			.clone();
+		let presented = window.use_keyed_state((self.id.clone(), "calcite-presented"), cx, |_, _| false);
+		if !*presented.read(cx) {
+			presented.update(cx, |presented, _| *presented = true);
+			let focus = focus.clone();
+			// Focus moves after this frame, once the layer is in the dispatch tree.
+			window.defer(cx, move |window, cx| window.focus(&focus, cx));
+		}
+		let dismiss = self.on_dismiss.clone().map(|on_dismiss| {
+			Rc::new(move |window: &mut Window, cx: &mut App| on_dismiss(&ClickEvent::default(), window, cx))
+				as KeyHandler
+		});
+		register_key_target(
+			&self.id,
+			KeyRole::Dismiss,
+			dismiss,
+			Some(focus.clone()),
+			window,
+			cx,
+		);
 		div()
 			.id(self.id.clone())
+			.track_focus(&focus)
 			.absolute()
 			.top_0()
 			.left_0()
@@ -243,7 +280,9 @@ impl RenderOnce for ModalLayer {
 			.justify_center()
 			.bg(tokens::black(control::OVERLAY_DIM))
 			.occlude()
-			.when_some(self.on_dismiss, |layer, on_dismiss| layer.on_click(on_dismiss))
+			.when_some(self.on_dismiss, |layer, on_dismiss| {
+				layer.on_click(move |event, window, cx| on_dismiss(event, window, cx))
+			})
 			.child(
 				div()
 					.id((self.id.clone(), "content"))

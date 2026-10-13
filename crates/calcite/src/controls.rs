@@ -8,7 +8,7 @@
 //! icon_button("settings", Icon::Gear, "Settings").on_click(..)
 //! ```
 
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use gpui::{
 	Animation, AnimationExt, AnyElement, App, ClickEvent, ElementId, Filter, FontWeight, IntoElement,
@@ -18,13 +18,19 @@ use gpui::{
 use crate::{
 	glass::{Elevation, Glass, flat_surface},
 	icons::IconRef,
-	interaction::{ControlFrame, ControlInteraction, ControlState, Feedback, layer},
+	interaction::{
+		ControlFrame, ControlInteraction, ControlState, Feedback, FocusShape, KeyRole, KeyboardFocus,
+		focus_handle, layer, register_key_target,
+	},
 	motion::cycle,
 	theme::{ActiveTheme, Theme},
 	tokens::{self, control, is_chromatic, over, scale_alpha, white, with_alpha},
 };
 
 pub(crate) type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+
+/// A click handler that several listeners share, such as a click and a key.
+pub(crate) type SharedClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 /// The semantic tone of an action.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -202,8 +208,9 @@ pub struct Button {
 	tone: Tone,
 	size: Size,
 	enabled: bool,
+	default_action: bool,
 	theme: Option<Theme>,
-	on_click: Option<ClickHandler>,
+	on_click: Option<SharedClickHandler>,
 }
 
 /// A capsule action. Defaults: neutral tone, regular size, enabled.
@@ -215,6 +222,7 @@ pub fn button(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Butto
 		tone: Tone::Neutral,
 		size: Size::Regular,
 		enabled: true,
+		default_action: false,
 		theme: None,
 		on_click: None,
 	}
@@ -270,8 +278,15 @@ impl Button {
 		self.enabled(!disabled)
 	}
 
+	/// Return clicks this button when no focused control consumes Return
+	/// (`.keyboardShortcut(.defaultAction)`). The last default action rendered wins.
+	pub fn default_action(mut self) -> Self {
+		self.default_action = true;
+		self
+	}
+
 	pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
-		self.on_click = Some(Box::new(handler));
+		self.on_click = Some(Rc::new(handler));
 		self
 	}
 }
@@ -280,6 +295,13 @@ impl RenderOnce for Button {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let state = ControlState::of(&self.id, window, cx);
+		let focus = focus_handle(&self.id, window, cx);
+		if let (true, true, Some(on_click)) = (self.default_action, self.enabled, self.on_click.clone()) {
+			let handler = Rc::new(move |window: &mut Window, cx: &mut App| {
+				on_click(&ClickEvent::default(), window, cx)
+			});
+			register_key_target(&self.id, KeyRole::DefaultAction, Some(handler), None, window, cx);
+		}
 		let frame = ControlState::frame(
 			&state,
 			Feedback::Standard,
@@ -328,17 +350,21 @@ impl RenderOnce for Button {
 			.text_color(foreground)
 			.role(Role::Button)
 			.aria_label(self.title)
+			.when(self.default_action, |button| button.aria_keyshortcuts("Enter"))
 			.child(surface_layer)
 			.child(content);
 		if !self.enabled {
-			return button.cursor_default();
+			return button.aria_disabled(true).cursor_default();
 		}
 		button
+			.keyboard_focus(&focus, FocusShape::Capsule, &theme, window)
 			.cursor_pointer()
 			// `ActionPressStyle`: opacity 0.86 while pressed; the surface carries the scale.
 			.opacity(if frame.pressed { 0.86 } else { 1. })
 			.control_state(&state, has_sheen)
-			.when_some(self.on_click, |button, on_click| button.on_click(on_click))
+			.when_some(self.on_click, |button, on_click| {
+				button.on_click(move |event, window, cx| on_click(event, window, cx))
+			})
 	}
 }
 
@@ -385,6 +411,7 @@ impl RenderOnce for IconButton {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let state = ControlState::of(&self.id, window, cx);
+		let focus = focus_handle(&self.id, window, cx);
 		let frame = ControlState::frame(&state, Feedback::Standard, true, theme.reduce_motion, window, cx);
 		let glass = theme.hud_surface().overlay(scale_alpha(
 			white(control::HUD_HOVER_SURFACE_OPACITY),
@@ -429,6 +456,7 @@ impl RenderOnce for IconButton {
 							.child(self.icon.render(px(glyph), theme.palette.primary_text)),
 					)
 					.control_state(&state, false)
+					.keyboard_focus(&focus, FocusShape::Capsule, &theme, window)
 					.when_some(self.on_click, |button, on_click| button.on_click(on_click)),
 			)
 	}

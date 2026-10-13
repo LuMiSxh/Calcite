@@ -2,12 +2,13 @@
 
 //! Component gallery: every Calcite component and glass style once, on one page.
 //!
-//! Keys: G next glass style, A next accent, M Reduce Motion.
+//! Keys: G next glass style, A next accent, P next palette, M Reduce Motion, Tab moves focus.
 
 mod interactive;
 mod sections;
+mod setup;
 
-use calcite::{EditableTextState, UI_FONT, keymap, prelude::*, tokens::rgba as color};
+use calcite::{EditableTextState, UI_FONT, app_icon::AppIcon, keymap, prelude::*, tokens::rgba as color};
 use calcite_showcase::artwork::{SLASH_ASSET, SLASH_SVG};
 use gpui::{
 	App, Bounds, Context, Entity, FocusHandle, IntoElement, ParentElement, Rgba, Styled, TitlebarOptions,
@@ -31,7 +32,13 @@ const EMBER: Palette = Palette {
 };
 
 pub const WIDTH: f32 = 1480.;
-pub const HEIGHT: f32 = 3060.;
+pub const HEIGHT: f32 = 4340.;
+
+/// The search tags the chip demo starts with.
+pub const TAGS: [&str; 3] = ["Amiya", "Summer", "Animated"];
+
+/// The Dock, task bar, and window icon outside a bundle.
+static ICON: AppIcon = calcite::app_icon!("assets/icon.png");
 
 fn accents() -> [Option<Rgba>; 4] {
 	[
@@ -116,6 +123,12 @@ pub struct Gallery {
 	pub panel_open: bool,
 	pub region: usize,
 	pub modal_open: bool,
+	pub artwork_choice: usize,
+	pub colors_choice: usize,
+	pub extras: [bool; 2],
+	pub chip_selected: Option<usize>,
+	pub tags: Vec<&'static str>,
+	pub confirm_open: bool,
 }
 
 impl Gallery {
@@ -135,6 +148,12 @@ impl Gallery {
 			panel_open: true,
 			region: 0,
 			modal_open: false,
+			artwork_choice: 0,
+			colors_choice: 0,
+			extras: [true, false],
+			chip_selected: None,
+			tags: TAGS.to_vec(),
+			confirm_open: false,
 		}
 	}
 }
@@ -183,6 +202,16 @@ impl Render for Gallery {
 				"Overlay and feedback",
 				"modal · floating_action_bar · link · badge · skeleton",
 				self.overlay_section(cx),
+			))
+			.child(sections::section(
+				"Setup assistant",
+				"step_rail · step · choice_group · choice_card · tag",
+				self.setup_section(cx),
+			))
+			.child(sections::section(
+				"Notices",
+				"banner · spinner · progress_bar · chip · empty_state · confirm_dialog",
+				self.notices_section(cx),
 			))
 			.child(sections::section(
 				"Icons",
@@ -268,6 +297,24 @@ impl Render for Gallery {
 					})),
 				)
 			})
+			.when(self.confirm_open, |page| {
+				page.child(
+					confirm_dialog(
+						"gallery-confirm",
+						"Uninstall the game?",
+						"The game for this server moves to the Trash. Settings and logins stay.",
+					)
+					.confirm("Uninstall", ConfirmRole::Destructive)
+					.on_confirm(cx.listener(|this, _, _, cx| {
+						this.confirm_open = false;
+						cx.notify();
+					}))
+					.on_cancel(cx.listener(|this, _, _, cx| {
+						this.confirm_open = false;
+						cx.notify();
+					})),
+				)
+			})
 	}
 }
 
@@ -276,6 +323,7 @@ fn main() {
 		.with_assets(Assets::default().with(SLASH_ASSET, SLASH_SVG))
 		.run(|cx: &mut App| {
 			calcite::init(cx);
+			ICON.install(cx);
 			keymap!(cx, {
 				"Gallery" => { "g" => CycleGlass, "a" => CycleAccent, "p" => CyclePalette, "m" => ToggleReduceMotion },
 				_ => { "cmd-q" => Quit, "ctrl-q" => Quit },
@@ -293,7 +341,7 @@ fn main() {
 				.map_or(px(HEIGHT), |display| display.bounds().size.height - px(80.));
 			let bounds = Bounds::centered(None, size(px(WIDTH), px(HEIGHT).min(display_height)), cx);
 			cx.open_window(
-				WindowOptions {
+				ICON.window_options(WindowOptions {
 					window_bounds: Some(WindowBounds::Windowed(bounds)),
 					titlebar: Some(TitlebarOptions {
 						title: Some("Calcite Gallery".into()),
@@ -301,7 +349,7 @@ fn main() {
 						traffic_light_position: None,
 					}),
 					..Default::default()
-				},
+				}),
 				|window, cx| cx.new(|cx| Gallery::new(window, cx)),
 			)
 			.expect("failed to open the gallery window");

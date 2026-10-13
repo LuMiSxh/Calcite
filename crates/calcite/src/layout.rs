@@ -22,6 +22,7 @@ use crate::{
 	glass::{Elevation, GlassExt},
 	icons::{Icon, IconRef},
 	interaction::spring_value,
+	interaction::{FocusShape, KeyboardFocus, focus_handle},
 	motion::Curve,
 	palette::Palette,
 	theme::{ActiveTheme, Theme},
@@ -387,8 +388,9 @@ impl NavItem {
 }
 
 impl RenderOnce for NavItem {
-	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
+		let focus = focus_handle(&self.id, window, cx);
 		let accent = tokens::contrast_tint(theme.accent);
 		let foreground = if self.selected {
 			accent
@@ -425,6 +427,8 @@ impl RenderOnce for NavItem {
 			.cursor_pointer()
 			.role(Role::Tab)
 			.aria_label(self.title.clone())
+			.aria_selected(selected)
+			.keyboard_focus(&focus, FocusShape::Rounded(radius::ROW), &theme, window)
 			.when(selected, |item| {
 				item.child(
 					div()

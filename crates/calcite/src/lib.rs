@@ -24,6 +24,8 @@
 //! - Icons come from [Lucide](https://lucide.dev): [`Icon`] for the components, and
 //!   `Lucide` for the full set (default `lucide` feature).
 
+pub mod app_icon;
+pub mod choice;
 pub mod controls;
 pub mod feedback;
 pub mod forms;
@@ -35,11 +37,15 @@ mod keymap;
 pub mod layout;
 pub mod menu;
 pub mod motion;
+pub mod notice;
 pub mod overlay;
 pub mod palette;
 pub mod progress;
 pub mod theme;
 pub mod tokens;
+
+#[cfg(feature = "tint")]
+pub use calcite_tint as tint;
 
 pub use glass::{GlassStyle, Transparency};
 pub use gpui_ce_elements::editable_text::EditableTextState;
@@ -60,6 +66,7 @@ pub fn init_with(cx: &mut gpui::App, theme: Theme) {
 	if !theme::is_installed(cx) {
 		Theme::set_immediately(cx, theme);
 	}
+	interaction::init_keyboard(cx);
 	use gpui_ce_elements::editable_text::actions::{DEFAULT_INPUT_CONTEXT, default_bindings};
 	cx.bind_keys(default_bindings().as_keybindings(Some(DEFAULT_INPUT_CONTEXT)));
 }
@@ -70,6 +77,7 @@ pub mod prelude {
 	pub use crate::icons::Lucide;
 	pub use crate::{
 		ActiveTheme, GlassStyle, Theme, ThemedView, Transparency,
+		choice::{ChoiceKind, StepState, choice_card, choice_group, step, step_rail, tag},
 		controls::{Size, ThemeOverride, Tone, button, halo, icon_button},
 		feedback::{TooltipExt, badge, skeleton},
 		forms::{segmented, slider, text_field, text_state, toggle},
@@ -84,6 +92,7 @@ pub mod prelude {
 		},
 		menu::{action_menu, menu_picker},
 		motion::Curve,
+		notice::{BannerTone, ConfirmRole, banner, chip, confirm_dialog, empty_state, progress_bar, spinner},
 		overlay::{done_button, floating_action_bar, modal, modal_layer},
 		palette::Palette,
 		progress::OutlineMode,

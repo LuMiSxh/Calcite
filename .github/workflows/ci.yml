@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Dependencies build without debug info (see Cargo.toml); CI also skips incremental state.
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  linux:
+    name: Format, lint, and test (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb-shape0-dev libxcb-xfixes0-dev libfontconfig-dev
+
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+
+      - name: Fetch and patch gpui-ce
+        run: ./scripts/bootstrap.sh
+
+      - name: Check source
+        run: ./scripts/check.sh
+
+      - name: Package the gallery as a deb
+        run: cargo run -p calcite-bundle -- calcite bundle -p calcite-showcase --bin gallery --format deb --debug
+
+  macos:
+    name: Lint (macOS, Metal)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - name: Fetch and patch gpui-ce
+        run: ./scripts/bootstrap.sh
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  windows:
+    name: Build (Windows, Direct3D)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Fetch and patch gpui-ce
+        shell: pwsh
+        run: ./scripts/bootstrap.ps1
+
+      - name: Build
+        run: cargo build --workspace --all-targets

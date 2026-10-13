@@ -21,3 +21,13 @@ All notable changes to Calcite are recorded here. The format follows
 - Icons: the `Icon` set, the full Lucide set behind the default `lucide` feature, and the
   `icons!` macro.
 - The `keymap!` macro.
+- `Palette`: every color in one value, const for compile-time looks and replaceable at runtime.
+- Animated theme changes, `Theme::set_dynamic_accent`, and `Theme::set_artwork_tint` with the
+  `calcite-tint` crate behind the default `tint` feature.
+- Choices: `choice_card`, `choice_group`, `tag`, `chip`. Steps: `step_rail`, `step`.
+- Feedback: `banner`, `spinner`, `progress_bar`, `empty_state`. Overlays: `confirm_dialog`.
+- Motion curves `Page`, `Backdrop`, `Ripple`, `Settle`, `Disclosure`, `Curve::stagger`,
+  `Curve::fade`, and `Materialize`.
+- `AppIcon` and `app_icon!`: the Dock icon on macOS and the window icon on X11 outside a
+  bundle.
+- Spacing scale `tokens::space` and more type sizes in `tokens::text`.

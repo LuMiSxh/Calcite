@@ -3,18 +3,23 @@
 //! Per-control interaction state: hover, press, bounds, pointer, and the springs that turn
 //! them into scale and light. Port of `ActionPressStyle` and `PointerSheen`.
 //!
+//! Keyboard parity lives here too: [`KeyboardFocus`] (`KeyboardFocusIndicator`) makes a
+//! control a tab stop with the accent focus ring, and [`init_keyboard`] routes Tab, Return
+//! (the default action), and Escape (the topmost dismissible surface).
+//!
 //! Scale never changes layout: components draw their surface on an absolute layer and move
 //! its insets, like SwiftUI's `scaleEffect`. GPUI re-renders while a spring moves and stops
 //! when it settles.
 
-use std::time::Instant;
+use std::{rc::Rc, time::Instant};
 
 use gpui::{
-	Animated, App, Bounds, ElementId, Entity, MouseButton, ParentElement, Pixels, Point, Size,
-	StatefulInteractiveElement, Styled, Window, canvas, div, px,
+	Animated, AnyWindowHandle, App, Bounds, ElementId, Entity, FocusHandle, Global, InteractiveElement,
+	KeyBinding, KeyDownEvent, MouseButton, ParentElement, Pixels, Point, Size, StatefulInteractiveElement,
+	Styled, WeakEntity, Window, actions, canvas, div, px,
 };
 
-use crate::motion::Curve;
+use crate::{motion::Curve, theme::Theme, tokens};
 
 /// Press and hover feedback (`ActionPressStyle.Intensity`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -243,4 +248,243 @@ pub fn layer(insets: (Pixels, Pixels)) -> gpui::Div {
 		.bottom(vertical)
 		.left(horizontal)
 		.right(horizontal)
+}
+
+/// The outline a focus ring follows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FocusShape {
+	Capsule,
+	/// A rounded rectangle with the control's corner radius.
+	Rounded(Pixels),
+}
+
+/// How far the ring sits outside the control (`padding(-3)` in the launcher).
+const FOCUS_OUTSET: f32 = 3.;
+
+/// The focus handle of the control `id`, a tab stop kept for as long as the control renders.
+pub fn focus_handle(id: &ElementId, window: &mut Window, cx: &mut App) -> FocusHandle {
+	// The tab order reads the handle's own flag: `.tab_index` on an element that tracks an
+	// explicit handle does not reach it.
+	window
+		.use_keyed_state((id.clone(), "calcite-focus"), cx, |_, cx| {
+			cx.focus_handle().tab_stop(true)
+		})
+		.read(cx)
+		.clone()
+}
+
+/// Whether `handle` shows its ring: focused by the keyboard in the active window.
+pub fn focus_visible(handle: &FocusHandle, window: &Window) -> bool {
+	handle.is_focused(window) && window.last_input_was_keyboard() && window.is_window_active()
+}
+
+/// The 2 pt accent ring around a focused control. Its parent must be `relative`.
+pub fn focus_ring(shape: FocusShape, theme: &Theme) -> gpui::Div {
+	let outset = px(-FOCUS_OUTSET);
+	let ring = div()
+		.absolute()
+		.top(outset)
+		.bottom(outset)
+		.left(outset)
+		.right(outset)
+		.border_2()
+		.border_color(tokens::contrast_tint(theme.accent));
+	match shape {
+		FocusShape::Capsule => ring.rounded_full(),
+		FocusShape::Rounded(corner) => ring.rounded(corner + px(FOCUS_OUTSET)),
+	}
+}
+
+/// Port of `KeyboardFocusIndicator`: a tab stop that shows the accent ring while focused by
+/// the keyboard. Space and Return then click it through GPUI's keyboard click.
+pub trait KeyboardFocus: InteractiveElement + ParentElement + Sized {
+	fn keyboard_focus(self, handle: &FocusHandle, shape: FocusShape, theme: &Theme, window: &Window) -> Self {
+		let ring = focus_visible(handle, window).then(|| focus_ring(shape, theme));
+		self.track_focus(handle)
+			// Like macOS buttons, a click does not take focus, so Return keeps reaching the
+			// default action and a focused text field keeps its focus.
+			.capture_any_mouse_down(|_, window, _| window.prevent_default())
+			.children(ring)
+	}
+}
+
+impl<E: InteractiveElement + ParentElement + Sized> KeyboardFocus for E {}
+
+/// What a key target answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeyRole {
+	/// Return when no control that consumes Return has focus (`.defaultAction`).
+	DefaultAction,
+	/// Escape (`.cancelAction`): closes the topmost menu or modal.
+	Dismiss,
+	/// A focusable surface that passes Return on to the default action, like a modal
+	/// container or a single-line text field.
+	PassReturn,
+}
+
+pub(crate) type KeyHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
+
+/// One registered target, kept as keyed state so it lives only while its control renders.
+struct KeySlot {
+	handler: Option<KeyHandler>,
+	focus: Option<FocusHandle>,
+}
+
+#[derive(Default)]
+struct KeyTargets(Vec<(AnyWindowHandle, KeyRole, WeakEntity<KeySlot>)>);
+
+impl Global for KeyTargets {}
+
+struct KeyboardInstalled;
+
+impl Global for KeyboardInstalled {}
+
+/// Registers the key target of the control `id` for this frame. Targets rendered later sit
+/// on top, so an open menu closes before the modal under it.
+pub(crate) fn register_key_target(
+	id: &ElementId,
+	role: KeyRole,
+	handler: Option<KeyHandler>,
+	focus: Option<FocusHandle>,
+	window: &mut Window,
+	cx: &mut App,
+) {
+	let key = match role {
+		KeyRole::DefaultAction => "calcite-default-action",
+		KeyRole::Dismiss => "calcite-dismiss",
+		KeyRole::PassReturn => "calcite-pass-return",
+	};
+	let slot = window.use_keyed_state((id.clone(), key), cx, |_, _| KeySlot {
+		handler: None,
+		focus: None,
+	});
+	slot.update(cx, |slot, _| {
+		slot.handler = handler;
+		slot.focus = focus;
+	});
+	let weak = slot.downgrade();
+	let window_handle = window.window_handle();
+	let targets = &mut cx.default_global::<KeyTargets>().0;
+	targets.retain(|(_, _, slot)| slot.entity_id() != weak.entity_id() && slot.upgrade().is_some());
+	targets.push((window_handle, role, weak));
+}
+
+fn live_slots(role: KeyRole, window: &Window, cx: &App) -> Vec<Entity<KeySlot>> {
+	let window_handle = window.window_handle();
+	cx.try_global::<KeyTargets>()
+		.map(|targets| {
+			targets
+				.0
+				.iter()
+				.filter(|(handle, slot_role, _)| *handle == window_handle && *slot_role == role)
+				.filter_map(|(_, _, slot)| slot.upgrade())
+				.collect()
+		})
+		.unwrap_or_default()
+}
+
+/// The handler Return or Escape runs in `window`, if any.
+fn key_handler(key: &str, window: &Window, cx: &App) -> Option<KeyHandler> {
+	let role = match key {
+		"escape" => KeyRole::Dismiss,
+		"enter" => {
+			// A focused control that is not a passive surface consumes Return itself.
+			if let Some(focused) = window.focused(cx) {
+				let passes = live_slots(KeyRole::PassReturn, window, cx)
+					.into_iter()
+					.chain(live_slots(KeyRole::Dismiss, window, cx))
+					.any(|slot| slot.read(cx).focus.as_ref() == Some(&focused));
+				if !passes {
+					return None;
+				}
+			}
+			KeyRole::DefaultAction
+		}
+		_ => return None,
+	};
+	live_slots(role, window, cx)
+		.into_iter()
+		.rev()
+		.find_map(|slot| slot.read(cx).handler.clone())
+}
+
+actions!(
+	calcite,
+	[
+		/// Moves keyboard focus to the next control.
+		FocusNext,
+		/// Moves keyboard focus to the previous control.
+		FocusPrevious,
+	]
+);
+
+/// Binds Tab and Shift-Tab to move focus, and routes Return to the default action and
+/// Escape to the topmost menu or modal. Call it once; later calls do nothing.
+pub fn init_keyboard(cx: &mut App) {
+	if cx.has_global::<KeyboardInstalled>() {
+		return;
+	}
+	cx.set_global(KeyboardInstalled);
+	// Unscoped bindings lose to a deeper key context, so a text editor keeps its Tab.
+	cx.bind_keys([
+		KeyBinding::new("tab", FocusNext, None),
+		KeyBinding::new("shift-tab", FocusPrevious, None),
+	]);
+	// Global action listeners get no window; move focus once the dispatch returns it.
+	cx.on_action(|_: &FocusNext, cx| {
+		if let Some(window) = cx.active_window() {
+			cx.defer(move |cx| {
+				window.update(cx, |_, window, cx| window.focus_next(cx)).ok();
+			});
+		}
+	});
+	cx.on_action(|_: &FocusPrevious, cx| {
+		if let Some(window) = cx.active_window() {
+			cx.defer(move |cx| {
+				window.update(cx, |_, window, cx| window.focus_prev(cx)).ok();
+			});
+		}
+	});
+	// An interceptor sees the window and runs before key bindings, so Return and Escape
+	// work even when no control has focus.
+	cx.intercept_keystrokes(|event, window, cx| {
+		let stroke = &event.keystroke;
+		if stroke.modifiers.modified() {
+			return;
+		}
+		if let Some(handler) = key_handler(&stroke.key, window, cx) {
+			cx.stop_propagation();
+			handler(window, cx);
+		}
+	})
+	.detach();
+}
+
+/// The step that arrow keys move a value: `step`, or 5 % of the range.
+pub(crate) fn key_step(range: &std::ops::RangeInclusive<f32>, step: Option<f32>) -> f32 {
+	step.filter(|step| *step > 0.)
+		.unwrap_or_else(|| (range.end() - range.start()).abs() * 0.05)
+}
+
+/// The direction of an unmodified arrow key: -1 for left and down, 1 for right and up.
+pub(crate) fn arrow_direction(event: &KeyDownEvent) -> Option<i32> {
+	if event.keystroke.modifiers.modified() {
+		return None;
+	}
+	match event.keystroke.key.as_str() {
+		"left" | "down" => Some(-1),
+		"right" | "up" => Some(1),
+		_ => None,
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn key_step_defaults_to_five_percent_of_the_range() {
+		assert!((key_step(&(0.0..=200.0), None) - 10.).abs() < 1e-6);
+		assert_eq!(key_step(&(0.0..=1.0), Some(0.25)), 0.25);
+	}
 }

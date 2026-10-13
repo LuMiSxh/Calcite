@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+build = "build.rs"
 
 [[bin]]
 name = "home"
@@ -19,3 +20,16 @@ gpui.workspace = true
 gpui_platform.workspace = true
 calcite.workspace = true
 calcite-exec.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+
+[build-dependencies]
+calcite-bundle = { workspace = true, default-features = false }
+
+# `cargo calcite bundle -p calcite-showcase --bin gallery` packages the showcase.
+[package.metadata.calcite.bundle]
+name = "Calcite Showcase"
+identifier = "dev.lumisxh.calcite.showcase"
+icon = "assets/icon.png"
+category = "DeveloperTool"
+copyright = "© 2026 Luca Michael Schmidt"
+minimum-macos = "13.0"
