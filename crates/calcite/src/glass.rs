@@ -99,46 +99,49 @@ struct Optics {
 }
 
 fn optics(style: GlassStyle) -> Optics {
+	// Tuned against macOS 27 screenshots (Dock, Music, Photos at the three slider stops):
+	// the lens is a narrow band at the very edge, the face stays flat and frosted, the rim
+	// is a hairline, and colour fringing is barely visible. macOS 26 keeps a little more.
 	match style {
 		GlassStyle::MacOS26 => Optics {
 			blur: 9.,
-			bezel: 18.,
-			refraction: 11.,
-			dispersion: 0.18,
-			saturation: 1.45,
-			rim: 0.62,
-			specular: 0.55,
+			bezel: 12.,
+			refraction: 8.,
+			dispersion: 0.08,
+			saturation: 1.35,
+			rim: 0.45,
+			specular: 0.34,
 			lift: 0.05,
 		},
 		GlassStyle::MacOS27(Transparency::Clear) => Optics {
-			blur: 10.,
-			bezel: 16.,
-			refraction: 9.,
-			dispersion: 0.14,
-			saturation: 1.35,
-			rim: 0.56,
-			specular: 0.48,
-			lift: 0.06,
+			blur: 5.,
+			bezel: 8.,
+			refraction: 6.,
+			dispersion: 0.03,
+			saturation: 1.15,
+			rim: 0.30,
+			specular: 0.18,
+			lift: 0.05,
 		},
 		GlassStyle::MacOS27(Transparency::Default) => Optics {
-			blur: 13.,
-			bezel: 15.,
-			refraction: 7.,
-			dispersion: 0.10,
-			saturation: 1.3,
-			rim: 0.50,
-			specular: 0.40,
-			lift: 0.07,
+			blur: 16.,
+			bezel: 8.,
+			refraction: 4.,
+			dispersion: 0.02,
+			saturation: 1.15,
+			rim: 0.28,
+			specular: 0.16,
+			lift: 0.09,
 		},
 		GlassStyle::MacOS27(Transparency::Tinted) => Optics {
-			blur: 16.,
-			bezel: 14.,
-			refraction: 5.,
-			dispersion: 0.06,
-			saturation: 1.2,
-			rim: 0.44,
-			specular: 0.32,
-			lift: 0.07,
+			blur: 26.,
+			bezel: 7.,
+			refraction: 2.5,
+			dispersion: 0.,
+			saturation: 1.05,
+			rim: 0.24,
+			specular: 0.12,
+			lift: 0.12,
 		},
 		GlassStyle::ReducedTransparency => Optics {
 			blur: 0.,
@@ -388,7 +391,8 @@ mod tests {
 	#[test]
 	fn macos_27_default_matches_the_launcher_backplate() {
 		let glass = Glass::new(Some(black(0.52)), GlassStyle::MacOS27(Transparency::Default));
-		let expected = stack(&[white(0.07), black(0.68)]);
+		let lift = optics(GlassStyle::MacOS27(Transparency::Default)).lift;
+		let expected = stack(&[white(lift), black(0.68)]);
 		assert!((glass.fill().alpha - expected.alpha).abs() < 1e-4);
 	}
 
