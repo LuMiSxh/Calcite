@@ -30,4 +30,8 @@ All notable changes to Calcite are recorded here. The format follows
   `Curve::fade`, and `Materialize`.
 - `AppIcon` and `app_icon!`: the Dock icon on macOS and the window icon on X11 outside a
   bundle.
+- Motion: `.enter(id, index, reduce_motion)` fades and rises content into place with a
+  stagger. Segmented controls slide one glass indicator between segments. Menus, sheets,
+  tooltips, and panel disclosures animate in; choice indicators pop on selection; the
+  navigation selection fades and its marker grows.
 - Spacing scale `tokens::space` and more type sizes in `tokens::text`.

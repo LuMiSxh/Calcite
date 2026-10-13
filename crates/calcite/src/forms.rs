@@ -606,13 +606,60 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 		let selected_index = self.options.iter().position(|(value, _)| *value == self.selected);
 		let values: Vec<T> = self.options.iter().map(|(value, _)| value.clone()).collect();
 		let keys = self.on_change.clone().filter(|_| enabled);
+		// One glass indicator slides between the segments, like a macOS segmented control.
+		// It needs the laid-out width, so the first frame styles the selected segment itself.
+		let bounds = window.use_keyed_state((id.clone(), "calcite-segmented-bounds"), cx, |_, _| {
+			None::<Bounds<Pixels>>
+		});
+		let probe = bounds.clone();
+		let width = bounds.read(cx).map(|bounds| f32::from(bounds.size.width));
+		let position = spring_value(
+			(id.clone(), "calcite-segmented-position"),
+			selected_index.unwrap_or(0) as f32,
+			Curve::State,
+			theme.reduce_motion,
+			window,
+			cx,
+		);
+		let indicator = width
+			.filter(|_| selected_index.is_some() && count > 0)
+			.map(|width| {
+				let inner = width - 2. * SEGMENTED_PADDING;
+				let segment = (inner - SEGMENTED_GAP * (count as f32 - 1.)) / count as f32;
+				let indicator = div()
+					.absolute()
+					.top(px(SEGMENTED_PADDING))
+					.bottom(px(SEGMENTED_PADDING))
+					.left(px(SEGMENTED_PADDING + position * (segment + SEGMENTED_GAP)))
+					.w(px(segment))
+					.rounded_full()
+					.border_1()
+					.border_color(with_alpha(
+						theme.accent,
+						control::ENABLED_CHROMATIC_BORDER_OPACITY,
+					));
+				match selected_glass.filter() {
+					Some(filter) => indicator.backdrop_filter(vec![Filter::Glass(filter)]),
+					None => indicator.bg(selected_glass.fill()),
+				}
+			});
+		let slides = indicator.is_some();
 		div()
 			.id(self.id)
 			.relative()
+			.child(
+				canvas(
+					move |bounds, _, cx| probe.update(cx, |stored, _| *stored = Some(bounds)),
+					|_, _, _, _| {},
+				)
+				.absolute()
+				.size_full(),
+			)
+			.children(indicator)
 			.flex()
 			.flex_row()
-			.gap(px(4.))
-			.p(px(4.))
+			.gap(px(SEGMENTED_GAP))
+			.p(px(SEGMENTED_PADDING))
 			.rounded_full()
 			.bg(container_fill)
 			.border_1()
@@ -676,7 +723,9 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 							.aria_position_in_set(index + 1)
 							.aria_size_of_set(count)
 							.child(label);
-						let segment = if selected {
+						let segment = if selected && slides {
+							segment
+						} else if selected {
 							let segment = segment.border_1().border_color(with_alpha(
 								theme.accent,
 								control::ENABLED_CHROMATIC_BORDER_OPACITY,
@@ -700,6 +749,10 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 			)
 	}
 }
+
+/// Inner padding and spacing of a segmented control. The border sits outside the padding.
+const SEGMENTED_PADDING: f32 = 4.;
+const SEGMENTED_GAP: f32 = 4.;
 
 /// A single-line input in the accent capsule (`ThemedTextField`).
 ///

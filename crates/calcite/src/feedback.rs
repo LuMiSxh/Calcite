@@ -13,7 +13,7 @@ use gpui::{
 use crate::{
 	controls::{Tone, theme_override},
 	glass::{Elevation, GlassExt},
-	motion::DECORATIVE_FPS,
+	motion::{DECORATIVE_FPS, EnterExt},
 	theme::{ActiveTheme, Theme},
 	tokens::{self, radius, scale_alpha, white, with_alpha},
 };
@@ -173,6 +173,7 @@ impl Render for GlassTooltip {
 			.text_size(px(11.))
 			.text_color(theme.palette.primary_text)
 			.child(self.text.clone())
+			.enter("calcite-tooltip", 0, theme.reduce_motion)
 	}
 }
 

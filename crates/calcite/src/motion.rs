@@ -4,7 +4,10 @@
 
 use std::time::Duration;
 
-use gpui::{AnyMotion, Motion, MotionDurationExt, SpringConfig, ease_in_out, linear, spring};
+use gpui::{
+	Animation, AnimationElement, AnimationExt, AnyMotion, ElementId, Motion, MotionDurationExt, SpringConfig,
+	Styled, ease_in_out, linear, px, spring,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Curve {
@@ -271,3 +274,36 @@ pub const DECORATIVE_FPS: f32 = 30.;
 pub fn lerp(from: f32, to: f32, t: f32) -> f32 {
 	from + (to - from) * t
 }
+
+/// How far entering content rises into place.
+const ENTER_RISE: f32 = 8.;
+
+/// Content that materializes when it first renders (`AnimationExt.materialize` and
+/// `LauncherMotion.staggered` in the launcher).
+pub trait EnterExt: AnimationExt + Styled + Sized + 'static {
+	/// Fades and rises into place on [`Curve::Present`]. Siblings that enter together pass
+	/// their `index`, so each one starts [`Curve::stagger`] later. Reduce Motion keeps a
+	/// short fade only.
+	fn enter(self, id: impl Into<ElementId>, index: usize, reduce_motion: bool) -> AnimationElement<Self> {
+		let delay = Curve::stagger(index, reduce_motion);
+		let mut animations = Vec::with_capacity(2);
+		if !delay.is_zero() {
+			animations.push(Animation::new(delay.with_easing(linear)));
+		}
+		let main = if reduce_motion {
+			Duration::from_secs_f32(0.15).with_easing(ease_in_out)
+		} else {
+			Curve::Present.timed(false)
+		};
+		animations.push(Animation::new(main));
+		let waits = animations.len() == 2;
+		self.with_animations(id, animations, move |element, phase, t| {
+			let t = if waits && phase == 0 { 0. } else { t };
+			let shown = Materialize::at(t, reduce_motion);
+			let rise = if reduce_motion { 0. } else { ENTER_RISE * (1. - t) };
+			element.opacity(shown.opacity.clamp(0., 1.)).mt(px(rise))
+		})
+	}
+}
+
+impl<E: AnimationExt + Styled + Sized + 'static> EnterExt for E {}

@@ -23,12 +23,16 @@ use smallvec::SmallVec;
 use crate::{
 	controls::{ClickHandler, ThemeOverride, theme_override},
 	icons::{Icon, IconRef},
-	interaction::{ControlInteraction, ControlState, Feedback, layer},
+	interaction::{ControlInteraction, ControlState, Feedback, layer, spring_value},
 	layout::settings_panel,
 	motion::Curve,
 	theme::{ActiveTheme, Theme},
 	tokens::{self, control, over, radius, scale_alpha, with_alpha},
 };
+
+/// The trailing radio, checkbox, or chevron, and the size a filled glyph pops from.
+const INDICATOR: f32 = 18.;
+const INDICATOR_POP_FROM: f32 = 0.6;
 
 /// How a card responds to a click, and which trailing indicator it shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -172,6 +176,41 @@ impl RenderOnce for ChoiceCard {
 		};
 		let indicator_color = if selected { accent } else { palette.secondary_text };
 		let reduce_motion = theme.reduce_motion;
+		// The filled glyph pops in on the release spring, so a choice reads as a press.
+		let pop = spring_value(
+			(self.id.clone(), "calcite-choice-pop"),
+			if selected { 1. } else { 0. },
+			Curve::Release,
+			reduce_motion,
+			window,
+			cx,
+		);
+		let indicator = {
+			let empty = self.kind.indicator(false);
+			let filled = self.kind.indicator(true);
+			let filled_size = INDICATOR * (INDICATOR_POP_FROM + (1. - INDICATOR_POP_FROM) * pop.max(0.));
+			div()
+				.relative()
+				.size(px(INDICATOR))
+				.flex_none()
+				.flex()
+				.items_center()
+				.justify_center()
+				.child(
+					div()
+						.absolute()
+						.opacity((1. - pop).clamp(0., 1.))
+						.child(empty.render(px(INDICATOR), palette.secondary_text)),
+				)
+				.when(self.kind != ChoiceKind::Action && pop > 0.01, |indicator| {
+					indicator.child(
+						div()
+							.absolute()
+							.opacity(pop.clamp(0., 1.))
+							.child(filled.render(px(filled_size), accent)),
+					)
+				})
+		};
 
 		// A plain fill, not glass: glass rebuilt on a selection change snaps the release spring.
 		let surface = layer(frame.surface_insets())
@@ -230,7 +269,7 @@ impl RenderOnce for ChoiceCard {
 				)
 			})
 			.child(label)
-			.child(self.kind.indicator(selected).render(px(18.), indicator_color));
+			.child(indicator);
 
 		let card = div()
 			.id(self.id)

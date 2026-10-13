@@ -15,8 +15,8 @@
 use std::rc::Rc;
 
 use gpui::{
-	Anchor, App, ElementId, Entity, Filter, FontWeight, IntoElement, ParentElement, Role, SharedString,
-	Styled, Window, anchored, deferred, div, point, prelude::*, px,
+	Anchor, Animation, AnimationExt, App, ElementId, Entity, Filter, FontWeight, IntoElement, ParentElement,
+	Role, SharedString, Styled, Window, anchored, deferred, div, point, prelude::*, px,
 };
 
 use crate::{
@@ -24,6 +24,7 @@ use crate::{
 	glass::{Elevation, GlassExt},
 	icons::{Icon, IconRef},
 	interaction::{FocusShape, KeyHandler, KeyRole, KeyboardFocus, focus_handle, register_key_target},
+	motion::{Curve, Materialize},
 	theme::{ActiveTheme, Theme},
 	tokens::{self, control, radius, scale_alpha, white, with_alpha},
 };
@@ -107,6 +108,7 @@ fn chip(
 }
 
 fn menu_panel(id: ElementId, theme: &Theme, open: Entity<bool>, items: Vec<Item>) -> impl IntoElement {
+	let reduce_motion = theme.reduce_motion;
 	let accent = tokens::contrast_tint(theme.accent);
 	let close = open.clone();
 	deferred(
@@ -177,11 +179,23 @@ fn menu_panel(id: ElementId, theme: &Theme, open: Entity<bool>, items: Vec<Item>
 							})
 							.into_any_element();
 						divider.into_iter().chain(std::iter::once(row))
-					})),
+					}))
+					// Opens like a macOS menu: a quick fade with a short drop from the chip.
+					.with_animation(
+						(id.clone(), "calcite-menu-open"),
+						Animation::new(Curve::Present.timed(theme.reduce_motion)),
+						move |panel, t| {
+							let open = Materialize::at(t, reduce_motion);
+							panel.opacity(open.opacity).mt(px(MENU_DROP * (1. - t)))
+						},
+					),
 			),
 	)
 	.priority(1)
 }
+
+/// How far an opening menu travels down to its place.
+const MENU_DROP: f32 = -6.;
 
 /// A capsule that picks one of `options`.
 #[derive(IntoElement)]

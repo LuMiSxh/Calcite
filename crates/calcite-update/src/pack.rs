@@ -19,6 +19,7 @@ pub(crate) const DELTA_MAGIC: &[u8] = b"CALCITE-DELTA 1\n";
 pub(crate) const MAX_INDEX: u64 = 16 << 20;
 /// zstd's window must cover the whole base for a patch; 2 GiB is its limit.
 pub(crate) const MAX_PATCH_BASE: u64 = 1 << 31;
+#[cfg(feature = "publish")]
 pub(crate) const LEVEL: i32 = 19;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -47,12 +48,14 @@ pub enum Source {
 }
 
 /// The window log that covers `size` bytes, for patches.
+#[cfg(feature = "publish")]
 pub(crate) fn window_log(size: u64) -> u32 {
 	let size = size.max(1 << 10);
 	(64 - (size - 1).leading_zeros()).clamp(10, 31)
 }
 
 /// Compresses `data` as a patch against `base`, or alone when `base` is `None`.
+#[cfg(feature = "publish")]
 pub(crate) fn compress(data: &[u8], base: Option<&[u8]>) -> io::Result<Vec<u8>> {
 	let mut out = Vec::new();
 	match base {

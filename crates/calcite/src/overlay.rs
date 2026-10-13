@@ -289,14 +289,26 @@ impl RenderOnce for ModalLayer {
 					// Keep clicks inside the modal from reaching the dismiss handler.
 					.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 					.on_click(|_, _, cx| cx.stop_propagation())
-					.child(self.child),
+					.child(self.child)
+					// The sheet rises into place on the presentation spring while the dim fades.
+					.with_animation(
+						(self.id.clone(), "sheet"),
+						Animation::new(Curve::Present.timed(reduce_motion)),
+						move |sheet, t| {
+							let rise = if reduce_motion { 0. } else { SHEET_RISE * (1. - t) };
+							sheet.mt(px(rise))
+						},
+					),
 			)
 			.with_animation(
 				(self.id, "backdrop"),
-				Animation::new(Curve::Present.timed(reduce_motion)),
+				Animation::new(Curve::Backdrop.timed(reduce_motion)),
 				|layer, t| layer.opacity(t.min(1.)),
 			)
 	}
 }
+
+/// How far a presented sheet rises into place.
+const SHEET_RISE: f32 = 24.;
 
 theme_override!(Modal, ModalLayer);

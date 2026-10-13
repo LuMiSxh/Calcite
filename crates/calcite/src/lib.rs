@@ -91,7 +91,7 @@ pub mod prelude {
 			nav_item, nav_rail, page_header, settings_page, settings_panel,
 		},
 		menu::{action_menu, menu_picker},
-		motion::Curve,
+		motion::{Curve, EnterExt},
 		notice::{BannerTone, ConfirmRole, banner, chip, confirm_dialog, empty_state, progress_bar, spinner},
 		overlay::{done_button, floating_action_bar, modal, modal_layer},
 		palette::Palette,

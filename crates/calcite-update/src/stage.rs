@@ -39,6 +39,7 @@ impl<W: Write> Write for Hashing<W> {
 	}
 }
 
+#[cfg(feature = "publish")]
 pub(crate) fn sha256_file(path: &Path) -> io::Result<String> {
 	let mut hasher = Sha256::new();
 	let mut file = fs::File::open(path)?;

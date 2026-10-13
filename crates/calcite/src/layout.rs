@@ -12,8 +12,8 @@
 //! ```
 
 use gpui::{
-	AnyElement, App, ClickEvent, Div, ElementId, FontWeight, IntoElement, ParentElement, Rgba, Role,
-	SharedString, Styled, Window, div, prelude::*, px,
+	Animation, AnimationExt, AnyElement, App, ClickEvent, Div, ElementId, FontWeight, IntoElement,
+	ParentElement, Rgba, Role, SharedString, Styled, Window, div, prelude::*, px,
 };
 use smallvec::SmallVec;
 
@@ -203,6 +203,7 @@ impl ParentElement for SettingsPanel {
 impl RenderOnce for SettingsPanel {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
+		let reduce_motion = theme.reduce_motion;
 		let color = self.tone.color(&theme.palette);
 		let shows_content = self.expanded.unwrap_or(true);
 		let rotation = spring_value(
@@ -263,7 +264,28 @@ impl RenderOnce for SettingsPanel {
 			.border_1()
 			.border_color(self.tone.border(&theme.palette))
 			.child(header)
-			.when(shows_content, |panel| panel.children(self.children))
+			.when(shows_content, |panel| {
+				// Revealed content fades and settles in, like a SwiftUI disclosure group.
+				panel.child(
+					div()
+						.flex()
+						.flex_col()
+						.gap(px(12.))
+						.children(self.children)
+						.with_animation(
+							(self.id.clone(), "calcite-disclosure"),
+							Animation::new(Curve::Disclosure.timed(reduce_motion)),
+							move |content, t| {
+								let shift = if reduce_motion {
+									0.
+								} else {
+									DISCLOSURE_SHIFT * (1. - t)
+								};
+								content.opacity(t.clamp(0., 1.)).mt(px(shift))
+							},
+						),
+				)
+			})
 	}
 }
 
@@ -334,6 +356,12 @@ impl RenderOnce for ActionRow {
 	}
 }
 
+/// How far revealed panel content travels into place.
+const DISCLOSURE_SHIFT: f32 = -8.;
+
+/// Accent opacity of the selected rail item's fill.
+const NAV_SELECTED_FILL: f32 = 0.13;
+
 /// The Settings navigation rail.
 pub fn nav_rail(theme: &Theme) -> Div {
 	div()
@@ -398,6 +426,16 @@ impl RenderOnce for NavItem {
 			theme.palette.primary_text
 		};
 		let selected = self.selected;
+		// The fill and the marker follow the selection instead of jumping to the new item.
+		let shown = spring_value(
+			(self.id.clone(), "calcite-nav-selection"),
+			if selected { 1. } else { 0. },
+			Curve::State,
+			theme.reduce_motion,
+			window,
+			cx,
+		)
+		.clamp(0., 1.);
 		div()
 			.id(self.id)
 			.relative()
@@ -416,11 +454,7 @@ impl RenderOnce for NavItem {
 				FontWeight::NORMAL
 			})
 			.text_color(foreground)
-			.bg(if selected {
-				scale_alpha(theme.accent, 0.13)
-			} else {
-				tokens::CLEAR
-			})
+			.bg(scale_alpha(theme.accent, NAV_SELECTED_FILL * shown))
 			.when(!selected, |item| {
 				item.hover(|style| style.bg(theme.palette.navigation_hover))
 			})
@@ -429,14 +463,14 @@ impl RenderOnce for NavItem {
 			.aria_label(self.title.clone())
 			.aria_selected(selected)
 			.keyboard_focus(&focus, FocusShape::Rounded(radius::ROW), &theme, window)
-			.when(selected, |item| {
+			.when(shown > 0.01, |item| {
 				item.child(
 					div()
 						.absolute()
 						.left(px(0.))
-						.top(px(7.))
+						.top(px(15. - 8. * shown))
 						.w(px(3.))
-						.h(px(16.))
+						.h(px(16. * shown))
 						.rounded_full()
 						.bg(theme.accent),
 				)

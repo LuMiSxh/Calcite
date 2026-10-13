@@ -429,9 +429,18 @@ impl Home {
 			.items_end()
 			.gap(px(8.))
 			.pr(px(2.))
-			.child(music)
-			.child(version)
-			.child(status_pill)
+			// The pills enter one after another, like the launcher's HUD.
+			.child(div().child(music).enter("enter-music", 0, theme.reduce_motion))
+			.child(
+				div()
+					.child(version)
+					.enter("enter-version", 1, theme.reduce_motion),
+			)
+			.child(
+				div()
+					.child(status_pill)
+					.enter("enter-status", 2, theme.reduce_motion),
+			)
 	}
 
 	fn legend(&self, theme: &Theme) -> impl IntoElement + use<> {
