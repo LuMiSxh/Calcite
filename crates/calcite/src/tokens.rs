@@ -289,7 +289,7 @@ mod tests {
 		assert!(control::HEIGHT_COMPACT < control::HEIGHT_REGULAR);
 		assert!(control::HEIGHT_REGULAR < control::HEIGHT_LARGE);
 		// Regular text with 6 pt padding and compact text with 5 pt padding, at line height phi.
-		let phi = 1.618_034_f32;
+		let phi = 1.62_f32;
 		let regular = f32::from(text::BODY) * phi + 12.;
 		let compact = f32::from(text::CAPTION) * phi + 2. * control::COMPACT_VERTICAL_PADDING;
 		let large = f32::from(text::BODY) * phi + 16.;
