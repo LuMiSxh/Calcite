@@ -15,16 +15,17 @@
 use std::rc::Rc;
 
 use gpui::{
-	Anchor, Animation, AnimationExt, App, ElementId, Entity, Filter, FontWeight, IntoElement, ParentElement,
-	Role, SharedString, Styled, Window, anchored, deferred, div, point, prelude::*, px,
+	Anchor, App, ElementId, Entity, Filter, FontWeight, IntoElement, ParentElement, Role, SharedString,
+	Styled, Window, anchored, deferred, div, point, prelude::*, px,
 };
 
 use crate::{
 	controls::theme_override,
 	glass::{Elevation, GlassExt},
 	icons::{Icon, IconRef},
-	interaction::{FocusShape, KeyHandler, KeyRole, KeyboardFocus, focus_handle, register_key_target},
-	motion::{Curve, Materialize},
+	interaction::{
+		FocusShape, KeyHandler, KeyRole, KeyboardFocus, focus_handle, presence, register_key_target,
+	},
 	theme::{ActiveTheme, Theme},
 	tokens::{self, control, radius, scale_alpha, white, with_alpha},
 };
@@ -107,8 +108,19 @@ fn chip(
 	}
 }
 
-fn menu_panel(id: ElementId, theme: &Theme, open: Entity<bool>, items: Vec<Item>) -> impl IntoElement {
+fn menu_panel(
+	id: ElementId,
+	theme: &Theme,
+	open: Entity<bool>,
+	items: Vec<Item>,
+	shown: f32,
+) -> impl IntoElement {
 	let reduce_motion = theme.reduce_motion;
+	let drop = if reduce_motion {
+		0.
+	} else {
+		MENU_DROP * (1. - shown)
+	};
 	let accent = tokens::contrast_tint(theme.accent);
 	let close = open.clone();
 	deferred(
@@ -181,14 +193,8 @@ fn menu_panel(id: ElementId, theme: &Theme, open: Entity<bool>, items: Vec<Item>
 						divider.into_iter().chain(std::iter::once(row))
 					}))
 					// Opens like a macOS menu: a quick fade with a short drop from the chip.
-					.with_animation(
-						(id.clone(), "calcite-menu-open"),
-						Animation::new(Curve::Present.timed(theme.reduce_motion)),
-						move |panel, t| {
-							let open = Materialize::at(t, reduce_motion);
-							panel.opacity(open.opacity).mt(px(MENU_DROP * (1. - t)))
-						},
-					),
+					.opacity(shown.clamp(0., 1.))
+					.mt(px(drop)),
 			),
 	)
 	.priority(1)
@@ -257,6 +263,14 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for MenuPicker<T> {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let open = open_state(&self.id, window, cx);
 		let is_open = *open.read(cx);
+		// The panel stays while it fades out after a choice or a click outside.
+		let shown = presence(
+			(self.id.clone(), "calcite-menu-presence"),
+			is_open,
+			theme.reduce_motion,
+			window,
+			cx,
+		);
 		let title = self
 			.options
 			.iter()
@@ -306,8 +320,8 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for MenuPicker<T> {
 					})
 				}),
 			)
-			.when(is_open, |this| {
-				this.child(menu_panel(self.id, &theme, open, items))
+			.when_some(shown, |this, shown| {
+				this.child(menu_panel(self.id, &theme, open, items, shown))
 			})
 	}
 }
@@ -380,6 +394,14 @@ impl RenderOnce for ActionMenu {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let open = open_state(&self.id, window, cx);
 		let is_open = *open.read(cx);
+		// The panel stays while it fades out after a choice or a click outside.
+		let shown = presence(
+			(self.id.clone(), "calcite-menu-presence"),
+			is_open,
+			theme.reduce_motion,
+			window,
+			cx,
+		);
 		let foreground = tokens::contrast_tint(theme.accent);
 		// A divider entry carries no label: merge it into the next item.
 		let mut items: Vec<Item> = Vec::new();
@@ -425,8 +447,8 @@ impl RenderOnce for ActionMenu {
 					})
 				}),
 			)
-			.when(is_open, |this| {
-				this.child(menu_panel(self.id, &theme, open, items))
+			.when_some(shown, |this, shown| {
+				this.child(menu_panel(self.id, &theme, open, items, shown))
 			})
 	}
 }

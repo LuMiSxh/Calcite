@@ -268,53 +268,51 @@ impl Render for Gallery {
 						.child(content),
 				),
 			)
-			.when(self.modal_open, |page| {
-				page.child(
-					modal_layer(
-						"gallery-modal",
-						modal("gallery-modal-sheet", "Reset launcher settings?")
-							.size(px(520.), px(320.))
-							.child(div().child("This restores every launcher setting. Your game data stays."))
-							.action(button("modal-cancel", "Cancel").on_click(cx.listener(
-								|this, _, _, cx| {
+			.child(
+				modal_layer(
+					"gallery-modal",
+					modal("gallery-modal-sheet", "Reset launcher settings?")
+						.size(px(520.), px(320.))
+						.child(div().child("This restores every launcher setting. Your game data stays."))
+						.action(
+							button("modal-cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| {
+								this.modal_open = false;
+								cx.notify();
+							})),
+						)
+						.action(
+							button("modal-reset", "Reset")
+								.danger()
+								.large()
+								.on_click(cx.listener(|this, _, _, cx| {
 									this.modal_open = false;
 									cx.notify();
-								},
-							)))
-							.action(
-								button("modal-reset", "Reset")
-									.danger()
-									.large()
-									.on_click(cx.listener(|this, _, _, cx| {
-										this.modal_open = false;
-										cx.notify();
-									})),
-							),
-					)
-					.on_dismiss(cx.listener(|this, _, _, cx| {
-						this.modal_open = false;
-						cx.notify();
-					})),
+								})),
+						),
 				)
-			})
-			.when(self.confirm_open, |page| {
-				page.child(
-					confirm_dialog(
-						"gallery-confirm",
-						"Uninstall the game?",
-						"The game for this server moves to the Trash. Settings and logins stay.",
-					)
-					.confirm("Uninstall", ConfirmRole::Destructive)
-					.on_confirm(cx.listener(|this, _, _, cx| {
-						this.confirm_open = false;
-						cx.notify();
-					}))
-					.on_cancel(cx.listener(|this, _, _, cx| {
-						this.confirm_open = false;
-						cx.notify();
-					})),
+				.shown(self.modal_open)
+				.on_dismiss(cx.listener(|this, _, _, cx| {
+					this.modal_open = false;
+					cx.notify();
+				})),
+			)
+			.child(
+				confirm_dialog(
+					"gallery-confirm",
+					"Uninstall the game?",
+					"The game for this server moves to the Trash. Settings and logins stay.",
 				)
-			})
+				.confirm("Uninstall", ConfirmRole::Destructive)
+				.shown(self.confirm_open)
+				.on_confirm(cx.listener(|this, _, _, cx| {
+					this.confirm_open = false;
+					cx.notify();
+				}))
+				.on_cancel(cx.listener(|this, _, _, cx| {
+					this.confirm_open = false;
+					cx.notify();
+				})),
+			)
 	}
 }
 

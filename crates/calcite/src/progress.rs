@@ -4,15 +4,16 @@
 //! the capsule's layout, with the leading glow, the travelling sweep, and the
 //! indeterminate glint.
 
-use std::{f32::consts::PI, time::Duration};
+use std::f32::consts::PI;
 
 use gpui::{
-	Animation, AnimationExt, App, Bounds, ElementId, IntoElement, PathBuilder, Pixels, Point, Rgba, Styled,
-	Window, canvas, div, linear, point, prelude::*, px,
+	App, Bounds, IntoElement, PathBuilder, Pixels, Point, Rgba, Styled, Window, canvas, div, point,
+	prelude::*, px,
 };
 
 use crate::{
-	motion::{DECORATIVE_FPS, cycle},
+	continuous::ContinuousMotion,
+	motion::cycle,
 	tokens::{scale_alpha, white},
 };
 
@@ -203,43 +204,34 @@ fn wrapped(from: f32, to: f32) -> Vec<(f32, f32)> {
 	}
 }
 
-/// Outline overlay for a capsule. `motion` is the decorative motion gate: when it is closed
-/// the loops stop; under Reduce Motion the glow and sweep are hidden as well.
+/// Outline overlay for a capsule. `motion` is the app's own gate for this outline; the
+/// loops also follow [`ContinuousMotion`]: they hold their phase while the window is in the
+/// background and stop under Reduce Motion, where the glow and sweep are hidden as well.
 pub fn progress_outline(
-	id: impl Into<ElementId>,
 	mode: OutlineMode,
 	theme: &crate::theme::Theme,
 	is_glint_active: bool,
 	motion: bool,
+	window: &mut Window,
+	cx: &mut App,
 ) -> impl IntoElement {
+	let animates =
+		motion && !theme.reduce_motion && (is_glint_active || matches!(mode, OutlineMode::Indeterminate));
+	let (key, period) = match mode {
+		OutlineMode::Indeterminate => ("calcite-outline-breathing", cycle::BREATHING),
+		OutlineMode::Determinate(_) => ("calcite-progress-sweep", cycle::progress_sweep_total()),
+	};
+	let phase = if animates {
+		ContinuousMotion::phase(key, period, theme, window, cx)
+	} else {
+		0.
+	};
 	let canvas = OutlineCanvas {
 		mode,
 		tint: theme.accent,
 		track: crate::tokens::CLEAR,
 		is_glint_active: is_glint_active && !theme.reduce_motion,
-		phase: 0.,
+		phase,
 	};
-	let animates = motion && (is_glint_active || matches!(mode, OutlineMode::Indeterminate));
-	let period = match mode {
-		OutlineMode::Indeterminate => cycle::BREATHING,
-		OutlineMode::Determinate(_) => cycle::progress_sweep_total(),
-	};
-	let layer = div().absolute().top_0().left_0().size_full();
-	if animates {
-		layer.child(
-			canvas.with_animation(
-				id,
-				Animation::new(Duration::from_secs_f32(period))
-					.with_easing(linear)
-					.repeat()
-					.with_max_fps(DECORATIVE_FPS),
-				|mut canvas, phase| {
-					canvas.phase = phase;
-					canvas
-				},
-			),
-		)
-	} else {
-		layer.child(canvas)
-	}
+	div().absolute().top_0().left_0().size_full().child(canvas)
 }

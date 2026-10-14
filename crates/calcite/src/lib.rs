@@ -26,6 +26,7 @@
 
 pub mod app_icon;
 pub mod choice;
+pub mod continuous;
 pub mod controls;
 pub mod feedback;
 pub mod forms;
@@ -78,6 +79,7 @@ pub mod prelude {
 	pub use crate::{
 		ActiveTheme, GlassStyle, Theme, ThemedView, Transparency,
 		choice::{ChoiceKind, StepState, choice_card, choice_group, step, step_rail, tag},
+		continuous::ContinuousMotion,
 		controls::{Size, ThemeOverride, Tone, button, halo, icon_button},
 		feedback::{TooltipExt, badge, skeleton},
 		forms::{segmented, slider, text_field, text_state, toggle},

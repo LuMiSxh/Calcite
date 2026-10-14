@@ -35,3 +35,9 @@ All notable changes to Calcite are recorded here. The format follows
   tooltips, and panel disclosures animate in; choice indicators pop on selection; the
   navigation selection fades and its marker grows.
 - Spacing scale `tokens::space` and more type sizes in `tokens::text`.
+- Exit motion: `presence` keeps a view alive while it fades out. `modal_layer`,
+  `confirm_dialog`, and `banner` take `.shown(bool)`; menus fade out when they close.
+- `ContinuousMotion`: one shared clock per loop type for the spinner, the progress sweep,
+  the outline breathing, and the skeleton pulse. A paused loop keeps its phase. Loops redraw
+  at 30 fps and stop under Reduce Motion, in background windows, and under serious thermal
+  pressure.

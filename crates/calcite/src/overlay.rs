@@ -27,7 +27,7 @@ use crate::{
 	controls::{Button, SharedClickHandler, button, theme_override},
 	glass::{Elevation, GlassExt},
 	icons::Icon,
-	interaction::{KeyHandler, KeyRole, register_key_target},
+	interaction::{KeyHandler, KeyRole, presence, register_key_target},
 	motion::Curve,
 	theme::{ActiveTheme, Theme},
 	tokens::{self, control, radius, scale_alpha, stack},
@@ -220,6 +220,7 @@ pub struct ModalLayer {
 	child: AnyElement,
 	theme: Option<Theme>,
 	on_dismiss: Option<SharedClickHandler>,
+	shown: bool,
 }
 
 pub fn modal_layer(id: impl Into<ElementId>, child: impl IntoElement) -> ModalLayer {
@@ -228,10 +229,18 @@ pub fn modal_layer(id: impl Into<ElementId>, child: impl IntoElement) -> ModalLa
 		child: child.into_any_element(),
 		theme: None,
 		on_dismiss: None,
+		shown: true,
 	}
 }
 
 impl ModalLayer {
+	/// Whether the layer is up. Keep rendering the layer and flip this instead of dropping
+	/// it: the sheet then fades out on [`Curve::Dismiss`] before it disappears.
+	pub fn shown(mut self, shown: bool) -> Self {
+		self.shown = shown;
+		self
+	}
+
 	pub fn on_dismiss(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
 		self.on_dismiss = Some(Rc::new(handler));
 		self
@@ -242,6 +251,17 @@ impl RenderOnce for ModalLayer {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let reduce_motion = theme.reduce_motion;
+		let presented = window.use_keyed_state((self.id.clone(), "calcite-presented"), cx, |_, _| false);
+		let Some(t) = presence(
+			(self.id.clone(), "calcite-layer"),
+			self.shown,
+			reduce_motion,
+			window,
+			cx,
+		) else {
+			presented.update(cx, |presented, _| *presented = false);
+			return div().into_any_element();
+		};
 		// Focusable but not a tab stop: Tab from the layer moves into the modal.
 		let focus = window
 			.use_keyed_state((self.id.clone(), "calcite-layer-focus"), cx, |_, cx| {
@@ -249,25 +269,28 @@ impl RenderOnce for ModalLayer {
 			})
 			.read(cx)
 			.clone();
-		let presented = window.use_keyed_state((self.id.clone(), "calcite-presented"), cx, |_, _| false);
-		if !*presented.read(cx) {
-			presented.update(cx, |presented, _| *presented = true);
-			let focus = focus.clone();
-			// Focus moves after this frame, once the layer is in the dispatch tree.
-			window.defer(cx, move |window, cx| window.focus(&focus, cx));
+		if self.shown {
+			if !*presented.read(cx) {
+				presented.update(cx, |presented, _| *presented = true);
+				let focus = focus.clone();
+				// Focus moves after this frame, once the layer is in the dispatch tree.
+				window.defer(cx, move |window, cx| window.focus(&focus, cx));
+			}
+			let dismiss = self.on_dismiss.clone().map(|on_dismiss| {
+				Rc::new(move |window: &mut Window, cx: &mut App| {
+					on_dismiss(&ClickEvent::default(), window, cx)
+				}) as KeyHandler
+			});
+			register_key_target(
+				&self.id,
+				KeyRole::Dismiss,
+				dismiss,
+				Some(focus.clone()),
+				window,
+				cx,
+			);
 		}
-		let dismiss = self.on_dismiss.clone().map(|on_dismiss| {
-			Rc::new(move |window: &mut Window, cx: &mut App| on_dismiss(&ClickEvent::default(), window, cx))
-				as KeyHandler
-		});
-		register_key_target(
-			&self.id,
-			KeyRole::Dismiss,
-			dismiss,
-			Some(focus.clone()),
-			window,
-			cx,
-		);
+		let rise = if reduce_motion { 0. } else { SHEET_RISE * (1. - t) };
 		div()
 			.id(self.id.clone())
 			.track_focus(&focus)
@@ -279,8 +302,10 @@ impl RenderOnce for ModalLayer {
 			.items_center()
 			.justify_center()
 			.bg(tokens::black(control::OVERLAY_DIM))
+			.opacity(t.clamp(0., 1.))
 			.occlude()
-			.when_some(self.on_dismiss, |layer, on_dismiss| {
+			// A leaving layer still blocks the window, but a click no longer dismisses again.
+			.when_some(self.on_dismiss.filter(|_| self.shown), |layer, on_dismiss| {
 				layer.on_click(move |event, window, cx| on_dismiss(event, window, cx))
 			})
 			.child(
@@ -289,22 +314,10 @@ impl RenderOnce for ModalLayer {
 					// Keep clicks inside the modal from reaching the dismiss handler.
 					.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 					.on_click(|_, _, cx| cx.stop_propagation())
-					.child(self.child)
-					// The sheet rises into place on the presentation spring while the dim fades.
-					.with_animation(
-						(self.id.clone(), "sheet"),
-						Animation::new(Curve::Present.timed(reduce_motion)),
-						move |sheet, t| {
-							let rise = if reduce_motion { 0. } else { SHEET_RISE * (1. - t) };
-							sheet.mt(px(rise))
-						},
-					),
+					.mt(px(rise))
+					.child(self.child),
 			)
-			.with_animation(
-				(self.id, "backdrop"),
-				Animation::new(Curve::Backdrop.timed(reduce_motion)),
-				|layer, t| layer.opacity(t.min(1.)),
-			)
+			.into_any_element()
 	}
 }
 

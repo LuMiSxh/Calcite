@@ -239,6 +239,35 @@ pub fn spring_value(
 	sample.value
 }
 
+/// The presence of something that appears and disappears, such as a menu or a modal:
+/// 0 hidden, 1 shown. It enters on [`Curve::Present`] and leaves on [`Curve::Dismiss`].
+/// Returns `None` once it is fully gone, so the caller stops drawing it; until then the
+/// caller keeps drawing it while it fades out. Call it on every render, shown or not.
+pub fn presence(
+	id: impl Into<ElementId>,
+	shown: bool,
+	reduce_motion: bool,
+	window: &mut Window,
+	cx: &mut App,
+) -> Option<f32> {
+	let state = window.use_keyed_state(id, cx, |_, _| {
+		Animated::new(0., Curve::Present.transition(reduce_motion))
+	});
+	let target = if shown { 1. } else { 0. };
+	let curve = if shown { Curve::Present } else { Curve::Dismiss };
+	let now = Instant::now();
+	let sample = state.update(cx, |value, _| {
+		if *value.value() != target {
+			value.set(target, curve.transition(reduce_motion), now);
+		}
+		value.sample(now)
+	});
+	if sample.is_active {
+		window.request_animation_frame();
+	}
+	(shown || sample.is_active).then_some(sample.value)
+}
+
 /// An empty absolute layer that fills its parent; components paint surfaces on it.
 pub fn layer(insets: (Pixels, Pixels)) -> gpui::Div {
 	let (horizontal, vertical) = insets;

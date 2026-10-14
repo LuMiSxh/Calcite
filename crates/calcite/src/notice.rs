@@ -12,20 +12,20 @@
 //!     .on_cancel(..)
 //! ```
 
-use std::{rc::Rc, time::Duration};
+use std::rc::Rc;
 
 use gpui::{
-	Animation, AnimationExt, AnyElement, App, ClickEvent, ElementId, FontWeight, IntoElement, ParentElement,
-	Pixels, Rgba, Role, SharedString, Styled, Transformation, Window, div, linear, percentage, prelude::*,
-	px, relative,
+	AnyElement, App, ClickEvent, ElementId, FontWeight, IntoElement, ParentElement, Pixels, Rgba, Role,
+	SharedString, Styled, Transformation, Window, div, percentage, prelude::*, px, relative,
 };
 
 use crate::{
+	continuous::ContinuousMotion,
 	controls::{button, icon_button, theme_override},
 	glass::{Elevation, GlassExt},
 	icons::{Icon, IconRef},
-	interaction::{ControlInteraction, ControlState, Feedback, layer, spring_value},
-	motion::{Curve, DECORATIVE_FPS, cycle},
+	interaction::{ControlInteraction, ControlState, Feedback, layer, presence, spring_value},
+	motion::{Curve, cycle},
 	overlay::{floating_action_bar, modal_layer},
 	theme::{ActiveTheme, Theme},
 	tokens::{self, contrast_tint, control, over, radius, scale_alpha, stack, white, with_alpha},
@@ -78,19 +78,12 @@ impl RenderOnce for Spinner {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let glyph = Icon::LoaderCircle.render(self.size, self.color.unwrap_or(theme.palette.secondary_text));
-		let glyph = if theme.decorative_motion(window) {
+		// Every spinner turns on one shared clock and holds its angle while paused.
+		let glyph = if theme.reduce_motion {
 			glyph
-				.with_animation(
-					(self.id.clone(), "spin"),
-					Animation::new(Duration::from_secs_f32(SPINNER_PERIOD))
-						.with_easing(linear)
-						.repeat()
-						.with_max_fps(DECORATIVE_FPS),
-					|glyph, t| glyph.with_transformation(Transformation::rotate(percentage(t))),
-				)
-				.into_any_element()
 		} else {
-			glyph.into_any_element()
+			let turn = ContinuousMotion::phase("calcite-spinner", SPINNER_PERIOD, &theme, window, cx);
+			glyph.with_transformation(Transformation::rotate(percentage(turn)))
 		};
 		div()
 			.id(self.id)
@@ -169,20 +162,21 @@ impl RenderOnce for ProgressBar {
 					.aria_max_numeric_value(1.)
 					.child(fill.left_0().w(relative(shown.clamp(0., 1.))))
 			}
-			None if theme.decorative_motion(window) => track.child(
-				fill.w(relative(GLINT_WIDTH)).with_animation(
-					(self.id, "glint"),
-					Animation::new(Duration::from_secs_f32(cycle::progress_sweep_total()))
-						.repeat()
-						.with_max_fps(DECORATIVE_FPS),
-					|glint, t| {
-						let travel =
-							(t * cycle::progress_sweep_total() / cycle::PROGRESS_SWEEP_TRAVEL).min(1.);
-						let eased = travel * travel * (3. - 2. * travel);
-						glint.left(relative(-GLINT_WIDTH + (1. + GLINT_WIDTH) * eased))
-					},
-				),
-			),
+			None if !theme.reduce_motion => {
+				let t = ContinuousMotion::phase(
+					"calcite-progress-sweep",
+					cycle::progress_sweep_total(),
+					&theme,
+					window,
+					cx,
+				);
+				let travel = (t * cycle::progress_sweep_total() / cycle::PROGRESS_SWEEP_TRAVEL).min(1.);
+				let eased = travel * travel * (3. - 2. * travel);
+				track.child(
+					fill.w(relative(GLINT_WIDTH))
+						.left(relative(-GLINT_WIDTH + (1. + GLINT_WIDTH) * eased)),
+				)
+			}
 			// Without motion an indeterminate bar reads as a dimmed full fill.
 			None => track.child(fill.left_0().w_full().bg(with_alpha(accent, 0.35))),
 		}
@@ -304,6 +298,7 @@ pub struct Banner {
 	detail: Option<SharedString>,
 	action: Option<AnyElement>,
 	on_dismiss: Option<Handler>,
+	shown: bool,
 	theme: Option<Theme>,
 }
 
@@ -315,11 +310,18 @@ pub fn banner(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Banne
 		detail: None,
 		action: None,
 		on_dismiss: None,
+		shown: true,
 		theme: None,
 	}
 }
 
 impl Banner {
+	/// Whether the banner is up. Keep rendering it and flip this to let it fade out.
+	pub fn shown(mut self, shown: bool) -> Self {
+		self.shown = shown;
+		self
+	}
+
 	pub fn tone(mut self, tone: BannerTone) -> Self {
 		self.tone = tone;
 		self
@@ -344,9 +346,18 @@ impl Banner {
 }
 
 impl RenderOnce for Banner {
-	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let reduce_motion = theme.reduce_motion;
+		let Some(shown) = presence(
+			(self.id.clone(), "calcite-banner"),
+			self.shown,
+			reduce_motion,
+			window,
+			cx,
+		) else {
+			return div().into_any_element();
+		};
 		let tint = contrast_tint(self.tone.color(&theme));
 		let has_detail = self.detail.is_some();
 		let text = div()
@@ -406,13 +417,18 @@ impl RenderOnce for Banner {
 						.on_click(move |event, window, cx| on_dismiss(event, window, cx)),
 				)
 			})
-			.with_animation(
-				(self.id, "present"),
-				Animation::new(Curve::Present.timed(reduce_motion)),
-				|banner, t| banner.opacity(t.min(1.)).mt(px(-10. * (1. - t))),
-			)
+			.opacity(shown.clamp(0., 1.))
+			.mt(px(if reduce_motion {
+				0.
+			} else {
+				BANNER_DROP * (1. - shown)
+			}))
+			.into_any_element()
 	}
 }
+
+/// How far a banner travels as it appears and leaves.
+const BANNER_DROP: f32 = -10.;
 
 /// How the confirming action of a [`confirm_dialog`] reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -434,6 +450,7 @@ pub struct ConfirmDialog {
 	cancel_label: SharedString,
 	on_confirm: Option<Handler>,
 	on_cancel: Option<Handler>,
+	shown: bool,
 	theme: Option<Theme>,
 }
 
@@ -453,11 +470,18 @@ pub fn confirm_dialog(
 		cancel_label: "Cancel".into(),
 		on_confirm: None,
 		on_cancel: None,
+		shown: true,
 		theme: None,
 	}
 }
 
 impl ConfirmDialog {
+	/// Whether the dialog is up; see [`ModalLayer::shown`](crate::overlay::ModalLayer::shown).
+	pub fn shown(mut self, shown: bool) -> Self {
+		self.shown = shown;
+		self
+	}
+
 	pub fn confirm(mut self, label: impl Into<SharedString>, role: ConfirmRole) -> Self {
 		self.confirm_label = label.into();
 		self.role = role;
@@ -538,13 +562,9 @@ impl RenderOnce for ConfirmDialog {
 					.flex_row()
 					.justify_end()
 					.child(floating_action_bar(&theme).child(cancel).child(confirm)),
-			)
-			.with_animation(
-				(self.id.clone(), "card"),
-				Animation::new(Curve::Present.timed(theme.reduce_motion)),
-				|card, t| card.opacity(t.min(1.)).mt(px(14. * (1. - t))),
 			);
 		modal_layer(self.id, card)
+			.shown(self.shown)
 			.theme(theme)
 			.when_some(self.on_cancel, |layer, on_cancel| {
 				layer.on_dismiss(move |event, window, cx| on_cancel(event, window, cx))

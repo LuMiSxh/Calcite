@@ -3,17 +3,16 @@
 //! Small feedback elements: [`skeleton`] (`SkeletonValue`), [`badge`], and glass
 //! tooltips through [`TooltipExt::glass_tooltip`].
 
-use std::time::Duration;
-
 use gpui::{
-	Animation, AnimationExt, AnyView, App, Context, FontWeight, IntoElement, ParentElement, Pixels, Render,
-	SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::*, px,
+	AnyView, App, Context, FontWeight, IntoElement, ParentElement, Pixels, Render, SharedString,
+	StatefulInteractiveElement, Styled, Window, div, prelude::*, px,
 };
 
 use crate::{
+	continuous::ContinuousMotion,
 	controls::{Tone, theme_override},
 	glass::{Elevation, GlassExt},
-	motion::{DECORATIVE_FPS, EnterExt},
+	motion::EnterExt,
 	theme::{ActiveTheme, Theme},
 	tokens::{self, radius, scale_alpha, white, with_alpha},
 };
@@ -68,6 +67,7 @@ impl RenderOnce for Skeleton {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let placeholder = div()
+			.id(self.id)
 			.rounded(self.corner)
 			.bg(white(SKELETON_BASELINE))
 			.map(|this| match self.width {
@@ -78,25 +78,18 @@ impl RenderOnce for Skeleton {
 				Some(height) => this.h(height),
 				None => this.h_full(),
 			});
-		if self.pulses && theme.decorative_motion(window) {
+		if self.pulses && !theme.reduce_motion {
+			let phase = ContinuousMotion::phase("calcite-skeleton", SKELETON_CYCLE, &theme, window, cx);
+			let wave = if phase < 0.5 {
+				phase * 2.
+			} else {
+				(1. - phase) * 2.
+			};
+			let eased = wave * wave * (3. - 2. * wave);
 			placeholder
-				.with_animation(
-					self.id,
-					Animation::new(Duration::from_secs_f32(SKELETON_CYCLE))
-						.repeat()
-						.with_max_fps(DECORATIVE_FPS),
-					|placeholder, phase| {
-						let wave = if phase < 0.5 {
-							phase * 2.
-						} else {
-							(1. - phase) * 2.
-						};
-						let eased = wave * wave * (3. - 2. * wave);
-						placeholder.bg(white(
-							SKELETON_BASELINE + (SKELETON_PEAK - SKELETON_BASELINE) * eased,
-						))
-					},
-				)
+				.bg(white(
+					SKELETON_BASELINE + (SKELETON_PEAK - SKELETON_BASELINE) * eased,
+				))
 				.into_any_element()
 		} else {
 			placeholder.into_any_element()

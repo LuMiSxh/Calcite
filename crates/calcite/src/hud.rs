@@ -280,13 +280,7 @@ impl RenderOnce for ControlBar {
 					.children(self.actions),
 			)
 			.when_some(self.progress, |bar, (mode, active)| {
-				bar.child(progress_outline(
-					"calcite-control-bar-outline",
-					mode,
-					&theme,
-					active,
-					motion,
-				))
+				bar.child(progress_outline(mode, &theme, active, motion, window, cx))
 			})
 	}
 }
