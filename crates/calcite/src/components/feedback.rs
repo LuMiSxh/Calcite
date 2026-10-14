@@ -14,7 +14,7 @@ use crate::{
 	glass::{Elevation, GlassExt},
 	motion::{EnterExt, tokens::TOOLTIP},
 	theme::{ActiveTheme, Theme},
-	tokens::{self, control, with_alpha},
+	tokens::{control, with_alpha},
 };
 
 const SKELETON_BASELINE: f32 = 0.12;
@@ -147,13 +147,13 @@ impl RenderOnce for Badge {
 		let color = self.tone.foreground(&theme);
 		div()
 			.font_family(theme.sans())
-			.px(px(control::BADGE_HORIZONTAL_PADDING))
-			.py(px(control::BADGE_VERTICAL_PADDING))
+			.px(theme.pt(control::BADGE_HORIZONTAL_PADDING))
+			.py(theme.pt(control::BADGE_VERTICAL_PADDING))
 			.rounded_full()
 			.bg(with_alpha(color, 0.16))
 			.border_1()
 			.border_color(with_alpha(color, 0.4))
-			.text_size(tokens::text::CAPTION)
+			.text_size(theme.text_caption())
 			.font_weight(FontWeight::BOLD)
 			.text_color(theme.legible(color))
 			.child(self.text)
@@ -178,7 +178,7 @@ impl Render for GlassTooltip {
 			.py(px(6.))
 			.rounded(theme.style.radii.control)
 			.glass_hud_at(&theme, Elevation::Resting)
-			.text_size(tokens::text::FOOTNOTE)
+			.text_size(theme.text_footnote())
 			.text_color(theme.palette.primary_text)
 			.child(self.text.clone())
 			.enter_with("calcite-tooltip", 0, TOOLTIP, theme.reduce_motion)

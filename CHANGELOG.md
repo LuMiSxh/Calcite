@@ -5,6 +5,18 @@ All notable changes to Calcite are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-14
+
+### Added
+
+- Size scale: `Style::with_scale`, `Style::scale`, `Theme::with_scale`, `Theme::scale`, `Theme::px`, `Theme::pt`, and `Theme::text_*`. It scales text, control heights, paddings, and icon sizes, and it crossfades with the theme. The default is 1.
+- `Size::height_in(theme)`, the scaled control height.
+- `Modal::max_dimensions`: a modal that fits its content up to a size, clamped to the window.
+
+### Fixed
+
+- Action rows of modals and `confirm_dialog` wrap instead of clipping when the font is large or the window is narrow. Buttons keep their width.
+
 ## [0.2.0] - 2026-10-14
 
 ### Breaking

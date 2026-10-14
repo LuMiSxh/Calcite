@@ -70,7 +70,7 @@ impl RenderOnce for PageHeader {
 			)
 			.child(
 				div()
-					.text_size(tokens::text::BODY)
+					.text_size(theme.text_body())
 					.text_color(theme.palette.secondary_text)
 					.child(self.subtitle),
 			)
@@ -259,7 +259,7 @@ impl RenderOnce for SettingsPanel {
 			.text_size(px(13.))
 			.font_weight(FontWeight::SEMIBOLD)
 			.text_color(color)
-			.child(self.icon.render(px(13.), color))
+			.child(self.icon.render(theme.pt(13.), color))
 			.child(self.title.clone());
 		let header = match (self.expanded, self.on_toggle) {
 			(Some(expanded), Some(on_toggle)) => div()
@@ -279,7 +279,7 @@ impl RenderOnce for SettingsPanel {
 					} else {
 						Icon::ChevronRight
 					}
-					.render(px(10.), theme.palette.secondary_text),
+					.render(theme.pt(10.), theme.palette.secondary_text),
 				)
 				.on_click(on_toggle)
 				.into_any_element(),
@@ -372,11 +372,11 @@ impl RenderOnce for ActionRow {
 					.flex()
 					.flex_col()
 					.gap(px(4.))
-					.child(div().text_size(tokens::text::BODY).child(self.title))
+					.child(div().text_size(theme.text_body()).child(self.title))
 					.when_some(self.detail, |label, detail| {
 						label.child(
 							div()
-								.text_size(tokens::text::CAPTION)
+								.text_size(theme.text_caption())
 								.text_color(theme.palette.secondary_text)
 								.child(detail),
 						)
@@ -668,7 +668,7 @@ impl RenderOnce for NavItem {
 			.gap(px(8.))
 			.rounded(theme.style.radii.row)
 			.rounded_smoothing_ios()
-			.text_size(tokens::text::NAVIGATION)
+			.text_size(theme.text_navigation())
 			.font_weight(if selected {
 				FontWeight::SEMIBOLD
 			} else {
@@ -698,7 +698,7 @@ impl RenderOnce for NavItem {
 					.bg(theme.accent),
 			)
 		})
-		.child(self.icon.render(px(16.), foreground))
+		.child(self.icon.render(theme.pt(16.), foreground))
 		.child(self.title)
 		.when_some(self.on_click.filter(|_| enabled), |item, on_click| {
 			item.on_click(on_click)
@@ -803,7 +803,7 @@ impl RenderOnce for ListRow {
 			row.on_click(on_click)
 		})
 		.child(div().w(px(12.)).when(selected, |this| {
-			this.child(Icon::Checkmark.render(px(10.), accent))
+			this.child(Icon::Checkmark.render(theme.pt(10.), accent))
 		}))
 		.child(
 			div()
@@ -973,7 +973,7 @@ impl RenderOnce for DocumentLink {
 			.px(px(6.))
 			.py(px(12.))
 			.rounded(theme.style.radii.row)
-			.text_size(tokens::text::BODY)
+			.text_size(theme.text_body())
 			.font_family(theme.sans())
 			.bg(hover_fill)
 			.text_color(text)
@@ -987,9 +987,9 @@ impl RenderOnce for DocumentLink {
 				.cursor_default()
 				.opacity(control::DISABLED_FOREGROUND_OPACITY)
 		};
-		item.child(self.icon.render(px(13.), theme.palette.secondary_text))
+		item.child(self.icon.render(theme.pt(13.), theme.palette.secondary_text))
 			.child(div().flex_1().child(self.title))
-			.child(Icon::ChevronRight.render(px(9.), theme.ink(0.32)))
+			.child(Icon::ChevronRight.render(theme.pt(9.), theme.ink(0.32)))
 			.when_some(self.on_click.filter(|_| enabled), |row, on_click| {
 				row.on_click(on_click)
 			})

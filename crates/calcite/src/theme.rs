@@ -12,7 +12,7 @@ use std::{
 };
 
 use gpui::{
-	App, AsyncApp, AsyncWindowContext, Context, Global, Rgba, SharedString, Subscription, Window,
+	App, AsyncApp, AsyncWindowContext, Context, Global, Pixels, Rgba, SharedString, Subscription, Window,
 	WindowAppearance,
 };
 
@@ -164,6 +164,51 @@ impl Theme {
 	pub fn with_fonts(mut self, fonts: Fonts) -> Self {
 		self.style.fonts = fonts;
 		self
+	}
+
+	/// Replaces only the size scale of the style.
+	pub fn with_scale(mut self, scale: f32) -> Self {
+		self.style = self.style.with_scale(scale);
+		self
+	}
+
+	/// The size scale: 1 is the base size of the tokens.
+	pub fn scale(&self) -> f32 {
+		self.style.scale
+	}
+
+	/// `base` times the scale. Use it for any token size, padding, or icon size.
+	pub fn px(&self, base: Pixels) -> Pixels {
+		base * self.style.scale
+	}
+
+	/// `base` points times the scale.
+	pub fn pt(&self, base: f32) -> Pixels {
+		gpui::px(base * self.style.scale)
+	}
+
+	pub fn text_caption(&self) -> Pixels {
+		self.px(tokens::text::CAPTION)
+	}
+
+	pub fn text_footnote(&self) -> Pixels {
+		self.px(tokens::text::FOOTNOTE)
+	}
+
+	pub fn text_supporting(&self) -> Pixels {
+		self.px(tokens::text::SUPPORTING)
+	}
+
+	pub fn text_body(&self) -> Pixels {
+		self.px(tokens::text::BODY)
+	}
+
+	pub fn text_navigation(&self) -> Pixels {
+		self.px(tokens::text::NAVIGATION)
+	}
+
+	pub fn text_title(&self) -> Pixels {
+		self.px(tokens::text::TITLE)
 	}
 
 	/// The sans family name for `.font_family(..)`.

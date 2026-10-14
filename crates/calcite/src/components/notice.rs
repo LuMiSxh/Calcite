@@ -32,7 +32,7 @@ use crate::{
 	overlay::{floating_action_bar, modal_layer},
 	surface::chip_capsule,
 	theme::{ActiveTheme, Theme},
-	tokens::{self, Chromatic, control, over, stack, with_alpha},
+	tokens::{Chromatic, control, over, stack, with_alpha},
 };
 
 type Handler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
@@ -281,7 +281,7 @@ impl RenderOnce for EmptyState {
 				state.child(
 					div()
 						.max_w(px(360.))
-						.text_size(tokens::text::BODY)
+						.text_size(theme.text_body())
 						.text_color(theme.palette.secondary_text)
 						.text_center()
 						.child(detail),
@@ -391,7 +391,7 @@ impl RenderOnce for Banner {
 			.gap(px(2.))
 			.child(
 				div()
-					.text_size(tokens::text::BODY)
+					.text_size(theme.text_body())
 					.font_weight(FontWeight::SEMIBOLD)
 					.text_color(theme.palette.primary_text)
 					.child(self.title.clone()),
@@ -399,7 +399,7 @@ impl RenderOnce for Banner {
 			.when_some(self.detail, |text, detail| {
 				text.child(
 					div()
-						.text_size(tokens::text::CAPTION)
+						.text_size(theme.text_caption())
 						.text_color(theme.palette.secondary_text)
 						.child(detail),
 				)
@@ -529,7 +529,7 @@ impl ConfirmDialog {
 }
 
 impl RenderOnce for ConfirmDialog {
-	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		use crate::controls::ThemeOverride;
 
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
@@ -550,13 +550,13 @@ impl RenderOnce for ConfirmDialog {
 		let card = div()
 			.font_family(theme.sans())
 			.id((self.id.clone(), "card"))
-			.w(px(420.))
+			.w(theme.pt(420.).min(window.viewport_size().width - px(60.)))
 			.flex()
 			.flex_col()
-			.gap(px(10.))
-			.px(px(24.))
-			.pt(px(22.))
-			.pb(px(16.))
+			.gap(theme.pt(10.))
+			.px(theme.pt(24.))
+			.pt(theme.pt(22.))
+			.pb(theme.pt(16.))
 			.rounded(theme.style.radii.modal)
 			.rounded_smoothing_ios()
 			.bg(stack(&[theme.palette.panel_background, theme.hud_tint]))
@@ -571,20 +571,20 @@ impl RenderOnce for ConfirmDialog {
 			.aria_modal(true)
 			.child(
 				div()
-					.text_size(px(17.))
+					.text_size(theme.pt(17.))
 					.font_weight(FontWeight::BOLD)
 					.text_color(theme.palette.primary_text)
 					.child(self.title),
 			)
 			.child(
 				div()
-					.text_size(tokens::text::BODY)
+					.text_size(theme.text_body())
 					.text_color(theme.palette.secondary_text)
 					.child(self.message),
 			)
 			.child(
 				div()
-					.pt(px(8.))
+					.pt(theme.pt(8.))
 					.flex()
 					.flex_row()
 					.justify_end()
@@ -738,7 +738,7 @@ impl RenderOnce for Chip {
 		let on_click = self.on_click.or(self.on_remove);
 		chip_capsule(self.id)
 			.font_family(theme.sans())
-			.pr(px(if removable {
+			.pr(theme.pt(if removable {
 				4.
 			} else {
 				control::COMPACT_HORIZONTAL_PADDING

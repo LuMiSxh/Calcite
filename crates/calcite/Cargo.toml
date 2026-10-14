@@ -1,6 +1,6 @@
 [package]
 name = "calcite"
-version = "0.2.0"
+version = "0.2.1"
 description = "A glass UI library for gpui-ce: Liquid Glass looks of macOS 26 and 27, spring motion, controls, forms, menus, panels, modals, and HUD surfaces"
 edition.workspace = true
 license.workspace = true

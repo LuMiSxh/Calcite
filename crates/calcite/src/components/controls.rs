@@ -134,25 +134,30 @@ impl Size {
 		}
 	}
 
-	/// Horizontal padding; the height comes from [`Size::height`].
-	fn padding(self) -> Pixels {
-		match self {
-			Self::Regular => px(12.),
-			Self::Large => px(16.),
-			Self::Compact => px(control::COMPACT_HORIZONTAL_PADDING),
-		}
+	/// [`Size::height`] times the theme's scale.
+	pub fn height_in(self, theme: &Theme) -> Pixels {
+		theme.px(self.height())
 	}
 
-	fn text_size(self) -> Pixels {
+	/// Horizontal padding, scaled; the height comes from [`Size::height_in`].
+	fn padding(self, theme: &Theme) -> Pixels {
+		theme.pt(match self {
+			Self::Regular => 12.,
+			Self::Large => 16.,
+			Self::Compact => control::COMPACT_HORIZONTAL_PADDING,
+		})
+	}
+
+	fn text_size(self, theme: &Theme) -> Pixels {
 		match self {
-			Self::Compact => tokens::text::CAPTION,
-			_ => tokens::text::BODY,
+			Self::Compact => theme.text_caption(),
+			_ => theme.text_body(),
 		}
 	}
 
 	/// The corner radius: half the height, so every size is a capsule.
-	fn corner(self) -> Pixels {
-		self.height() / 2.
+	fn corner(self, theme: &Theme) -> Pixels {
+		self.height_in(theme) / 2.
 	}
 }
 
@@ -314,14 +319,14 @@ impl RenderOnce for Button {
 		} else {
 			self.tone.disabled_foreground(&theme)
 		};
-		let horizontal = self.size.padding();
-		let text_size = self.size.text_size();
+		let horizontal = self.size.padding(&theme);
+		let text_size = self.size.text_size(&theme);
 		let has_sheen = self.enabled && glow_enabled(&theme, self.glow, self.size == Size::Compact);
 		let pointer_tint = (has_sheen && !filled).then(|| self.tone.foreground(&theme));
 
 		let surface_layer = surface
 			.paint(layer(), &frame, pointer_tint)
-			.rounded(self.size.corner())
+			.rounded(self.size.corner(&theme))
 			.border_1()
 			.border_color(surface.border);
 		let content = div()
@@ -329,7 +334,7 @@ impl RenderOnce for Button {
 			.flex()
 			.flex_row()
 			.items_center()
-			.gap(px(6.))
+			.gap(theme.pt(6.))
 			.when_some(self.icon, |content, icon| {
 				content.child(icon.render(text_size, foreground))
 			})
@@ -342,7 +347,8 @@ impl RenderOnce for Button {
 			.items_center()
 			.justify_center()
 			.px(horizontal)
-			.h(self.size.height())
+			.h(self.size.height_in(&theme))
+			.flex_shrink_0()
 			.font_family(theme.sans())
 			.text_size(text_size)
 			.font_weight(FontWeight::SEMIBOLD)
@@ -625,7 +631,7 @@ mod tests {
 	#[test]
 	fn all_buttons_are_capsules() {
 		for size in [Size::Compact, Size::Regular, Size::Large] {
-			assert_eq!(size.corner(), size.height() / 2.);
+			assert_eq!(size.corner(&Theme::default()), size.height() / 2.);
 		}
 	}
 

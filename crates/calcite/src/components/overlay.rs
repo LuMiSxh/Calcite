@@ -79,8 +79,12 @@ impl RenderOnce for FloatingActionBar {
 			.flex()
 			.flex_row()
 			.items_center()
-			.gap(px(12.))
-			.p(px(10.))
+			// Wraps instead of overflowing a narrow footer.
+			.flex_wrap()
+			.min_w_0()
+			.max_w_full()
+			.gap(theme.pt(12.))
+			.p(theme.pt(10.))
 			.rounded_full()
 			.glass_hud_at(&theme, Elevation::Resting)
 			.children(self.children)
@@ -103,6 +107,7 @@ pub struct Modal {
 	title: SharedString,
 	width: Pixels,
 	height: Pixels,
+	fit_content: bool,
 	children: SmallVec<[AnyElement; 4]>,
 	actions: SmallVec<[AnyElement; 3]>,
 	theme: Option<Theme>,
@@ -115,6 +120,7 @@ pub fn modal(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Modal 
 		title: title.into(),
 		width: px(560.),
 		height: px(420.),
+		fit_content: false,
 		children: SmallVec::new(),
 		actions: SmallVec::new(),
 		theme: None,
@@ -137,6 +143,13 @@ impl Modal {
 		self
 	}
 
+	/// Sizes the modal to its content, up to `width` × `height`, both clamped to the window.
+	/// Use it for short dialogs: the footer never clips, and content that is too tall scrolls.
+	pub fn max_dimensions(mut self, width: Pixels, height: Pixels) -> Self {
+		self.fit_content = true;
+		self.dimensions(width, height)
+	}
+
 	/// Adds an action to the floating footer.
 	pub fn action(mut self, action: impl IntoElement) -> Self {
 		self.actions.push(action.into_any_element());
@@ -154,24 +167,32 @@ impl RenderOnce for Modal {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let reduce_motion = theme.reduce_motion;
-		// Clamp to the window with a 30 pt margin, never below 480 × 320.
+		// Clamp to the window with a 30 pt margin. A fixed size is never below 480 × 320.
 		let viewport = window.viewport_size();
-		let modal_size = size(
-			self.width.min(viewport.width - px(60.)).max(px(480.)),
-			self.height.min(viewport.height - px(60.)).max(px(320.)),
-		);
+		let fit_content = self.fit_content;
+		let modal_size = if fit_content {
+			size(
+				self.width.min(viewport.width - px(60.)),
+				self.height.min(viewport.height - px(60.)),
+			)
+		} else {
+			size(
+				self.width.min(viewport.width - px(60.)).max(px(480.)),
+				self.height.min(viewport.height - px(60.)).max(px(320.)),
+			)
+		};
 		let background = stack(&[theme.palette.panel_background, theme.hud_tint]);
 		let entrance = Animation::new(Curve::Present.timed(reduce_motion));
 		let header = div()
 			.flex()
 			.flex_col()
-			.gap(px(10.))
-			.px(px(24.))
-			.pt(px(22.))
-			.pb(px(16.))
+			.gap(theme.pt(10.))
+			.px(theme.pt(24.))
+			.pt(theme.pt(22.))
+			.pb(theme.pt(16.))
 			.child(
 				div()
-					.text_size(px(17.))
+					.text_size(theme.pt(17.))
 					.font_weight(FontWeight::BOLD)
 					.child(self.title.clone()),
 			)
@@ -200,13 +221,13 @@ impl RenderOnce for Modal {
 			.overflow_y_scroll()
 			.child(
 				div()
-					.px(px(24.))
+					.px(theme.pt(24.))
 					.pt(px(2.))
-					.pb(px(96.))
+					.pb(theme.pt(96.))
 					.flex()
 					.flex_col()
 					.gap(px(12.))
-					.text_size(tokens::text::BODY)
+					.text_size(theme.text_body())
 					.children(self.children)
 					.with_animation((self.id.clone(), "body"), entrance, |body, t| {
 						body.opacity(t).relative().top(px(14. * (1. - t)))
@@ -217,9 +238,9 @@ impl RenderOnce for Modal {
 			.left_0()
 			.right_0()
 			.bottom_0()
-			.pt(px(30.))
-			.pr(px(24.))
-			.pb(px(18.))
+			.pt(theme.pt(30.))
+			.px(theme.pt(24.))
+			.pb(theme.pt(18.))
 			.flex()
 			.flex_row()
 			.justify_end()
@@ -244,8 +265,15 @@ impl RenderOnce for Modal {
 			.id(self.id)
 			.relative()
 			.font_family(theme.sans())
-			.w(modal_size.width)
-			.h(modal_size.height)
+			.when(!fit_content, |modal| {
+				modal.w(modal_size.width).h(modal_size.height)
+			})
+			.when(fit_content, |modal| {
+				modal
+					.min_w(theme.pt(320.).min(modal_size.width))
+					.max_w(modal_size.width)
+					.max_h(modal_size.height)
+			})
 			.flex()
 			.flex_col()
 			.overflow_hidden()

@@ -692,11 +692,11 @@ impl RenderOnce for Slider {
 			.gap(tokens::space::CONTROL)
 			.max_w_full()
 			.when_some(self.leading_icon, |row, icon| {
-				row.child(beside().child(icon.render(tokens::text::BODY, secondary)))
+				row.child(beside().child(icon.render(theme.text_body(), secondary)))
 			})
 			.child(slider)
 			.when_some(self.trailing_icon, |row, icon| {
-				row.child(beside().child(icon.render(tokens::text::BODY, secondary)))
+				row.child(beside().child(icon.render(theme.text_body(), secondary)))
 			})
 			.when(self.value_label, |row| {
 				// The slider reports its value itself, so the label stays out of the
@@ -707,7 +707,7 @@ impl RenderOnce for Slider {
 						.aria_hidden()
 						.w(px(42.))
 						.justify_end()
-						.text_size(tokens::text::CAPTION)
+						.text_size(theme.text_caption())
 						.text_color(secondary)
 						.child(format!("{percent}%")),
 				)
@@ -958,10 +958,10 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 							.justify_center()
 							.text_center()
 							.whitespace_nowrap()
-							.px(px(10.))
-							.py(px(4.))
+							.px(theme.pt(10.))
+							.py(theme.pt(4.))
 							.rounded_full()
-							.text_size(tokens::text::BODY)
+							.text_size(theme.text_body())
 							.font_weight(FontWeight::SEMIBOLD)
 							.text_color(foreground)
 							.role(Role::RadioButton)
@@ -1190,13 +1190,13 @@ impl RenderOnce for TextField {
 			.flex_row()
 			.items_center()
 			.font_family(theme.sans())
-			.gap(px(7.))
-			.px(px(12.))
-			.h(control::HEIGHT_REGULAR)
+			.gap(theme.pt(7.))
+			.px(theme.pt(12.))
+			.h(theme.px(control::HEIGHT_REGULAR))
 			.rounded_full()
 			.border_1()
 			.border_color(border)
-			.text_size(tokens::text::BODY)
+			.text_size(theme.text_body())
 			.text_color(theme.palette.primary_text)
 			.control_state(&hover_state, false)
 			.when_some(
@@ -1224,7 +1224,7 @@ impl RenderOnce for TextField {
 					.opacity(control::DISABLED_FOREGROUND_OPACITY)
 			})
 			.when_some(self.icon, |field, icon| {
-				field.child(icon.render(px(11.), icon_color))
+				field.child(icon.render(theme.pt(11.), icon_color))
 			})
 			.child(
 				text_input((self.id, "input"))

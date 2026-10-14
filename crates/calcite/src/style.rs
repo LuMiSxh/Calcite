@@ -172,6 +172,9 @@ pub struct Style {
 	pub pointer_glow: bool,
 	/// The font families components use.
 	pub fonts: Fonts,
+	/// Multiplies text sizes, control heights, paddings, and icon sizes. 1 is the base size
+	/// of the [`tokens`](crate::tokens).
+	pub scale: f32,
 }
 
 impl Style {
@@ -192,6 +195,7 @@ impl Style {
 			glass_strength: 1.,
 			pointer_glow: false,
 			fonts: Fonts::default(),
+			scale: 1.,
 		}
 	}
 
@@ -220,13 +224,20 @@ impl Style {
 		self
 	}
 
-	/// This style part of the way toward `to`: radii and glass strength interpolate, the
-	/// rest is `to`'s.
+	/// Scales text, controls, and icons. Clamped to 0.5 to 2.
+	pub fn with_scale(mut self, scale: f32) -> Self {
+		self.scale = scale.clamp(0.5, 2.);
+		self
+	}
+
+	/// This style part of the way toward `to`: radii, glass strength, and scale interpolate,
+	/// the rest is `to`'s.
 	pub fn mix(&self, to: &Self, t: f32) -> Self {
 		let t = t.clamp(0., 1.);
 		Self {
 			radii: self.radii.mix(to.radii, t),
 			glass_strength: self.glass_strength + (to.glass_strength - self.glass_strength) * t,
+			scale: self.scale + (to.scale - self.scale) * t,
 			..*to
 		}
 	}
@@ -270,6 +281,7 @@ mod tests {
 	#[test]
 	fn default_style_is_macos_27_default_without_glow() {
 		let style = Style::default();
+		assert_eq!(style.scale, 1.);
 		assert_eq!(style.glass, GlassStyle::MacOS27(Transparency::Default));
 		assert_eq!(style.radii, Radii::DEFAULT);
 		assert_eq!(style.glass_strength, 1.);
@@ -278,6 +290,10 @@ mod tests {
 
 	#[test]
 	fn mix_interpolates_numbers_and_snaps_the_rest() {
+		let small = Style::default().with_scale(0.8);
+		assert_eq!(Style::default().with_scale(9.).scale, 2.);
+		assert!((Style::default().mix(&small, 0.5).scale - 0.9).abs() < 1e-6);
+		assert_eq!(Style::default().mix(&small, 1.).scale, 0.8);
 		let from = Style::default();
 		let to = Style::macos_26()
 			.with_radii(Radii::ROUND)

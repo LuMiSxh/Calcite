@@ -202,14 +202,14 @@ impl RenderOnce for Pill {
 			window,
 			cx,
 		);
-		let height = lerp(hud::PILL_HEIGHT, expanded_height, open).max(px(0.));
+		let height = lerp(theme.px(hud::PILL_HEIGHT), expanded_height, open).max(px(0.));
 		let width = if settled_closed {
 			None
 		} else {
 			Some(morph_width(collapsed_width, expanded_width, open))
 		};
 		let corner = lerp(
-			hud::PILL_HEIGHT / 2.,
+			theme.px(hud::PILL_HEIGHT) / 2.,
 			theme.style.radii.hud_pill,
 			open.clamp(0., 1.),
 		);
@@ -241,19 +241,19 @@ impl RenderOnce for Pill {
 		let header = div()
 			.id((self.id.clone(), "header"))
 			.relative()
-			.h(hud::PILL_HEIGHT)
+			.h(theme.px(hud::PILL_HEIGHT))
 			.flex_shrink_0()
 			.flex()
 			.flex_row()
 			.items_center()
 			.gap(px(5.))
-			.px(hud::HORIZONTAL_PADDING)
-			.child(self.icon.render(px(11.), accent_foreground))
+			.px(theme.px(hud::HORIZONTAL_PADDING))
+			.child(self.icon.render(theme.pt(11.), accent_foreground))
 			.child(div().flex_1().min_w_0().child((self.title)()))
 			.when(can_expand, |header| {
 				header
 					.child(div().w(px(6.)))
-					.child(chevron.render(px(10.), accent_foreground))
+					.child(chevron.render(theme.pt(10.), accent_foreground))
 					.role(Role::Button)
 					.aria_label(toggle_label)
 					.aria_expanded(expanded)
@@ -270,20 +270,20 @@ impl RenderOnce for Pill {
 						.absolute()
 						.top_0()
 						.left_0()
-						.h(hud::PILL_HEIGHT)
+						.h(theme.px(hud::PILL_HEIGHT))
 						.opacity(0.)
 						.whitespace_nowrap()
 						.flex()
 						.flex_row()
 						.items_center()
 						.gap(px(5.))
-						.px(hud::HORIZONTAL_PADDING)
-						.child(self.icon.render(px(11.), accent_foreground))
+						.px(theme.px(hud::HORIZONTAL_PADDING))
+						.child(self.icon.render(theme.pt(11.), accent_foreground))
 						.child(div().min_w_0().child((self.title)()))
 						.when(can_expand, |probe| {
 							probe
 								.child(div().w(px(6.)))
-								.child(chevron.render(px(10.), accent_foreground))
+								.child(chevron.render(theme.pt(10.), accent_foreground))
 						})
 						.child(
 							canvas(
@@ -315,7 +315,7 @@ impl RenderOnce for Pill {
 			.relative()
 			.flex()
 			.flex_col()
-			.text_size(tokens::text::CAPTION)
+			.text_size(theme.text_caption())
 			.text_color(theme.palette.primary_text)
 			.font_family(theme.sans())
 			.opacity(1. - 0.38 * recede)
@@ -491,9 +491,9 @@ impl RenderOnce for Status {
 			.child(
 				div()
 					.text_size(if self.emphasized {
-						tokens::text::STATUS_PERCENT
+						theme.px(tokens::text::STATUS_PERCENT)
 					} else {
-						tokens::text::STATUS_TITLE
+						theme.px(tokens::text::STATUS_TITLE)
 					})
 					.font_weight(FontWeight::SEMIBOLD)
 					.text_color(theme.palette.primary_text)
@@ -503,7 +503,7 @@ impl RenderOnce for Status {
 			.when_some(self.detail, |this, detail| {
 				this.child(
 					div()
-						.text_size(tokens::text::CAPTION)
+						.text_size(theme.text_caption())
 						.text_color(theme.palette.secondary_text)
 						.truncate()
 						.child(detail),

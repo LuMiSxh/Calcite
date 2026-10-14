@@ -30,7 +30,7 @@ use crate::{
 	layout::settings_panel,
 	motion::Curve,
 	theme::{ActiveTheme, Theme},
-	tokens::{self, Chromatic, control, over, scale_alpha},
+	tokens::{Chromatic, control, over, scale_alpha},
 };
 
 /// The trailing radio, checkbox, or chevron, and the size a filled glyph pops from.
@@ -267,7 +267,7 @@ impl RenderOnce for ChoiceCard {
 			.when_some(self.detail.clone(), |label, detail| {
 				label.child(
 					div()
-						.text_size(tokens::text::SUPPORTING)
+						.text_size(theme.text_supporting())
 						.text_color(palette.secondary_text)
 						.child(detail),
 				)
@@ -285,7 +285,7 @@ impl RenderOnce for ChoiceCard {
 						.w(px(28.))
 						.flex()
 						.justify_center()
-						.child(icon.render(px(18.), indicator_color)),
+						.child(icon.render(theme.pt(18.), indicator_color)),
 				)
 			})
 			.child(label)
@@ -296,7 +296,7 @@ impl RenderOnce for ChoiceCard {
 			.relative()
 			.w_full()
 			.p(px(12.))
-			.text_size(tokens::text::BODY)
+			.text_size(theme.text_body())
 			.font_family(theme.sans())
 			.role(self.kind.role())
 			.aria_label(self.title)
@@ -387,7 +387,7 @@ impl RenderOnce for ChoiceGroup {
 			.when_some(self.footnote, |panel, footnote| {
 				panel.child(
 					div()
-						.text_size(tokens::text::CAPTION)
+						.text_size(theme.text_caption())
 						.text_color(theme.palette.secondary_text)
 						.child(footnote),
 				)
@@ -420,13 +420,13 @@ impl RenderOnce for Tag {
 		let color = theme.palette.secondary_text;
 		div()
 			.flex_none()
-			.px(px(control::BADGE_HORIZONTAL_PADDING))
-			.py(px(control::BADGE_VERTICAL_PADDING))
+			.px(theme.pt(control::BADGE_HORIZONTAL_PADDING))
+			.py(theme.pt(control::BADGE_VERTICAL_PADDING))
 			.rounded_full()
 			.border_1()
 			.font_family(theme.sans())
 			.border_color(scale_alpha(color, 0.5))
-			.text_size(tokens::text::CAPTION)
+			.text_size(theme.text_caption())
 			.font_weight(FontWeight::SEMIBOLD)
 			.text_color(color)
 			.child(self.text)
@@ -495,7 +495,7 @@ impl RenderOnce for StepRail {
 					.px(px(18.))
 					.pt(px(22.))
 					.pb(px(14.))
-					.text_size(tokens::text::CAPTION)
+					.text_size(theme.text_caption())
 					.font_weight(FontWeight::SEMIBOLD)
 					.letter_spacing(px(1.4))
 					.text_color(theme.palette.secondary_text)
@@ -579,7 +579,7 @@ impl RenderOnce for Step {
 			.gap(px(8.))
 			.rounded(theme.style.radii.row)
 			.rounded_smoothing_ios()
-			.text_size(tokens::text::BODY)
+			.text_size(theme.text_body())
 			.font_weight(if current {
 				FontWeight::SEMIBOLD
 			} else {
@@ -618,7 +618,7 @@ impl RenderOnce for Step {
 				.w(px(17.))
 				.flex()
 				.justify_center()
-				.child(icon.render(px(14.), foreground)),
+				.child(icon.render(theme.pt(14.), foreground)),
 		)
 		.child(self.title)
 		.when_some(on_click, |item, on_click| item.on_click(on_click))

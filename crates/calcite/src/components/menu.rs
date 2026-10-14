@@ -232,7 +232,7 @@ fn chip(
 		.border_1()
 		.border_color(tokens::scale_alpha(Chromatic::enabled(theme.accent).border, rim))
 		.child(content)
-		.child(Icon::ChevronUpDown.render(px(9.), foreground));
+		.child(Icon::ChevronUpDown.render(theme.pt(9.), foreground));
 	let chip = chip.when(enabled, |chip| {
 		chip.keyboard_focus(&focus, FocusShape::Capsule, theme, window)
 	});
@@ -359,7 +359,7 @@ fn menu_rows(
 		.flex_col()
 		.gap(px(morph::ROW_GAP))
 		.font_family(theme.sans())
-		.text_size(tokens::text::SUPPORTING)
+		.text_size(theme.text_supporting())
 		.text_color(theme.palette.primary_text)
 		.on_key_down(move |event, window, cx| {
 			let stroke = &event.keystroke;
@@ -413,10 +413,10 @@ fn menu_rows(
 			let row = clickable
 				.wire(row, FocusShape::Rounded(theme.style.radii.row), theme, window)
 				.child(div().w(px(12.)).when(item.checked, |this| {
-					this.child(Icon::Checkmark.render(px(10.), accent))
+					this.child(Icon::Checkmark.render(theme.pt(10.), accent))
 				}))
 				.when_some(item.icon, |row, icon| {
-					row.child(icon.render(px(12.), theme.palette.secondary_text))
+					row.child(icon.render(theme.pt(12.), theme.palette.secondary_text))
 				})
 				.child(div().flex_1().whitespace_nowrap().child(item.label))
 				.on_click(move |event, window, cx| {
@@ -748,7 +748,7 @@ impl RenderOnce for ActionMenu {
 					.flex_row()
 					.items_center()
 					.gap(px(5.))
-					.child(icon.render(px(10.), foreground))
+					.child(icon.render(theme.pt(10.), foreground))
 					.child(title.clone())
 					.into_any_element()
 			}),
