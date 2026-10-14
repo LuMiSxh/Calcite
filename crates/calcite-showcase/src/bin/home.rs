@@ -317,15 +317,13 @@ impl Home {
 			.as_secs();
 		let playing = self.music_playing;
 
-		let music = pill(
-			"music-pill",
-			Icon::Music,
+		let music = pill("music-pill", Icon::Music, || {
 			div()
 				.max_w(px(180.))
 				.truncate()
 				.font_weight(FontWeight::MEDIUM)
-				.child("Sanity Restored — Lobby Theme"),
-		)
+				.child("Sanity Restored — Lobby Theme")
+		})
 		.noun("music")
 		.detail(
 			div()
@@ -360,11 +358,9 @@ impl Home {
 		.receded(receded(Pill::Music))
 		.on_toggle(cx.listener(|this, _, _, cx| this.toggle_pill(Pill::Music, cx)));
 
-		let version = pill(
-			"version-pill",
-			Icon::Tag,
-			div().font_weight(FontWeight::MEDIUM).child("2.6.81"),
-		)
+		let version = pill("version-pill", Icon::Tag, || {
+			div().font_weight(FontWeight::MEDIUM).child("2.6.81")
+		})
 		.noun("version")
 		.detail(
 			div()
@@ -398,9 +394,7 @@ impl Home {
 					cx.notify();
 				}))
 		});
-		let status_pill = pill(
-			"status-pill",
-			Icon::Globe,
+		let status_pill = pill("status-pill", Icon::Globe, move || {
 			div()
 				.flex()
 				.flex_row()
@@ -410,8 +404,8 @@ impl Home {
 					div()
 						.text_color(theme.palette.secondary_text)
 						.child(countdown(now, reset_hour)),
-				),
-		)
+				)
+		})
 		.noun("server time")
 		.detail(
 			div().flex().flex_col().gap(px(2.)).children(rows),
@@ -476,7 +470,7 @@ impl Home {
 			)
 			.child(row("Space", "Primary action".into()))
 			.child(row("A", "Next accent".into()))
-			.child(row("G", format!("Glass: {}", theme.glass.label()).into()))
+			.child(row("G", format!("Glass: {}", theme.style.glass.label()).into()))
 			.child(row(
 				"M",
 				format!(
@@ -546,7 +540,7 @@ impl Render for Home {
 				Theme::update(cx, |theme| *theme = theme.with_accent(accent));
 			}))
 			.on_action(cx.listener(|_, _: &CycleGlass, _, cx| {
-				Theme::update(cx, |theme| theme.glass = theme.glass.next())
+				Theme::update(cx, |theme| theme.style.glass = theme.style.glass.next())
 			}))
 			.on_action(cx.listener(|_, _: &ToggleReduceMotion, _, cx| {
 				Theme::update(cx, |theme| theme.reduce_motion = !theme.reduce_motion)

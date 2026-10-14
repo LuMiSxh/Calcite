@@ -80,6 +80,14 @@ cargo run -p calcite --example minimal
 
 ## Components
 
+The source is split in two groups. `calcite::components` holds what an app calls directly (controls,
+forms, choices, menus, HUD, layout, notices, overlays, feedback, progress, ticker, window chrome, app
+icon). `calcite::primitives` holds the shared building blocks under them (glass, glass groups, morph
+math, interaction state, motion, continuous motion, key maps, frame stats, and the control surface and
+knob helpers). The design-system core stays at the top level: `theme`, `palette`, `style`, `tokens`,
+`fonts`, and `icons`. Every module is also re-exported at the crate root, so `calcite::controls::button`
+and `calcite::components::controls::button` are the same path.
+
 | Group    | Builders                                                                                         |
 | -------- | ------------------------------------------------------------------------------------------------ |
 | Actions  | `button`, `icon_button`, `halo`, `done_button`                                                   |
@@ -93,18 +101,45 @@ cargo run -p calcite --example minimal
 | Overlays | `modal`, `modal_layer`, `floating_action_bar`, `confirm_dialog`                                  |
 | Feedback | `badge`, `banner`, `spinner`, `progress_bar`, `empty_state`, `skeleton`, `.glass_tooltip(text)`  |
 | Surfaces | `.glass(Glass)`, `.glass_hud(&theme)`, `.glass_tinted(&theme, tint)`, `glass_panel`              |
+| Morphing | `glass_group(id, spacing)` with `.member(radius, div)`: members fuse into one glass shape       |
+| Attached | `attached_surface(id)` with `.trigger(..)`, `.body(size, radius, ..)`, `.open(bool)`, `.align(..)`, `.placement(..)`, `.offset(px)`: a body of glass fused to a real trigger |
+| Numbers  | `ticker(id, text)` with `.size(..)`, `.color(..)`, `.mono_width(bool)`: rolling digits, fixed-width cells |
+
+Menus (`menu_picker`, `action_menu`) are built on `attached_surface`: the chip is the real trigger
+and stays in place, and the options are a second glass surface attached to its bottom edge (upward
+when the window has no room below) that fuses with it. One `Curve::Present` spring drives the body's
+rect, corner radius, and the colour from the chip's look to the menu's. While open, the fused group
+draws the fill and the single outline, so the chip paints no border or glass of its own (its label
+stays); rows fade in over the second half; the body is removed only once the spring has settled at
+0. Reduce Transparency crossfades plain fills; Reduce Motion switches instantly. The menu width is
+estimated from the labels (at least 180 pt and the chip's width). The pure math lives in
+`calcite::attached` and `calcite::morph`.
 
 Sizes: `.compact()`, `.size(Size::Regular)` (default), and `.large()`. Tones: `.accent()`,
 `.neutral()`, `.warning()`, `.danger()`, and `.tone(Tone::Color(rgba))`.
 
+## Motion
+
+Motion is built from `Spring { response, bounce }` (SwiftUI `spring(duration:bounce:)` semantics) and
+named tokens in `calcite::motion::tokens` (`SNAPPY`, `BOUNCY`, `MORPH_OPEN`...; the table is in the
+`motion` module docs). `motion::spring(id, target, spring, reduce_motion, window, cx)` follows a target
+and keeps its velocity when the target changes mid-motion; `motion::secondary` has the pure squash,
+stretch, and glass-boost helpers. Reduce Motion jumps to the target.
+
+Components use them directly: controls press flat (`PRESS`, shadow shrinks) and release with a jelly
+overshoot, menu rows cascade in with a 4 px slide, toggle knobs and the segmented indicator stretch
+along their travel, glass surfaces brighten while they move fast, and ticker digits roll
+right-to-left with a small overshoot. The gallery's Motion lab section tunes open and close springs
+live and plots their step response.
+
 ## Theme
 
-The theme holds a palette, the accent, the glass style, and the accessibility settings. Every
+The theme holds a style, a palette, the accent, and the accessibility settings. Every
 component reads it with `cx.theme()`. This works in `App`, `Context<V>`, `AsyncApp`, and
 `AsyncWindowContext`.
 
 ```rust
-Theme::update(cx, |theme| theme.glass = GlassStyle::MacOS27(Transparency::Clear));
+Theme::update(cx, |theme| theme.style.glass = GlassStyle::MacOS27(Transparency::Clear));
 Theme::set_dynamic_accent(cx, Some(gpui::rgba(0xF59E38FF)));
 ```
 
@@ -113,14 +148,54 @@ once. Use `Theme::set_immediately` to skip the crossfade.
 
 | Field             | Effect                                                                    |
 | ----------------- | ------------------------------------------------------------------------- |
+| `style`           | Radii, glass look and strength, pointer light. See [Style](#style).       |
 | `palette`         | Every color the components draw with.                                     |
 | `dynamic_accent`  | The accent from the artwork. `None` uses the palette accent.              |
-| `glass`           | `MacOS26`, `MacOS27(Clear / Default / Tinted)`, or `ReducedTransparency`. |
 | `reduce_motion`   | Springs settle at once. Scale and stretch effects stop.                   |
 | `shows_borders`   | Glass draws its own edge (Increase Contrast).                             |
 
 `Theme::decorative_motion(window)` is false while the window is inactive or Reduce Motion is on.
 Continuous animation must check it.
+
+### Style
+
+`Theme::style` holds the shape of the look, apart from its colors.
+
+```rust
+let theme = Theme::default().with_style(
+    Style::macos_27(Transparency::Clear)
+        .with_radii(Radii::ROUND)
+        .with_glass_strength(0.8)
+        .with_pointer_glow(true),
+);
+```
+
+| Field            | Effect                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| `radii`          | `Radii { control, row, panel, hud_pill, modal }`. Presets `SHARP`, `DEFAULT`, `ROUND`; `scale(f)`. |
+| `glass`          | `MacOS26`, `MacOS27(Clear / Default / Tinted)`, or `ReducedTransparency`.               |
+| `glass_strength` | Multiplies blur, bezel, refraction, and tint and backplate opacity. 1 is the system look, 0 is flat. |
+| `pointer_glow`   | Controls carry the pointer light. Off by default.                                       |
+
+`Style::default()` is `Style::macos_27(Transparency::Default)`. The `tokens::radius` constants are the
+`Radii::DEFAULT` values. Radii and glass strength interpolate during a theme crossfade.
+
+#### Pointer glow
+
+The pointer light follows the pointer across a control and fades in on hover and out on leave.
+It is off unless `Style::pointer_glow` is on. `button`, `icon_button`, `choice_card`, `chip`,
+and `toggle` take `.glow(bool)` to override the theme for one control. Compact controls and
+Reduce Transparency never glow. `interaction::glow_enabled` resolves the rule, and
+`interaction::glow_layer` draws the light over a custom control.
+
+#### Press and hover scale
+
+Press, hover, and the HUD pill's recede scale the whole control (surface, border, label, icons,
+focus ring) about its center through `Window::with_paint_transform`; layout and hit areas do not
+move. In a custom control, take `frame` from `ControlState::frame` and end the element with
+`.scaled(frame.scale)` (`interaction::ScaleExt`), or `scale_effect(scale, child).anchor(..)`.
+`frame.pointer` is already mapped through the inverse scale, so the glow stays under the cursor.
+Reduce Motion keeps the scale at 1. `interaction::layer()` replaces `layer(insets)`.
 
 ### Palette
 
@@ -204,7 +279,7 @@ window_frame(
 | Platform | What the title bar does                                                                       |
 | -------- | --------------------------------------------------------------------------------------------- |
 | macOS    | The system draws the traffic lights. The app owns the drag, so clicks in the bar have no delay. |
-| Windows  | Calcite draws the caption buttons. The system hit-tests them, so Snap Layouts work.            |
+| Windows  | Round caption buttons as on Linux, red close. The system hit-tests them for Snap Layouts.    |
 | Linux    | Calcite draws the shadow, the rounded frame, the resize edges, and the caption buttons.        |
 
 Linux needs a compositor for client-side decorations. Without one, the window manager draws its
@@ -219,7 +294,7 @@ same check to `title_bar(..).on_close(..)`.
 GPUI shows the generic executable icon until the app sets its own. `AppIcon` covers `cargo run`:
 
 ```rust
-static ICON: AppIcon = calcite::app_icon!("assets/icon.png"); // square PNG, 1024 px
+static ICON: AppIcon = calcite::app_icon!("assets/icon.png"); // full-bleed square PNG, 1024 px
 
 application.run(|cx| {
 	calcite::init(cx);
@@ -234,6 +309,10 @@ application.run(|cx| {
 | Windows  | Icon resource 1 of the `.exe`. Embed it in `build.rs` (see below).                        |
 | X11      | `AppIcon::window_options`.                                                                |
 | Wayland  | The `.desktop` file. Set `WindowOptions::app_id` to the binary name, like the bundle does. |
+
+The PNG is full-bleed, with no margin. On macOS the icon gets Apple's transparent margin
+automatically: the artwork is drawn at 824 of 1024 px, as in the system icons. Do not pad the
+PNG yourself; `install` and the `.app` both add the margin.
 
 Embed the Windows icon in `build.rs`:
 
@@ -285,3 +364,9 @@ calcite::keymap!(cx, {
 Calcite is licensed under the [MPL-2.0](LICENSE). The Lucide icons are licensed under the
 [ISC license](assets/lucide/LICENSE). The glyphs in `assets/icons` are Lucide glyphs; the transport
 glyphs (play, pause, stop, forward) are filled.
+
+With the default `fonts` feature Calcite bundles Plus Jakarta Sans 2.071 and Fira Code 6.2, each under the
+[SIL Open Font License 1.1](assets/fonts/README.md) (the `OFL.txt` sits next to each family in
+`assets/fonts`). Components read their families from `theme.style.fonts` (`theme.sans()`,
+`theme.mono()`); override with `Theme::with_fonts(Fonts::new("Georgia", "Menlo"))` or
+`Fonts::system()` for the platform fonts.

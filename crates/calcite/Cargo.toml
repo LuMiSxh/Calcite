@@ -9,14 +9,18 @@ repository = "https://github.com/LuMiSxh/Calcite"
 readme = "README.md"
 keywords = ["gpui", "ui", "glass", "liquid-glass", "gui"]
 categories = ["gui"]
-include = ["src/**/*", "assets/**/*", "examples/**/*", "build.rs", "README.md", "CHANGELOG.md", "LICENSE"]
+include = ["src/**/*", "assets/**/*", "examples/**/*", "build.rs", "README.md", "LICENSE"]
 
 [features]
-default = ["lucide", "tint"]
+default = ["lucide", "tint", "fonts"]
 # The full Lucide set as the `Lucide` enum (about 2100 icons, 0.9 MB of SVG).
 lucide = []
+# Plus Jakarta Sans and Fira Code (SIL OFL 1.1), registered by `calcite::fonts::register`.
+fonts = []
 # Dynamic theme colors from artwork through calcite-tint.
 tint = ["dep:calcite-tint"]
+# `CALCITE_FRAME_STATS=1` prints draw and present timings once a second (builds gpui's profiler).
+frame-stats = ["gpui/profiler"]
 
 [dependencies]
 gpui.workspace = true
@@ -30,5 +34,13 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData"] }
 
+[[test]]
+name = "fonts_platform"
+harness = false
+required-features = ["fonts"]
+
 [dev-dependencies]
 gpui_platform.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+# Reads the name table of the bundled fonts in tests; the version gpui already locks.
+skrifa = "0.44"

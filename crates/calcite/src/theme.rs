@@ -6,20 +6,26 @@
 //! The theme lives in a GPUI global. Components read it with [`ActiveTheme::theme`] and
 //! accept `.theme(...)` to override it, for example to show several styles side by side.
 
-use std::time::{Duration, Instant};
+use std::{
+	cell::Cell,
+	time::{Duration, Instant},
+};
 
-use gpui::{App, AsyncApp, AsyncWindowContext, Context, Global, Rgba, Window};
+use gpui::{App, AsyncApp, AsyncWindowContext, Context, Global, Rgba, SharedString, Window};
 
 use crate::{
-	glass::{self, GlassStyle, Transparency},
+	glass::{self, GlassStyle},
 	motion::Curve,
 	palette::Palette,
-	tokens::mix,
+	style::{Fonts, Style},
+	tokens::{self, mix, scale_alpha},
 };
 
 /// Values every component reads.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Theme {
+	/// Radii, glass look and strength, and pointer light.
+	pub style: Style,
 	/// Every color the components draw with.
 	pub palette: Palette,
 	/// The accent in use: the dynamic accent, or the palette accent without one.
@@ -28,7 +34,6 @@ pub struct Theme {
 	pub hud_tint: Rgba,
 	/// The dynamic accent, for example from the artwork. `None` uses the palette accent.
 	pub dynamic_accent: Option<Rgba>,
-	pub glass: GlassStyle,
 	pub reduce_motion: bool,
 	/// Accessibility "Show borders" / Increase Contrast.
 	pub shows_borders: bool,
@@ -48,11 +53,11 @@ impl Theme {
 	/// look at compile time.
 	pub fn new(palette: Palette) -> Self {
 		Self {
+			style: Style::default(),
 			palette,
 			accent: palette.accent,
 			hud_tint: palette.hud_tint,
 			dynamic_accent: None,
-			glass: GlassStyle::MacOS27(Transparency::Default),
 			reduce_motion: false,
 			shows_borders: false,
 			pauses_decorative_motion: false,
@@ -90,13 +95,36 @@ impl Theme {
 		self
 	}
 
+	/// Replaces the style: radii, glass, glass strength, and pointer light.
+	pub fn with_style(mut self, style: Style) -> Self {
+		self.style = style;
+		self
+	}
+
+	/// Replaces only the font families of the style.
+	pub fn with_fonts(mut self, fonts: Fonts) -> Self {
+		self.style.fonts = fonts;
+		self
+	}
+
+	/// The sans family name for `.font_family(..)`.
+	pub fn sans(&self) -> SharedString {
+		self.style.fonts.sans.into()
+	}
+
+	/// The monospace family name for `.font_family(..)`.
+	pub fn mono(&self) -> SharedString {
+		self.style.fonts.mono.into()
+	}
+
+	/// Replaces only the glass look of the style.
 	pub fn with_glass(mut self, glass: GlassStyle) -> Self {
-		self.glass = glass;
+		self.style.glass = glass;
 		self
 	}
 
 	pub fn reduce_transparency(&self) -> bool {
-		self.glass == GlassStyle::ReducedTransparency
+		self.style.glass == GlassStyle::ReducedTransparency
 	}
 
 	/// A glass surface in this theme.
@@ -104,13 +132,18 @@ impl Theme {
 		glass::Glass {
 			shows_border: self.shows_borders,
 			quiet_edge: self.palette.quiet_control,
-			..glass::Glass::new(tint, self.glass)
+			..glass::Glass::new(tint, self.style.glass).strength(self.style.glass_strength)
 		}
 	}
 
 	/// The HUD surface: the near-black tint of the control bar and pills.
 	pub fn hud_surface(&self) -> glass::Glass {
 		self.surface(Some(self.hud_tint))
+	}
+
+	/// The hairline edge of a HUD surface.
+	pub fn hud_border(&self) -> Rgba {
+		scale_alpha(self.palette.hairline, tokens::control::HUD_BORDER_OPACITY)
 	}
 
 	/// Whether decorative loops may run in `window` now: not under Reduce Motion, not while
@@ -120,8 +153,10 @@ impl Theme {
 	}
 
 	/// This theme part of the way toward `to`: colors mix, everything else is `to`'s.
+	/// Numeric style fields (radii, glass strength) mix too.
 	pub fn mix(&self, to: &Self, t: f32) -> Self {
 		Self {
+			style: self.style.mix(&to.style, t),
 			palette: self.palette.mix(&to.palette, t),
 			accent: mix(self.accent, to.accent, t),
 			hud_tint: mix(self.hud_tint, to.hud_tint, t),
@@ -138,43 +173,34 @@ impl Theme {
 			return Self::set_immediately(cx, theme);
 		}
 		let generation = cx.try_global::<ThemeState>().map_or(0, |state| state.generation) + 1;
+		let now = Instant::now();
 		cx.set_global(ThemeState {
 			from,
 			to: theme,
-			started: Instant::now(),
+			started: now,
+			sampled: Cell::new(now),
 			generation,
 		});
 		cx.refresh_windows();
-		// Redraw every frame until the crossfade ends or a newer change replaces it.
-		cx.spawn(async move |cx| {
-			loop {
-				cx.background_executor().timer(FRAME).await;
-				let running = cx.update(|cx| {
-					let Some(state) = cx.try_global::<ThemeState>() else {
-						return false;
-					};
-					if state.generation != generation {
-						return false;
-					}
-					let running = state.started.elapsed() < CROSSFADE.duration();
-					cx.refresh_windows();
-					running
-				});
-				if !running {
-					break;
-				}
+		// Redraw on every display refresh until the crossfade ends or a newer change replaces it.
+		cx.defer(move |cx| {
+			for handle in cx.windows() {
+				handle
+					.update(cx, |_, window, _| follow_crossfade(window, generation))
+					.ok();
 			}
-		})
-		.detach();
+		});
 	}
 
 	/// Installs `theme` without a transition.
 	pub fn set_immediately(cx: &mut App, theme: Theme) {
 		let generation = cx.try_global::<ThemeState>().map_or(0, |state| state.generation) + 1;
+		let now = Instant::now();
 		cx.set_global(ThemeState {
 			from: theme,
 			to: theme,
-			started: Instant::now(),
+			started: now,
+			sampled: Cell::new(now),
 			generation,
 		});
 		cx.refresh_windows();
@@ -209,7 +235,31 @@ pub fn tint_color(color: calcite_tint::Hsb) -> Rgba {
 }
 
 const CROSSFADE: Curve = Curve::Crossfade;
-const FRAME: Duration = Duration::from_millis(16);
+
+/// A crossfade sample older than this is not from a running crossfade, so it is not used.
+const SAMPLE_LIFETIME: Duration = Duration::from_millis(100);
+
+/// Redraws `window` before each display refresh until the crossfade `generation` ends. The
+/// callback runs just before the window draws, so it fixes the time every component
+/// samples this frame; sampling the clock per `cx.theme()` call put components of one frame
+/// on different mixes.
+fn follow_crossfade(window: &mut Window, generation: u64) {
+	window.on_next_frame(move |window, cx| {
+		let Some(state) = cx.try_global::<ThemeState>() else {
+			return;
+		};
+		if state.generation != generation {
+			return;
+		}
+		let now = Instant::now();
+		state.sampled.set(now);
+		let running = now.saturating_duration_since(state.started) < CROSSFADE.duration();
+		window.refresh();
+		if running {
+			follow_crossfade(window, generation);
+		}
+	});
+}
 
 /// Whether the app has a theme yet.
 pub(crate) fn is_installed(cx: &App) -> bool {
@@ -221,6 +271,8 @@ struct ThemeState {
 	from: Theme,
 	to: Theme,
 	started: Instant,
+	/// The time of the frame being drawn; see [`follow_crossfade`].
+	sampled: Cell<Instant>,
 	generation: u64,
 }
 
@@ -228,7 +280,13 @@ impl Global for ThemeState {}
 
 impl ThemeState {
 	fn current(&self) -> Theme {
-		let t = CROSSFADE.progress(self.started.elapsed());
+		let sampled = self.sampled.get();
+		let now = if sampled.elapsed() < SAMPLE_LIFETIME {
+			sampled
+		} else {
+			Instant::now()
+		};
+		let t = CROSSFADE.progress(now.saturating_duration_since(self.started));
 		if t >= 1. {
 			self.to
 		} else {
@@ -291,5 +349,37 @@ impl<V: 'static> ThemedView for Context<'_, V> {
 	fn redraw_on_window_activation(&mut self, window: &mut Window) {
 		self.observe_window_activation(window, |_, _, cx| cx.notify())
 			.detach();
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::style::{Fonts, Radii};
+
+	#[test]
+	fn mix_interpolates_style_numbers() {
+		let from = Theme::default();
+		let to =
+			Theme::default().with_style(Style::default().with_radii(Radii::ROUND).with_glass_strength(0.));
+		let mid = from.mix(&to, 0.5);
+		assert_eq!(mid.style.glass_strength, 0.5);
+		assert_eq!(mid.style.radii, Radii::DEFAULT.mix(Radii::ROUND, 0.5));
+		assert_eq!(from.mix(&to, 1.).style, to.style);
+	}
+
+	#[test]
+	fn with_glass_and_reduce_transparency_follow_the_style() {
+		let theme = Theme::default().with_glass(GlassStyle::ReducedTransparency);
+		assert!(theme.reduce_transparency());
+		assert_eq!(theme.style.glass, GlassStyle::ReducedTransparency);
+	}
+
+	#[test]
+	fn with_fonts_changes_the_families_components_draw_with() {
+		let theme = Theme::default().with_fonts(Fonts::new("Georgia", "Menlo"));
+		assert_eq!(theme.sans().as_ref(), "Georgia");
+		assert_eq!(theme.mono().as_ref(), "Menlo");
+		assert_eq!(Theme::default().sans().as_ref(), "Plus Jakarta Sans");
 	}
 }

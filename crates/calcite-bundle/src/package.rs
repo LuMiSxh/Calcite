@@ -73,31 +73,38 @@ pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 
 	let out_dir = target_dir.join("calcite-bundle").join(profile);
 	fs::create_dir_all(&out_dir).map_err(|error| format!("{}: {error}", out_dir.display()))?;
-	let icons = match settings.get("icon").and_then(Value::as_str) {
-		Some(icon) => generate_icons(&manifest_dir.join(icon), &out_dir.join("icons"))?,
-		None => Vec::new(),
-	};
-
-	let config = packager_config(PackagerInput {
-		package,
-		settings: &settings,
-		bin: &bin,
-		binaries_dir: &target_dir.join(profile),
-		out_dir: &out_dir,
-		manifest_dir: &manifest_dir,
-		icons: &icons,
-		formats: options.formats.as_deref(),
-	})?;
-	let config: cargo_packager::Config =
-		serde_json::from_value(config).map_err(|error| format!("bundle settings: {error}"))?;
-	let outputs = cargo_packager::package(&config).map_err(|error| error.to_string())?;
-	Ok(outputs
-		.into_iter()
-		.map(|output| Output {
+	// The icon set is shared by every format in one packager run, so the formats that need
+	// the `.icns` margin run separately from the rest.
+	let icon = settings.get("icon").and_then(Value::as_str);
+	let mut outputs = Vec::new();
+	for (pad_for_macos, formats) in format_groups(options.formats.clone(), &settings) {
+		let icons = match icon {
+			Some(icon) => generate_icons(
+				&manifest_dir.join(icon),
+				&out_dir.join(if pad_for_macos { "icons-macos" } else { "icons" }),
+				pad_for_macos,
+			)?,
+			None => Vec::new(),
+		};
+		let config = packager_config(PackagerInput {
+			package,
+			settings: &settings,
+			bin: &bin,
+			binaries_dir: &target_dir.join(profile),
+			out_dir: &out_dir,
+			manifest_dir: &manifest_dir,
+			icons: &icons,
+			formats: formats.as_deref(),
+		})?;
+		let config: cargo_packager::Config =
+			serde_json::from_value(config).map_err(|error| format!("bundle settings: {error}"))?;
+		let packaged = cargo_packager::package(&config).map_err(|error| error.to_string())?;
+		outputs.extend(packaged.into_iter().map(|output| Output {
 			format: format!("{:?}", output.format).to_lowercase(),
 			paths: output.paths,
-		})
-		.collect())
+		}));
+	}
+	Ok(outputs)
 }
 
 fn cargo() -> Command {
@@ -183,8 +190,31 @@ fn build(package: &str, bin: &str, debug: bool) -> Result<()> {
 	}
 }
 
-/// Resizes the source icon to every size the packager needs.
-fn generate_icons(source: &Path, directory: &Path) -> Result<Vec<PathBuf>> {
+/// Apple's macOS icon template draws the artwork at 824 of 1024 px, centered, inside a
+/// transparent margin. Scales `icon` to that size on a transparent canvas of the same size.
+fn add_macos_margin(icon: &image::RgbaImage) -> image::RgbaImage {
+	let (width, height) = icon.dimensions();
+	let inner_width = (width * 824 / 1024).max(1);
+	let inner_height = (height * 824 / 1024).max(1);
+	let scaled = image::imageops::resize(
+		icon,
+		inner_width,
+		inner_height,
+		image::imageops::FilterType::Lanczos3,
+	);
+	let mut canvas = image::RgbaImage::new(width, height);
+	image::imageops::overlay(
+		&mut canvas,
+		&scaled,
+		i64::from((width - inner_width) / 2),
+		i64::from((height - inner_height) / 2),
+	);
+	canvas
+}
+
+/// Resizes the source icon to every size the packager needs. `pad_for_macos` adds Apple's
+/// transparent margin first, for the `.icns`; the other platforms keep the full-bleed artwork.
+fn generate_icons(source: &Path, directory: &Path, pad_for_macos: bool) -> Result<Vec<PathBuf>> {
 	let image = image::open(source).map_err(|error| format!("icon {}: {error}", source.display()))?;
 	if image.width() != image.height() {
 		return Err(format!(
@@ -201,6 +231,11 @@ fn generate_icons(source: &Path, directory: &Path) -> Result<Vec<PathBuf>> {
 			image.width()
 		));
 	}
+	let image = if pad_for_macos {
+		image::DynamicImage::ImageRgba8(add_macos_margin(&image.to_rgba8()))
+	} else {
+		image
+	};
 	fs::create_dir_all(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
 	ICON_SIZES
 		.iter()
@@ -214,6 +249,42 @@ fn generate_icons(source: &Path, directory: &Path) -> Result<Vec<PathBuf>> {
 			Ok(path)
 		})
 		.collect()
+}
+
+fn is_macos_format(format: &str) -> bool {
+	matches!(format, "app" | "dmg")
+}
+
+/// Splits the requested formats (the CLI's, else the manifest's `formats`) into packager runs,
+/// each as `(pad_for_macos, formats)`. `app` and `dmg` read the `.icns` and get the margin;
+/// the others get the full-bleed artwork. With no formats named, the packager uses the host
+/// platform's defaults, which are the macOS ones only on a Mac.
+fn format_groups(
+	requested: Option<Vec<String>>,
+	settings: &Map<String, Value>,
+) -> Vec<(bool, Option<Vec<String>>)> {
+	let requested = requested.or_else(|| {
+		settings.get("formats").and_then(Value::as_array).map(|formats| {
+			formats
+				.iter()
+				.filter_map(Value::as_str)
+				.map(str::to_string)
+				.collect()
+		})
+	});
+	let Some(formats) = requested else {
+		return vec![(cfg!(target_os = "macos"), None)];
+	};
+	let (macos, others): (Vec<String>, Vec<String>) =
+		formats.into_iter().partition(|format| is_macos_format(format));
+	let mut groups = Vec::new();
+	if !macos.is_empty() {
+		groups.push((true, Some(macos)));
+	}
+	if !others.is_empty() || groups.is_empty() {
+		groups.push((false, Some(others)));
+	}
+	groups
 }
 
 struct PackagerInput<'a> {
@@ -333,5 +404,41 @@ mod tests {
 		let config: cargo_packager::Config = serde_json::from_value(config).unwrap();
 		assert_eq!(config.product_name, "Calcite Gallery");
 		assert_eq!(config.identifier.as_deref(), Some("dev.example.gallery"));
+	}
+
+	#[test]
+	fn macos_icons_keep_the_size_and_get_a_transparent_margin() {
+		let icon = image::RgbaImage::from_pixel(512, 512, image::Rgba([200, 30, 30, 255]));
+		let padded = add_macos_margin(&icon);
+		assert_eq!(padded.dimensions(), (512, 512));
+		assert_eq!(padded.get_pixel(0, 0)[3], 0);
+		assert_eq!(padded.get_pixel(256, 256)[3], 255);
+	}
+
+	#[test]
+	fn only_the_macos_formats_get_the_icon_margin() {
+		let source = std::env::temp_dir().join(format!("calcite-icon-{}.png", std::process::id()));
+		image::RgbaImage::from_pixel(512, 512, image::Rgba([200, 30, 30, 255]))
+			.save(&source)
+			.unwrap();
+		for format in ["nsis", "deb", "appimage", "dmg", "app"] {
+			let (pad_for_macos, _) = format_groups(Some(vec![format.to_string()]), &Map::new()).remove(0);
+			let directory =
+				std::env::temp_dir().join(format!("calcite-icons-{}-{format}", std::process::id()));
+			generate_icons(&source, &directory, pad_for_macos).unwrap();
+			let icon = image::open(directory.join("512x512.png")).unwrap().to_rgba8();
+			fs::remove_dir_all(&directory).ok();
+			if pad_for_macos {
+				assert_eq!(icon.get_pixel(0, 0)[3], 0, "{format}: corner must be transparent");
+				assert_eq!(
+					icon.get_pixel(256, 256)[3],
+					255,
+					"{format}: centre must be opaque"
+				);
+			} else {
+				assert_eq!(icon.get_pixel(0, 0)[3], 255, "{format}: corner must stay opaque");
+			}
+		}
+		fs::remove_file(&source).ok();
 	}
 }

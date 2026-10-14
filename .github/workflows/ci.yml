@@ -39,6 +39,9 @@ jobs:
       - name: Fetch and patch gpui-ce
         run: ./scripts/bootstrap.sh
 
+      - name: Check the gallery with frame stats
+        run: cargo check -p calcite-showcase --features frame-stats --bin gallery
+
       - name: Check source
         run: ./scripts/check.sh
 

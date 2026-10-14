@@ -16,6 +16,7 @@ name = "gallery"
 path = "src/bin/gallery/main.rs"
 
 [dependencies]
+
 gpui.workspace = true
 gpui_platform.workspace = true
 calcite.workspace = true
@@ -25,6 +26,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 [build-dependencies]
 calcite-bundle = { workspace = true, default-features = false }
 
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
 # `cargo calcite bundle -p calcite-showcase --bin gallery` packages the showcase.
 [package.metadata.calcite.bundle]
 name = "Calcite Showcase"
@@ -33,3 +37,7 @@ icon = "assets/icon.png"
 category = "DeveloperTool"
 copyright = "© 2026 Luca Michael Schmidt"
 minimum-macos = "13.0"
+
+[features]
+# `CALCITE_FRAME_STATS=1 cargo run --release --features frame-stats --bin gallery`
+frame-stats = ["calcite/frame-stats"]

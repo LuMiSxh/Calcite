@@ -2,225 +2,15 @@
 
 //! Gallery sections whose components change gallery state.
 
-use calcite::{prelude::*, tokens::hud};
-use gpui::{
-	AnyElement, Context, FontWeight, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px,
-};
+use calcite::{interaction::spring_value, prelude::*, tokens::hud};
+use gpui::{Context, Div, FontWeight, IntoElement, ParentElement, SharedString, Styled, Window, div, px};
 
 use super::{Display, Gallery, Page, Rendering, sections::label};
 
 const REGIONS: [&str; 5] = ["Global", "Japan", "Korea", "China", "China (Bilibili)"];
+const ACCENTS: [&str; 4] = ["Default", "Amber", "Rose", "Violet"];
 
 impl Gallery {
-	pub fn actions_section(&self) -> impl IntoElement + use<> {
-		let tones = [
-			("Accent", Tone::Accent),
-			("Neutral", Tone::Neutral),
-			("Warning", Tone::Warning),
-			("Danger", Tone::Danger),
-		];
-		let sizes = [
-			("Large", Size::Large),
-			("Regular", Size::Regular),
-			("Compact", Size::Compact),
-		];
-		let mut rows: Vec<AnyElement> = Vec::new();
-		for (size_name, size) in sizes {
-			rows.push(
-				div()
-					.flex()
-					.flex_row()
-					.items_center()
-					.gap(px(10.))
-					.child(div().w(px(56.)).child(label(size_name)))
-					.children(tones.iter().map(|(tone_name, tone)| {
-						button(
-							SharedString::from(format!("tone-{size_name}-{tone_name}")),
-							*tone_name,
-						)
-						.tone(*tone)
-						.icon(Icon::ArrowDown)
-						.size(size)
-					}))
-					.into_any_element(),
-			);
-		}
-		rows.push(
-			div()
-				.flex()
-				.flex_row()
-				.items_center()
-				.gap(px(10.))
-				.child(div().w(px(56.)).child(label("Disabled")))
-				.children(tones.iter().map(|(tone_name, tone)| {
-					button(SharedString::from(format!("disabled-{tone_name}")), *tone_name)
-						.tone(*tone)
-						.icon(Icon::Pause)
-						.disabled(true)
-				}))
-				.into_any_element(),
-		);
-		rows.push(
-			div()
-				.flex()
-				.flex_row()
-				.items_center()
-				.gap(px(14.))
-				.child(div().w(px(56.)).child(label("Specials")))
-				.child(
-					div()
-						.id("gear-tooltip")
-						.glass_tooltip("Settings")
-						.child(icon_button("gear", Icon::Gear, "Settings")),
-				)
-				.child(halo(
-					button("halo-play", "Play").accent().large().icon(Icon::Play),
-				))
-				.child(done_button("done"))
-				.into_any_element(),
-		);
-		div().flex().flex_col().gap(px(12.)).children(rows).child(label(
-			"Hover: 1.025 spring lift and pointer light · press: 0.95 and 0.86 opacity · surfaces scale without relayout",
-		))
-	}
-
-	pub fn forms_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-		let row = |title: &'static str, control: AnyElement| {
-			div()
-				.flex()
-				.flex_row()
-				.items_center()
-				.gap(px(12.))
-				.child(div().w(px(110.)).child(label(title)))
-				.child(control)
-				.into_any_element()
-		};
-		div()
-			.flex()
-			.flex_col()
-			.gap(px(12.))
-			.child(row(
-				"Toggle",
-				div()
-					.flex()
-					.flex_row()
-					.gap(px(12.))
-					.items_center()
-					.child(
-						toggle("auto-update", self.auto_update)
-							.label("Automatic updates")
-							.on_change(cx.listener(|this, on: &bool, _, cx| {
-								this.auto_update = *on;
-								cx.notify();
-							})),
-					)
-					.child(
-						toggle("game-mode", self.game_mode)
-							.label("Game Mode")
-							.on_change(cx.listener(|this, on: &bool, _, cx| {
-								this.game_mode = *on;
-								cx.notify();
-							})),
-					)
-					.child(toggle("locked", true).label("Locked").disabled(true))
-					.child(label("Large · compact"))
-					.child(
-						toggle("large-toggle", self.game_mode)
-							.large()
-							.label("Large")
-							.on_change(cx.listener(|this, on: &bool, _, cx| {
-								this.game_mode = *on;
-								cx.notify();
-							})),
-					)
-					.child(
-						toggle("compact-toggle", self.auto_update)
-							.compact()
-							.label("Compact")
-							.on_change(cx.listener(|this, on: &bool, _, cx| {
-								this.auto_update = *on;
-								cx.notify();
-							})),
-					)
-					.into_any_element(),
-			))
-			.child(row(
-				"Slider",
-				div()
-					.flex()
-					.flex_row()
-					.gap(px(10.))
-					.items_center()
-					.child(
-						slider("volume", self.volume)
-							.step(0.05)
-							.width(px(200.))
-							.label("Volume")
-							.leading_icon(Lucide::Volume1)
-							.trailing_icon(Lucide::Volume2)
-							.ticks(11)
-							.value_label(true)
-							.on_change(cx.listener(|this, value: &f32, _, cx| {
-								this.volume = *value;
-								cx.notify();
-							})),
-					)
-					.into_any_element(),
-			))
-			.child(row(
-				"Segmented",
-				segmented(
-					"display",
-					self.display,
-					[
-						(Display::Windowed, "Windowed"),
-						(Display::Borderless, "Borderless"),
-						(Display::Fullscreen, "Fullscreen"),
-					],
-				)
-				.on_change(cx.listener(|this, display: &Display, _, cx| {
-					this.display = *display;
-					cx.notify();
-				}))
-				.into_any_element(),
-			))
-			.child(row(
-				"Text field",
-				text_field("search", &self.search)
-					.placeholder("Search operators")
-					.icon(Icon::Magnifier)
-					.width(px(260.))
-					.into_any_element(),
-			))
-			.child(row(
-				"Menu picker",
-				menu_picker(
-					"rendering",
-					self.rendering,
-					[
-						(Rendering::Retina, "Retina"),
-						(Rendering::MetalFx, "MetalFX"),
-						(Rendering::Standard, "Standard"),
-					],
-				)
-				.divider_before(Rendering::Standard)
-				.on_change(cx.listener(|this, rendering: &Rendering, _, cx| {
-					this.rendering = *rendering;
-					cx.notify();
-				}))
-				.into_any_element(),
-			))
-			.child(row(
-				"Action menu",
-				action_menu("logs", "Logs", Icon::Document)
-					.item("Show in Finder", Icon::Folder, |_, _| {})
-					.item("Copy Path", Icon::Document, |_, _| {})
-					.divider()
-					.item("Clear Logs", Icon::XMark, |_, _| {})
-					.into_any_element(),
-			))
-	}
-
 	pub fn settings_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
 		let theme = cx.theme();
 		let rail = nav_rail(&theme)
@@ -237,59 +27,23 @@ impl Gallery {
 					cx.notify();
 				}))
 			}));
-		let panel_open = self.panel_open;
+		let body = match self.page {
+			Page::Game => self.game_page(cx),
+			Page::Appearance => self.appearance_page(),
+			Page::Audio => self.audio_page(cx),
+			Page::Updates => self.updates_page(cx),
+			Page::Installation => self.installation_page(),
+			Page::Storage => self.storage_page(),
+			Page::About => self.about_page(),
+		};
 		let page = div()
 			.flex_1()
 			.flex()
 			.flex_col()
 			.gap(px(14.))
 			.p(px(20.))
-			.child(page_header(
-				self.page.title(),
-				"Keep the launcher and the game current.",
-				&theme,
-			))
-			.child(
-				settings_panel("launcher-panel", "Launcher", Icon::Sparkles)
-					.child(
-						action_row("Automatic updates")
-							.detail("Checks once a day and installs on quit")
-							.action(
-								toggle("panel-auto", self.auto_update)
-									.label("Automatic updates")
-									.on_change(cx.listener(|this, on: &bool, _, cx| {
-										this.auto_update = *on;
-										cx.notify();
-									})),
-							)
-							.action(button("check-now", "Check Now").accent().compact()),
-					)
-					.child(hairline(&theme))
-					.child(
-						action_row("Release channel")
-							.detail("Canary features stay opt-in")
-							.action(badge("Stable").tone(Tone::Neutral)),
-					),
-			)
-			.child(
-				settings_panel("advanced-panel", "Advanced", Icon::Gear)
-					.collapsible(
-						panel_open,
-						cx.listener(|this, _, _, cx| {
-							this.panel_open = !this.panel_open;
-							cx.notify();
-						}),
-					)
-					.child(document_link("open-logs", "Open log files", Icon::Document))
-					.child(document_link("open-folder", "Show game folder", Icon::Folder)),
-			)
-			.child(
-				danger_zone("danger").child(
-					action_row("Remove game files")
-						.detail("Settings and the Wine prefix stay")
-						.action(button("remove", "Remove…").danger().compact()),
-				),
-			);
+			.child(page_header(self.page.title(), self.page.subtitle(), &theme))
+			.child(body);
 		div()
 			.h(px(660.))
 			.flex()
@@ -304,6 +58,204 @@ impl Gallery {
 			.border_color(theme.palette.hairline)
 			.child(rail)
 			.child(page)
+	}
+
+	fn game_page(&self, cx: &mut Context<Self>) -> Div {
+		div().flex().flex_col().gap(px(14.)).child(
+			settings_panel("game-panel", "Game", Lucide::Gamepad2)
+				.child(
+					action_row("Display").detail("Window mode").action(
+						segmented(
+							"game-display",
+							self.display,
+							[
+								(Display::Windowed, "Windowed"),
+								(Display::Borderless, "Borderless"),
+								(Display::Fullscreen, "Fullscreen"),
+							],
+						)
+						.on_change(cx.listener(|this, display: &Display, _, cx| {
+							this.display = *display;
+							cx.notify();
+						})),
+					),
+				)
+				.child(
+					action_row("Rendering").detail("Graphics backend").action(
+						menu_picker(
+							"game-rendering",
+							self.rendering,
+							[
+								(Rendering::Retina, "Retina"),
+								(Rendering::MetalFx, "MetalFX"),
+								(Rendering::Standard, "Standard"),
+							],
+						)
+						.divider_before(Rendering::Standard)
+						.on_change(cx.listener(|this, rendering: &Rendering, _, cx| {
+							this.rendering = *rendering;
+							cx.notify();
+						})),
+					),
+				)
+				.child(
+					action_row("Game Mode")
+						.detail("Pauses launcher tasks while playing")
+						.action(
+							toggle("panel-game-mode", self.game_mode)
+								.label("Game Mode")
+								.on_change(cx.listener(|this, on: &bool, _, cx| {
+									this.game_mode = *on;
+									cx.notify();
+								})),
+						),
+				),
+		)
+	}
+
+	fn appearance_page(&self) -> Div {
+		div().flex().flex_col().gap(px(14.)).child(
+			settings_panel("accent-panel", "Accent", Lucide::Palette).child(
+				action_row("Accent colour")
+					.detail("Changes with the accent shortcut")
+					.action(badge(ACCENTS[self.accent_index]).tone(Tone::Accent)),
+			),
+		)
+	}
+
+	fn audio_page(&self, cx: &mut Context<Self>) -> Div {
+		div().flex().flex_col().gap(px(14.)).child(
+			settings_panel("audio-panel", "Audio", Lucide::Volume2).child(
+				action_row("Volume").detail("Game and launcher sounds").action(
+					slider("panel-volume", self.volume)
+						.step(0.05)
+						.width(px(200.))
+						.leading_icon(Lucide::Volume1)
+						.trailing_icon(Lucide::Volume2)
+						.value_label(true)
+						.on_change(cx.listener(|this, value: &f32, _, cx| {
+							this.volume = *value;
+							cx.notify();
+						})),
+				),
+			),
+		)
+	}
+
+	fn updates_page(&self, cx: &mut Context<Self>) -> Div {
+		let theme = cx.theme();
+		div()
+			.flex()
+			.flex_col()
+			.gap(px(14.))
+			.child(
+				settings_panel("launcher-panel", "Launcher", Icon::Sparkles)
+					.child(
+						action_row("Automatic updates")
+							.detail("Checks once a day and installs on quit")
+							.action(
+								toggle("panel-auto", self.auto_update)
+									.label("Automatic updates")
+									.on_change(cx.listener(|this, on: &bool, _, cx| {
+										this.auto_update = *on;
+										cx.notify();
+									})),
+							)
+							.action(
+								button("check-now", "Check Now")
+									.accent()
+									.compact()
+									.icon(Lucide::RefreshCw),
+							),
+					)
+					.child(hairline(&theme))
+					.child(
+						action_row("Release channel")
+							.detail("Canary features stay opt-in")
+							.action(badge("Stable").tone(Tone::Neutral)),
+					),
+			)
+			.child(
+				settings_panel("advanced-panel", "Advanced", Icon::Gear)
+					.collapsible(
+						self.panel_open,
+						cx.listener(|this, _, _, cx| {
+							this.panel_open = !this.panel_open;
+							cx.notify();
+						}),
+					)
+					.child(document_link("open-logs", "Open log files", Icon::Document))
+					.child(document_link("open-folder", "Show game folder", Icon::Folder)),
+			)
+	}
+
+	fn installation_page(&self) -> Div {
+		div().flex().flex_col().gap(px(14.)).child(
+			settings_panel("install-panel", "Installation", Lucide::Download)
+				.child(
+					action_row("Verify game files")
+						.detail("Checks every file against the manifest")
+						.action(button("verify", "Verify").compact()),
+				)
+				.child(
+					action_row("Repair Wine prefix")
+						.detail("Rebuilds the runtime and keeps your saves")
+						.action(button("repair", "Repair").compact()),
+				),
+		)
+	}
+
+	fn storage_page(&self) -> Div {
+		div()
+			.flex()
+			.flex_col()
+			.gap(px(14.))
+			.child(
+				settings_panel("storage-panel", "Storage", Lucide::HardDrive)
+					.child(document_link(
+						"open-game-folder",
+						"Show game folder",
+						Icon::Folder,
+					))
+					.child(document_link("open-prefix", "Show Wine prefix", Icon::Folder)),
+			)
+			.child(
+				danger_zone("danger").child(
+					action_row("Remove game files")
+						.detail("Settings and the Wine prefix stay")
+						.action(
+							button("remove", "Remove…")
+								.danger()
+								.compact()
+								.icon(Lucide::Trash2),
+						),
+				),
+			)
+	}
+
+	fn about_page(&self) -> Div {
+		div()
+			.flex()
+			.flex_col()
+			.gap(px(14.))
+			.child(
+				settings_panel("about-panel", "About", Icon::Info)
+					.child(action_row("Version").action(badge(env!("CARGO_PKG_VERSION")).tone(Tone::Neutral)))
+					.child(
+						action_row("License")
+							.detail("Mozilla Public License 2.0")
+							.action(badge("MPL-2.0").tone(Tone::Neutral)),
+					),
+			)
+			.child(
+				settings_panel("links-panel", "Links", Icon::Document)
+					.child(document_link("release-notes", "Release notes", Icon::Document))
+					.child(document_link(
+						"third-party",
+						"Third-party licenses",
+						Icon::Document,
+					)),
+			)
 	}
 
 	pub fn hud_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -323,38 +275,32 @@ impl Gallery {
 			.child(label("Collapsed capsules"))
 			.child(
 				div().flex().child(
-					pill(
-						"music",
-						Icon::Music,
+					pill("music", Icon::Music, || {
 						div()
 							.font_weight(FontWeight::MEDIUM)
-							.child("Sanity Restored — Lobby Theme"),
-					)
+							.child("Sanity Restored — Lobby Theme")
+					})
 					.detail(div(), px(330.), px(100.)),
 				),
 			)
 			.child(
 				div().flex().child(
-					pill(
-						"version",
-						Icon::Tag,
-						div().font_weight(FontWeight::MEDIUM).child("2.6.81"),
-					)
+					pill("version", Icon::Tag, || {
+						div().font_weight(FontWeight::MEDIUM).child("2.6.81")
+					})
 					.detail(div(), px(260.), px(100.)),
 				),
 			)
 			.child(
 				div().flex().child(
-					pill("receded", Icon::Tag, div().child("Receded sibling"))
+					pill("receded", Icon::Tag, || div().child("Receded sibling"))
 						.detail(div(), px(260.), px(100.))
 						.receded(true),
 				),
 			);
-		let expanded = pill(
-			"expanded-status",
-			Icon::Globe,
-			div().font_weight(FontWeight::SEMIBOLD).child("Global 04:12:09"),
-		)
+		let expanded = pill("expanded-status", Icon::Globe, || {
+			div().font_weight(FontWeight::SEMIBOLD).child("Global 04:12:09")
+		})
 		.noun("server time")
 		.detail(
 			div().flex().flex_col().gap(px(2.)).children(rows),
@@ -406,6 +352,125 @@ impl Gallery {
 					.child(expanded),
 			)
 			.child(bars)
+	}
+
+	/// Pill morph: one pill opening and closing, and three pills in one glass group.
+	pub fn morph_section(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+		const PILL_WIDTH: f32 = 72.;
+		const REST: [f32; 3] = [0., 110., 220.];
+		let theme = cx.theme();
+		let single = div()
+			.flex()
+			.flex_col()
+			.gap(px(10.))
+			.child(label("One pill: button or O"))
+			.child(
+				div().h(px(130.)).w(px(330.)).child(
+					pill("morph-pill", Icon::Sparkles, || {
+						div().font_weight(FontWeight::MEDIUM).child("Morphing pill")
+					})
+					.noun("details")
+					.detail(
+						div().child("Size, corner and detail follow one spring."),
+						px(330.),
+						px(100.),
+					)
+					.expanded(self.morph_open)
+					.on_toggle(cx.listener(|this, _, _, cx| {
+						this.morph_open = !this.morph_open;
+						cx.notify();
+					})),
+				),
+			)
+			.child(
+				button(
+					"morph-pill-toggle",
+					if self.morph_open { "Close" } else { "Open" },
+				)
+				.on_click(cx.listener(|this, _, _, cx| {
+					this.morph_open = !this.morph_open;
+					cx.notify();
+				})),
+			);
+
+		// The middle pill slides to its right neighbour; the glass between them fuses.
+		let slide = spring_value(
+			"morph-slide",
+			if self.fuse_slid { 1. } else { 0. },
+			Curve::State,
+			theme.reduce_motion,
+			window,
+			cx,
+		);
+		let xs = [
+			REST[0],
+			REST[1] + (REST[2] - PILL_WIDTH - 2. - REST[1]) * slide,
+			REST[2],
+		];
+		let mut group = glass_group("morph-group", px(self.fuse_spacing))
+			.relative()
+			.w(px(REST[2] + PILL_WIDTH))
+			.h(px(28.));
+		for (index, x) in xs.into_iter().enumerate() {
+			group = group.member(
+				px(14.),
+				div()
+					.absolute()
+					.left(px(x))
+					.top(px(0.))
+					.w(px(PILL_WIDTH))
+					.h(px(28.))
+					.flex()
+					.items_center()
+					.justify_center()
+					.text_size(tokens::text::CAPTION)
+					.child(format!("Pill {}", index + 1)),
+			);
+		}
+		let fused = div()
+			.flex()
+			.flex_col()
+			.gap(px(12.))
+			.child(label("Three pills in one glass_group: spacing fuses neighbours"))
+			.child(group)
+			.child(
+				div()
+					.flex()
+					.flex_row()
+					.items_center()
+					.gap(px(12.))
+					.child(label(format!("Spacing {:.0} px", self.fuse_spacing)))
+					.child(
+						slider("morph-spacing", self.fuse_spacing)
+							.range(0.0..=40.0)
+							.width(px(180.))
+							.on_change(cx.listener(|this, value: &f32, _, cx| {
+								this.fuse_spacing = *value;
+								cx.notify();
+							})),
+					)
+					.child(
+						button(
+							"morph-slide",
+							if self.fuse_slid {
+								"Slide back"
+							} else {
+								"Slide together"
+							},
+						)
+						.on_click(cx.listener(|this, _, _, cx| {
+							this.fuse_slid = !this.fuse_slid;
+							cx.notify();
+						})),
+					),
+			);
+		div()
+			.flex()
+			.flex_row()
+			.gap(px(48.))
+			.items_start()
+			.child(single)
+			.child(fused)
 	}
 
 	pub fn overlay_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -473,6 +538,7 @@ impl Gallery {
 							.child(badge("Canary"))
 							.child(badge("Stable").tone(Tone::Neutral))
 							.child(badge("Beta OS").tone(Tone::Warning))
+							.child(badge("Verified").tone(Tone::Color(theme.palette.success)))
 							.child(badge("Failed").tone(Tone::Danger)),
 					)
 					.child(label("Skeleton placeholders"))

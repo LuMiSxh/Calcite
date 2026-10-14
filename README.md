@@ -13,7 +13,7 @@
 
 <img src="assets/github/gallery.png" width="1480" alt="The Calcite gallery: glass styles, actions, forms, settings panels, and HUD surfaces" />
 
-**[Library guide](crates/calcite/README.md)** · [Changelog](crates/calcite/CHANGELOG.md) · [Gallery](crates/calcite-showcase/src/bin/gallery) · [Arknights Client](https://github.com/LuMiSxh/Arknights-MacOS-Client)
+**[Library guide](crates/calcite/README.md)** · [Changelog](CHANGELOG.md) · [Gallery](crates/calcite-showcase/src/bin/gallery) · [Arknights Client](https://github.com/LuMiSxh/Arknights-MacOS-Client)
 
 </div>
 
@@ -82,12 +82,16 @@ The first build compiles gpui-ce and takes several minutes. Run the bootstrap sc
 | both    | A         | Next accent (crossfades)                            |
 | gallery | P         | Switch between the Arknights and Ember palettes     |
 | both    | M         | Toggle Reduce Motion                                |
+| gallery | ?         | Show or hide the shortcut list (top right)          |
 | home    | Space     | Primary action: Install, Pause, Resume, Play, Stop  |
 | home    | 1, 2, 3   | Expand the music, version, or status pill           |
 | home    | U         | Show the neutral "Install Update" button            |
 | home    | O         | Toggle between your image and the procedural art; the accent follows the artwork |
 | home    | H         | Show or hide the controls panel                     |
 | both    | Command-Q | Quit                                                |
+
+The letter keys are inactive while a text field has focus, so typing never triggers them. The
+gallery's list comes from the same `shortcuts!` table as its key bindings.
 
 ## Updates
 

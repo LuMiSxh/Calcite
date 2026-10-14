@@ -47,8 +47,21 @@ pub mod radius {
 }
 
 pub mod control {
+	use super::*;
+
 	pub const COMPACT_HORIZONTAL_PADDING: f32 = 10.;
 	pub const COMPACT_VERTICAL_PADDING: f32 = 5.;
+	/// Heights of the three control sizes. A button, a text field, and a menu chip of one size
+	/// stand level side by side. They are the line height of the size's text (phi times 13, 13,
+	/// and 10 points) plus its vertical padding, rounded to whole points.
+	pub const HEIGHT_COMPACT: Pixels = px(26.);
+	pub const HEIGHT_REGULAR: Pixels = px(33.);
+	pub const HEIGHT_LARGE: Pixels = px(37.);
+	/// Padding of a small label capsule: a badge or a tag.
+	pub const BADGE_HORIZONTAL_PADDING: f32 = 7.;
+	pub const BADGE_VERTICAL_PADDING: f32 = 2.;
+	/// Gap between the parts of a compact capsule (chip, menu picker).
+	pub const CHIP_GAP: f32 = 6.;
 	pub const SEMANTIC_BORDER_OPACITY: f32 = 0.28;
 	pub const OVERLAY_DIM: f32 = 0.55;
 	pub const ENABLED_NEUTRAL_SURFACE_OPACITY: f32 = 0.07;
@@ -60,7 +73,12 @@ pub mod control {
 	pub const ENABLED_CHROMATIC_BORDER_OPACITY: f32 = 0.40;
 	pub const DISABLED_CHROMATIC_BORDER_OPACITY: f32 = 0.14;
 	pub const HUD_BORDER_OPACITY: f32 = 0.65;
-	pub const HUD_HOVER_SURFACE_OPACITY: f32 = 0.06;
+	/// The one hover strength: a white overlay on neutral surfaces, the accent on tinted ones.
+	pub const HOVER_OPACITY: f32 = 0.06;
+	/// A control's opacity while it is pressed (`ActionPressStyle`).
+	pub const PRESSED_OPACITY: f32 = 0.86;
+	/// The accent fill of a selected row.
+	pub const SELECTED_ROW_FILL_OPACITY: f32 = 0.13;
 	pub const DISABLED_FOREGROUND_OPACITY: f32 = 0.44;
 	pub const DISABLED_NEUTRAL_FOREGROUND_OPACITY: f32 = 0.36;
 }
@@ -69,7 +87,13 @@ pub mod control {
 pub mod text {
 	use super::*;
 	pub const CAPTION: Pixels = px(10.);
+	/// Tooltips.
+	pub const FOOTNOTE: Pixels = px(11.);
+	/// Details under a title and menu rows.
+	pub const SUPPORTING: Pixels = px(12.);
 	pub const BODY: Pixels = px(13.);
+	/// Navigation rail entries.
+	pub const NAVIGATION: Pixels = px(14.);
 	pub const STATUS_TITLE: Pixels = px(14.);
 	pub const STATUS_PERCENT: Pixels = px(16.);
 	pub const TITLE: Pixels = px(22.);
@@ -89,6 +113,32 @@ pub mod hud {
 	pub const EXPANDED_VERSION_WIDTH: Pixels = px(260.);
 	pub const EXPANDED_MUSIC_WIDTH: Pixels = px(330.);
 	pub const HORIZONTAL_PADDING: Pixels = px(11.);
+}
+
+/// The fill and border of a surface tinted with a chromatic color: the selected state of a
+/// card, chip, or segment, and the accent capsule.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Chromatic {
+	pub fill: Rgba,
+	pub border: Rgba,
+}
+
+impl Chromatic {
+	/// The enabled look: a 14 % fill and a 40 % border in `tint`.
+	pub fn enabled(tint: Rgba) -> Self {
+		Self {
+			fill: with_alpha(tint, control::ENABLED_CHROMATIC_SURFACE_OPACITY),
+			border: with_alpha(tint, control::ENABLED_CHROMATIC_BORDER_OPACITY),
+		}
+	}
+
+	/// The disabled look: a faint white fill and a 14 % border in `tint`.
+	pub fn disabled(tint: Rgba) -> Self {
+		Self {
+			fill: white(control::DISABLED_CHROMATIC_SURFACE_OPACITY),
+			border: with_alpha(tint, control::DISABLED_CHROMATIC_BORDER_OPACITY),
+		}
+	}
 }
 
 /// Linear mix of two colors, `t = 0` gives `from`.
@@ -194,6 +244,47 @@ pub fn hue(color: Rgba) -> f32 {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn control_heights_step_up_with_the_size() {
+		assert!(control::HEIGHT_COMPACT < control::HEIGHT_REGULAR);
+		assert!(control::HEIGHT_REGULAR < control::HEIGHT_LARGE);
+		// Regular text with 6 pt padding and compact text with 5 pt padding, at line height phi.
+		let phi = 1.618_034_f32;
+		let regular = f32::from(text::BODY) * phi + 12.;
+		let compact = f32::from(text::CAPTION) * phi + 2. * control::COMPACT_VERTICAL_PADDING;
+		let large = f32::from(text::BODY) * phi + 16.;
+		assert!((f32::from(control::HEIGHT_REGULAR) - regular).abs() < 0.5);
+		assert!((f32::from(control::HEIGHT_COMPACT) - compact).abs() < 0.5);
+		assert!((f32::from(control::HEIGHT_LARGE) - large).abs() < 0.5);
+	}
+
+	#[test]
+	fn hover_and_press_tokens_are_subtle() {
+		const { assert!(control::HOVER_OPACITY > 0. && control::HOVER_OPACITY < 0.1) };
+		const { assert!(control::PRESSED_OPACITY > 0.8 && control::PRESSED_OPACITY < 1.) };
+	}
+
+	#[test]
+	fn chromatic_surface_uses_the_enabled_and_disabled_endpoints() {
+		let tint = rgba(0.2, 0.4, 0.9, 1.);
+		let on = Chromatic::enabled(tint);
+		assert_eq!(
+			on.fill,
+			with_alpha(tint, control::ENABLED_CHROMATIC_SURFACE_OPACITY)
+		);
+		assert_eq!(
+			on.border,
+			with_alpha(tint, control::ENABLED_CHROMATIC_BORDER_OPACITY)
+		);
+		let off = Chromatic::disabled(tint);
+		assert_eq!(off.fill, white(control::DISABLED_CHROMATIC_SURFACE_OPACITY));
+		assert_eq!(
+			off.border,
+			with_alpha(tint, control::DISABLED_CHROMATIC_BORDER_OPACITY)
+		);
+		assert!(on.fill.alpha > off.fill.alpha && on.border.alpha > off.border.alpha);
+	}
 
 	#[test]
 	fn neutral_backplate_stack_matches_hand_composite() {

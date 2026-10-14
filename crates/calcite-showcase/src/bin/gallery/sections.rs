@@ -2,19 +2,22 @@
 
 //! Static gallery sections: the backdrop, the glass styles, icons, tokens, and motion.
 
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
 use calcite::{
 	glass::{Elevation, GlassExt},
-	motion::swiftui_spring,
+	motion::{Spring, swiftui_spring, tokens as spring_tokens},
 	prelude::*,
 	tokens::{radius, rgba, scale_alpha, white},
 };
 use calcite_showcase::artwork::SLASH_ASSET;
 use gpui::{
-	App, Bounds, FontWeight, IntoElement, ParentElement, PathBuilder, Pixels, RenderOnce, Rgba, SharedString,
-	Styled, Window, canvas, div, linear_color_stop, linear_gradient, point, prelude::FluentBuilder, px,
+	App, Bounds, Context, FontWeight, IntoElement, ParentElement, PathBuilder, Pixels, Render, RenderOnce,
+	Rgba, SharedString, Styled, Window, canvas, div, linear_color_stop, linear_gradient, point,
+	prelude::FluentBuilder, px,
 };
 
-use super::{HEIGHT, WIDTH};
+use super::WIDTH;
 
 pub fn section(
 	title: &'static str,
@@ -60,6 +63,16 @@ impl RenderOnce for Label {
 	}
 }
 
+/// The backdrop as a view of its own: it never changes with the page, so it is cached.
+pub struct BackdropView;
+
+impl Render for BackdropView {
+	fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+		let theme = cx.theme();
+		backdrop(&theme).into_any_element()
+	}
+}
+
 /// A bright, detailed backdrop over the whole page, so every glass surface has something
 /// to refract.
 pub fn backdrop(theme: &Theme) -> impl IntoElement {
@@ -97,7 +110,8 @@ pub fn backdrop(theme: &Theme) -> impl IntoElement {
 				.h_full()
 				.bg(white(if index % 4 == 0 { 0.22 } else { 0.10 }))
 		}))
-		.children((0..(HEIGHT as i32 / 90)).map(|index| {
+		// More rules than any page needs; the backdrop clips them to the content height.
+		.children((0..120).map(|index| {
 			div()
 				.absolute()
 				.top(px(40. + index as f32 * 90.))
@@ -168,7 +182,7 @@ pub fn glass_styles(theme: Theme) -> impl IntoElement {
 						pill(
 							SharedString::from(format!("style-pill-{key}")),
 							Icon::Globe,
-							div().font_weight(FontWeight::SEMIBOLD).child("Global 04:12:09"),
+							|| div().font_weight(FontWeight::SEMIBOLD).child("Global 04:12:09"),
 						)
 						.theme(styled),
 					),
@@ -183,69 +197,6 @@ pub fn glass_styles(theme: Theme) -> impl IntoElement {
 					),
 				)
 		}))
-}
-
-pub fn icons_section(theme: &Theme) -> impl IntoElement {
-	let tile = |glyph: gpui::Svg, name: &'static str| {
-		div()
-			.w(px(84.))
-			.h(px(64.))
-			.flex()
-			.flex_col()
-			.items_center()
-			.justify_center()
-			.gap(px(6.))
-			.rounded(radius::CONTROL)
-			.bg(white(0.05))
-			.border_1()
-			.border_color(white(0.08))
-			.child(glyph)
-			.child(label(name))
-	};
-	// A sample of the full set; every icon is available as `Lucide::Name`.
-	let lucide = [
-		Lucide::Rocket,
-		Lucide::Gamepad2,
-		Lucide::Download,
-		Lucide::HardDrive,
-		Lucide::Shield,
-		Lucide::Bell,
-		Lucide::Wifi,
-		Lucide::Cpu,
-		Lucide::Clock,
-		Lucide::Star,
-		Lucide::Heart,
-		Lucide::Terminal,
-		Lucide::Wine,
-		Lucide::Languages,
-		Lucide::Moon,
-	];
-	div()
-		.flex()
-		.flex_col()
-		.gap(px(10.))
-		.child(label("Icon: the semantic set the components use"))
-		.child(
-			div().flex().flex_row().flex_wrap().gap(px(10.)).children(
-				Icon::ALL
-					.iter()
-					.map(|icon| tile(icon.render(px(20.), theme.palette.primary_text), icon.name())),
-			),
-		)
-		.child(label(format!("Lucide: {} icons, a sample", Lucide::ALL.len())))
-		.child(
-			div()
-				.flex()
-				.flex_row()
-				.flex_wrap()
-				.gap(px(10.))
-				.children(lucide.into_iter().map(|icon| {
-					tile(
-						icon.render(px(20.), theme.palette.primary_text),
-						IconSet::name(icon),
-					)
-				})),
-		)
 }
 
 pub fn tokens_section(theme: Theme) -> impl IntoElement {
@@ -340,14 +291,16 @@ pub fn tokens_section(theme: Theme) -> impl IntoElement {
 
 /// Step response of every motion curve over one second.
 pub fn motion_section(accent: Rgba) -> impl IntoElement {
+	let params = |spring: Spring| Some((spring.response, spring.bounce));
+	let curve = |curve: Curve| curve.spring().and_then(params);
 	let curves = [
-		("press", Curve::Press, Some((0.20, 0.))),
-		("release", Curve::Release, Some((0.46, 0.42))),
-		("hover", Curve::Hover, Some((0.32, 0.22))),
-		("state", Curve::State, Some((0.38, 0.16))),
-		("morph", Curve::Morph, Some((0.52, 0.30))),
-		("present", Curve::Present, Some((0.50, 0.24))),
-		("dismiss", Curve::Dismiss, Some((0.24, 0.))),
+		("press", Curve::Press, curve(Curve::Press)),
+		("release", Curve::Release, curve(Curve::Release)),
+		("hover", Curve::Hover, curve(Curve::Hover)),
+		("state", Curve::State, curve(Curve::State)),
+		("morph open", Curve::State, params(spring_tokens::MORPH_OPEN)),
+		("present", Curve::Present, curve(Curve::Present)),
+		("dismiss", Curve::Dismiss, curve(Curve::Dismiss)),
 		("crossfade", Curve::Crossfade, None),
 	];
 	div()
@@ -383,7 +336,44 @@ pub fn motion_section(accent: Rgba) -> impl IntoElement {
 		}))
 }
 
-fn plot(bounds: Bounds<Pixels>, spring: Option<(f32, f32)>, accent: Rgba, window: &mut Window) {
+/// Points along each plotted curve.
+const SAMPLES: usize = 120;
+
+/// The step response of a spring over one second, sampled at [`SAMPLES`] + 1 points. The
+/// integration is the costliest part of a redraw and the curves never change, so each is
+/// computed once.
+fn spring_samples((duration, bounce): (f32, f32)) -> Rc<[f32]> {
+	type Cache = HashMap<(u32, u32), Rc<[f32]>>;
+	thread_local! {
+		static CACHE: RefCell<Cache> = RefCell::default();
+	}
+	CACHE.with(|cache| {
+		cache
+			.borrow_mut()
+			.entry((duration.to_bits(), bounce.to_bits()))
+			.or_insert_with(|| {
+				// Integrate the damped oscillator from rest toward 1.
+				let config = swiftui_spring(duration, bounce);
+				let (mut x, mut v) = (0f32, 0f32);
+				let mut steps_done = 0;
+				(0..=SAMPLES)
+					.map(|index| {
+						let steps = ((index as f32 / SAMPLES as f32) / 0.001) as usize;
+						for _ in steps_done..steps {
+							let a = (config.stiffness * (1. - x) - config.damping * v) / config.mass;
+							v += a * 0.001;
+							x += v * 0.001;
+						}
+						steps_done = steps;
+						x
+					})
+					.collect()
+			})
+			.clone()
+	})
+}
+
+pub(super) fn plot(bounds: Bounds<Pixels>, spring: Option<(f32, f32)>, accent: Rgba, window: &mut Window) {
 	let left = f32::from(bounds.origin.x) + 6.;
 	let top = f32::from(bounds.origin.y) + 10.;
 	let width = f32::from(bounds.size.width) - 12.;
@@ -394,23 +384,13 @@ fn plot(bounds: Bounds<Pixels>, spring: Option<(f32, f32)>, accent: Rgba, window
 	if let Ok(path) = target.build() {
 		window.paint_path(path, white(0.18));
 	}
-	let samples = 120;
-	let value_at = |t: f32| -> f32 {
-		match spring {
-			Some((duration, bounce)) => {
-				// Integrate the damped oscillator from rest toward 1.
-				let config = swiftui_spring(duration, bounce);
-				let (mut x, mut v) = (0f32, 0f32);
-				let steps = (t / 0.001) as usize;
-				for _ in 0..steps {
-					let a = (config.stiffness * (1. - x) - config.damping * v) / config.mass;
-					v += a * 0.001;
-					x += v * 0.001;
-				}
-				x
-			}
+	let samples = SAMPLES;
+	let spring_samples = spring.map(spring_samples);
+	let value_at = |index: usize| -> f32 {
+		match &spring_samples {
+			Some(values) => values[index],
 			None => {
-				let p = (t / 0.48).min(1.);
+				let p = (index as f32 / samples as f32 / 0.48).min(1.);
 				gpui::ease_in_out(p)
 			}
 		}
@@ -418,7 +398,7 @@ fn plot(bounds: Bounds<Pixels>, spring: Option<(f32, f32)>, accent: Rgba, window
 	let mut curve = PathBuilder::stroke(px(2.));
 	for index in 0..=samples {
 		let t = index as f32 / samples as f32;
-		let y = top + height * (1. - value_at(t));
+		let y = top + height * (1. - value_at(index));
 		let p = point(px(left + width * t), px(y));
 		if index == 0 {
 			curve.move_to(p)
@@ -478,6 +458,9 @@ pub fn chrome_section() -> impl IntoElement {
 		.flex_row()
 		.gap(px(24.))
 		.child(strip(ChromeStyle::MacOs, "macOS: system traffic lights"))
-		.child(strip(ChromeStyle::Windows, "Windows: caption buttons"))
-		.child(strip(ChromeStyle::Linux, "Linux: client-side decorations"))
+		.child(strip(ChromeStyle::Windows, "Windows: round captions, red close"))
+		.child(strip(
+			ChromeStyle::Linux,
+			"Linux: round captions, client-side frame",
+		))
 }

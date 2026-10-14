@@ -27,3 +27,13 @@ calcite-update = { path = "crates/calcite-update" }
 opt-level = 2
 # Dependencies build without debug info: it keeps target/ small and links faster.
 debug = false
+
+# Debug builds of the library otherwise draw about 40% slower than release (13.8 vs 10 ms per frame).
+[profile.dev.package.calcite]
+opt-level = 1
+
+[profile.dev.package.calcite-exec]
+opt-level = 1
+
+[profile.dev.package.calcite-tint]
+opt-level = 1
