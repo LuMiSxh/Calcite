@@ -25,6 +25,7 @@
 - A palette you choose at compile time with a `const`, or replace at runtime. Theme changes crossfade.
 - Dynamic Theme: `calcite-tint` takes the accent from artwork, like the Arknights Client launcher.
 - Keyboard focus rings, keyboard activation, and accessibility roles and labels.
+- Window chrome like the launcher's hidden title bar: the traffic lights on macOS, caption buttons with Snap Layouts on Windows, and client-side decorations on Linux.
 - Auto-updates: an Ed25519-signed feed, per-file zstd deltas (unchanged files cost nothing), verified staging, and install on quit.
 - App icons outside a bundle, and `cargo calcite bundle` for DMG, Windows installers, deb, and AppImage.
 - 2100+ [Lucide](https://lucide.dev) icons and an `icons!` macro for your own icons.
@@ -180,5 +181,9 @@ slot before it ends the lease.
 - Under Reduce Motion, SwiftUI pins the pointer light to the center. Calcite hides it instead.
 - The parameters are tuned against renders on Linux, not against macOS 26/27 screenshots. Tune them
   on a Mac next.
+- GPUI clips to rectangles, so client-side decorations on Linux cannot round full-bleed
+  content. Round full-bleed images with `chrome::corner_radius`.
+- The window chrome is verified on Linux only. Check the traffic lights and the Windows caption
+  buttons on real systems.
 - Calcite needs the patched gpui-ce. Push it to a fork with `scripts/publish-gpui-fork.sh` before
   you use Calcite as a Git dependency.

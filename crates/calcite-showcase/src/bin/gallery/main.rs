@@ -8,11 +8,13 @@ mod interactive;
 mod sections;
 mod setup;
 
-use calcite::{EditableTextState, UI_FONT, app_icon::AppIcon, keymap, prelude::*, tokens::rgba as color};
+use calcite::{
+	EditableTextState, UI_FONT, app_icon::AppIcon, chrome, keymap, prelude::*, tokens::rgba as color,
+};
 use calcite_showcase::artwork::{SLASH_ASSET, SLASH_SVG};
 use gpui::{
-	App, Bounds, Context, Entity, FocusHandle, IntoElement, ParentElement, Rgba, Styled, TitlebarOptions,
-	Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgba, size,
+	App, Bounds, Context, Entity, FocusHandle, IntoElement, ParentElement, Rgba, Styled, Window, actions,
+	div, prelude::*, px, rgba, size,
 };
 
 actions!(
@@ -32,7 +34,7 @@ const EMBER: Palette = Palette {
 };
 
 pub const WIDTH: f32 = 1480.;
-pub const HEIGHT: f32 = 4340.;
+pub const HEIGHT: f32 = 4450.;
 
 /// The search tags the chip demo starts with.
 pub const TAGS: [&str; 3] = ["Amiya", "Summer", "Animated"];
@@ -214,6 +216,11 @@ impl Render for Gallery {
 				self.notices_section(cx),
 			))
 			.child(sections::section(
+				"Window chrome",
+				"window_frame · title_bar · ChromeStyle",
+				sections::chrome_section(),
+			))
+			.child(sections::section(
 				"Icons",
 				"icons! macro · built-in Icon set",
 				sections::icons_section(&theme),
@@ -229,7 +236,7 @@ impl Render for Gallery {
 				sections::motion_section(theme.accent),
 			));
 
-		div()
+		let root = div()
 			.size_full()
 			.relative()
 			.overflow_hidden()
@@ -313,6 +320,8 @@ impl Render for Gallery {
 					cx.notify();
 				})),
 			)
+			.child(title_bar("gallery-title-bar"));
+		window_frame(root)
 	}
 }
 
@@ -339,15 +348,7 @@ fn main() {
 				.map_or(px(HEIGHT), |display| display.bounds().size.height - px(80.));
 			let bounds = Bounds::centered(None, size(px(WIDTH), px(HEIGHT).min(display_height)), cx);
 			cx.open_window(
-				ICON.window_options(WindowOptions {
-					window_bounds: Some(WindowBounds::Windowed(bounds)),
-					titlebar: Some(TitlebarOptions {
-						title: Some("Calcite Gallery".into()),
-						appears_transparent: true,
-						traffic_light_position: None,
-					}),
-					..Default::default()
-				}),
+				ICON.window_options(chrome::window_options("Calcite Gallery", bounds)),
 				|window, cx| cx.new(|cx| Gallery::new(window, cx)),
 			)
 			.expect("failed to open the gallery window");

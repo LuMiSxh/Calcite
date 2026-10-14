@@ -11,7 +11,7 @@ use calcite::{
 use calcite_showcase::artwork::SLASH_ASSET;
 use gpui::{
 	App, Bounds, FontWeight, IntoElement, ParentElement, PathBuilder, Pixels, RenderOnce, Rgba, SharedString,
-	Styled, Window, canvas, div, linear_color_stop, linear_gradient, point, px,
+	Styled, Window, canvas, div, linear_color_stop, linear_gradient, point, prelude::FluentBuilder, px,
 };
 
 use super::{HEIGHT, WIDTH};
@@ -429,4 +429,55 @@ fn plot(bounds: Bounds<Pixels>, spring: Option<(f32, f32)>, accent: Rgba, window
 	if let Ok(path) = curve.build() {
 		window.paint_path(path, accent);
 	}
+}
+
+/// The title bar of each platform over a strip of backdrop. Only the native one moves the window.
+pub fn chrome_section() -> impl IntoElement {
+	let strip = |style: ChromeStyle, name: &'static str| {
+		div().flex().flex_col().gap(px(8.)).child(label(name)).child(
+			div()
+				.relative()
+				.w(px(440.))
+				.h(px(52.))
+				.rounded(radius::CONTROL)
+				.overflow_hidden()
+				.bg(white(0.05))
+				.border_1()
+				.border_color(white(0.08))
+				// The system draws the traffic lights; the preview stands in for them.
+				.when(style == ChromeStyle::MacOs, |strip| {
+					strip.child(
+						div()
+							.absolute()
+							.left(px(20.))
+							.top(px(20.))
+							.flex()
+							.gap(px(8.))
+							.children(
+								[0xff5f57, 0xfebc2e, 0x28c840]
+									.map(|color| div().size(px(12.)).rounded_full().bg(gpui::rgb(color))),
+							),
+					)
+				})
+				.child(
+					title_bar(SharedString::from(format!("chrome-preview-{name}")))
+						.preview(style)
+						.child(
+							icon_button(
+								SharedString::from(format!("chrome-gear-{name}")),
+								Icon::Gear,
+								"Settings",
+							)
+							.diameter(px(36.)),
+						),
+				),
+		)
+	};
+	div()
+		.flex()
+		.flex_row()
+		.gap(px(24.))
+		.child(strip(ChromeStyle::MacOs, "macOS: system traffic lights"))
+		.child(strip(ChromeStyle::Windows, "Windows: caption buttons"))
+		.child(strip(ChromeStyle::Linux, "Linux: client-side decorations"))
 }

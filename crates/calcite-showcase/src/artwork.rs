@@ -39,7 +39,7 @@ fn blob(left: f32, top: f32, size: f32, color: Rgba, blur: f32) -> impl IntoElem
 }
 
 /// A bright, detailed scene so that the blur and the backplates are easy to judge.
-fn procedural(accent: Rgba) -> impl IntoElement {
+fn procedural(accent: Rgba, corner: Pixels) -> impl IntoElement {
 	let tile = |left: f32, top: f32, width: f32, height: f32, color: Rgba| {
 		div()
 			.absolute()
@@ -53,6 +53,7 @@ fn procedural(accent: Rgba) -> impl IntoElement {
 		.absolute()
 		.size_full()
 		.overflow_hidden()
+		.rounded(corner)
 		.bg(linear_gradient(
 			165.,
 			linear_color_stop(rgba(0.07, 0.10, 0.16, 1.), 0.),
@@ -97,14 +98,21 @@ fn procedural(accent: Rgba) -> impl IntoElement {
 		)
 }
 
-pub fn artwork_layer(artwork: &Artwork, accent: Rgba) -> impl IntoElement {
+/// The artwork behind the launcher. `corner` rounds it inside a client-drawn window frame.
+pub fn artwork_layer(artwork: &Artwork, accent: Rgba, corner: Pixels) -> impl IntoElement {
 	match artwork {
-		Artwork::Procedural => procedural(accent).into_any_element(),
+		Artwork::Procedural => procedural(accent, corner).into_any_element(),
 		Artwork::Image(path) => div()
 			.absolute()
 			.size_full()
+			.rounded(corner)
 			.bg(Palette::ARKNIGHTS.backdrop)
-			.child(img(path.clone()).size_full().object_fit(ObjectFit::Cover))
+			.child(
+				img(path.clone())
+					.size_full()
+					.rounded(corner)
+					.object_fit(ObjectFit::Cover),
+			)
 			.into_any_element(),
 	}
 }

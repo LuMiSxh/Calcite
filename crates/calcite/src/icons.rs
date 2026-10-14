@@ -154,6 +154,11 @@ crate::icons! {
 		Stop => "stop.svg",
 		Tag => "tag.svg",
 		Warning => "warning.svg",
+		/// Window caption glyphs, drawn on a 10 pt grid with 1 pt strokes.
+		WindowClose => "window-close.svg",
+		WindowMaximize => "window-maximize.svg",
+		WindowMinimize => "window-minimize.svg",
+		WindowRestore => "window-restore.svg",
 		XMark => "xmark.svg",
 	}
 }

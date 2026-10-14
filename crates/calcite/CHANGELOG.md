@@ -41,3 +41,10 @@ All notable changes to Calcite are recorded here. The format follows
   the outline breathing, and the skeleton pulse. A paused loop keeps its phase. Loops redraw
   at 30 fps and stop under Reduce Motion, in background windows, and under serious thermal
   pressure.
+- Window chrome: `chrome::window_options`, `window_frame`, and `title_bar`. macOS keeps the
+  traffic lights and the app owns the title bar drag. Windows gets caption buttons that the
+  system hit-tests, so Snap Layouts work. Linux gets client-side decorations with a shadow,
+  rounded corners, resize edges, the window menu, and round caption buttons, and falls back
+  to the window manager's frame without a compositor. `title_bar(..).preview(style)` draws
+  another platform's chrome.
+- Caption glyphs: `Icon::WindowMinimize`, `WindowMaximize`, `WindowRestore`, `WindowClose`.

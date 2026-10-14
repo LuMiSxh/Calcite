@@ -177,6 +177,43 @@ calcite::icons! {
 To vendor a new Lucide version, run `scripts/update-lucide.sh VERSION`. The script checks the npm
 integrity hash.
 
+## Window chrome
+
+The launcher hides the system title bar and draws its controls over the artwork. `chrome` does
+this on every platform:
+
+```rust
+let bounds = Bounds::centered(None, size(px(1040.), px(680.)), cx);
+cx.open_window(
+	WindowOptions {
+		window_min_size: Some(size(px(880.), px(560.))),
+		..chrome::window_options("Arknights Client", bounds)
+	},
+	|window, cx| cx.new(|cx| Home::new(window, cx)),
+);
+
+// In the root view's render:
+window_frame(
+	div()
+		.size_full()
+		.child(content)
+		.child(title_bar("title-bar").child(icon_button("settings", Icon::Gear, "Settings"))),
+)
+```
+
+| Platform | What the title bar does                                                                       |
+| -------- | --------------------------------------------------------------------------------------------- |
+| macOS    | The system draws the traffic lights. The app owns the drag, so clicks in the bar have no delay. |
+| Windows  | Calcite draws the caption buttons. The system hit-tests them, so Snap Layouts work.            |
+| Linux    | Calcite draws the shadow, the rounded frame, the resize edges, and the caption buttons.        |
+
+Linux needs a compositor for client-side decorations. Without one, the window manager draws its
+frame and the bar holds only the app's controls. GPUI clips to rectangles, so round full-bleed
+images with `chrome::corner_radius(window)`.
+
+On macOS and Windows, the system close runs `Window::on_window_should_close`. On Linux, give the
+same check to `title_bar(..).on_close(..)`.
+
 ## App icon and bundling
 
 GPUI shows the generic executable icon until the app sets its own. `AppIcon` covers `cargo run`:

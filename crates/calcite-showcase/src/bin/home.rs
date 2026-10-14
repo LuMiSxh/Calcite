@@ -10,14 +10,14 @@ use std::{
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use calcite::{UI_FONT, app_icon::AppIcon, prelude::*, tokens::hud};
+use calcite::{UI_FONT, app_icon::AppIcon, chrome, prelude::*, tokens::hud};
 use calcite_exec::prelude::*;
 use calcite_showcase::artwork::{
 	Artwork, SLASH_ASSET, SLASH_SVG, artwork_layer, readability_field, wordmark,
 };
 use gpui::{
-	App, Bounds, Context, FocusHandle, FontWeight, IntoElement, MouseButton, SharedString, Task,
-	TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgba, size,
+	App, Bounds, Context, FocusHandle, FontWeight, IntoElement, MouseButton, SharedString, Task, Window,
+	WindowOptions, actions, div, prelude::*, px, rgba, size,
 };
 
 actions!(
@@ -495,7 +495,7 @@ impl Home {
 }
 
 impl Render for Home {
-	fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+	fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
 		let theme = cx.theme();
 		let (outline, outline_active) = self.outline();
 		let bar = control_bar(self.status())
@@ -505,24 +505,18 @@ impl Render for Home {
 			})
 			.action(self.primary_button(cx));
 
-		let top_bar = div()
+		// The wordmark sits under the traffic lights, as in the SwiftUI launcher.
+		let brand = div()
 			.absolute()
-			.top_0()
-			.left_0()
-			.right_0()
-			.pt(px(8.))
-			.px(px(14.))
-			.flex()
-			.flex_row()
-			.items_start()
-			.justify_between()
-			.child(div().pt(px(34.)).pl(px(6.)).child(wordmark(tokens::text::TITLE)))
-			.child(
-				icon_button("settings", Icon::Gear, "Settings").on_click(cx.listener(|this, _, _, cx| {
-					this.shows_legend = !this.shows_legend;
-					cx.notify();
-				})),
-			);
+			.top(px(42.))
+			.left(px(20.))
+			.child(wordmark(tokens::text::TITLE));
+		let title_bar = title_bar("home-title-bar").child(
+			icon_button("settings", Icon::Gear, "Settings").on_click(cx.listener(|this, _, _, cx| {
+				this.shows_legend = !this.shows_legend;
+				cx.notify();
+			})),
+		);
 
 		let hud = div()
 			.absolute()
@@ -536,11 +530,10 @@ impl Render for Home {
 			.child(self.pill_row(cx))
 			.child(bar);
 
-		div()
+		let root = div()
 			.size_full()
 			.relative()
 			.overflow_hidden()
-			.bg(gpui::black())
 			.font_family(UI_FONT)
 			.text_color(theme.palette.primary_text)
 			.track_focus(&self.focus)
@@ -579,7 +572,11 @@ impl Render for Home {
 				this.shows_legend = !this.shows_legend;
 				cx.notify();
 			}))
-			.child(artwork_layer(&self.artwork, theme.accent))
+			.child(artwork_layer(
+				&self.artwork,
+				theme.accent,
+				chrome::corner_radius(window),
+			))
 			.child(readability_field(theme.reduce_transparency()))
 			// Like the SwiftUI HUD, a click outside an expanded pill collapses it.
 			.when(self.expanded.is_some(), |this| {
@@ -591,9 +588,11 @@ impl Render for Home {
 					}),
 				))
 			})
-			.child(top_bar)
+			.child(brand)
 			.child(hud)
 			.when(self.shows_legend, |this| this.child(self.legend(&theme)))
+			.child(title_bar);
+		window_frame(root)
 	}
 }
 
@@ -666,14 +665,8 @@ fn main() {
 			let bounds = Bounds::centered(None, size(px(1040.), px(680.)), cx);
 			cx.open_window(
 				ICON.window_options(WindowOptions {
-					window_bounds: Some(WindowBounds::Windowed(bounds)),
 					window_min_size: Some(size(px(880.), px(560.))),
-					titlebar: Some(TitlebarOptions {
-						title: Some("Arknights Client".into()),
-						appears_transparent: true,
-						traffic_light_position: None,
-					}),
-					..Default::default()
+					..chrome::window_options("Arknights Client", bounds)
 				}),
 				move |window, cx| {
 					cx.new(|cx| {
