@@ -72,7 +72,7 @@ impl MotionLab {
 	pub fn new() -> Self {
 		Self {
 			open_spring: calcite::motion::tokens::MORPH_OPEN,
-			close_spring: calcite::motion::tokens::MORPH_FOLD,
+			close_spring: calcite::motion::tokens::MORPH_CLOSE,
 			open: false,
 			looping: false,
 			peak: 0.,
@@ -324,10 +324,10 @@ mod tests {
 	fn the_readout_names_both_springs_and_the_measured_peak() {
 		let text = readout(
 			calcite::motion::tokens::MORPH_OPEN,
-			calcite::motion::tokens::MORPH_FOLD,
+			calcite::motion::tokens::MORPH_CLOSE,
 			1.046,
 		);
-		assert!(text.contains("open 4.6%") && text.contains("close 0.0%") && text.contains("peaked at 4.6%"));
+		assert!(text.contains("open 4.6%") && text.contains("close 8.4%") && text.contains("peaked at 4.6%"));
 		// A run that never reached the target reports no overshoot.
 		assert!(readout(Spring::new(0.3, 0.), Spring::new(0.3, 0.), 0.4).contains("peaked at 0.0%"));
 	}

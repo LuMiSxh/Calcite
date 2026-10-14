@@ -10,20 +10,13 @@ pub const PRESS: Spring = Spring::new(0.16, 0.);
 pub const SNAPPY: Spring = Spring::new(0.30, 0.15);
 /// Calm travel that arrives without drama: sheets, sliders, fills. No overshoot.
 pub const SMOOTH: Spring = Spring::new(0.45, 0.);
-/// Playful arrival with a visible but short rebound (5.4% overshoot): toggles, toasts, pop-ins.
-pub const BOUNCY: Spring = Spring::new(0.45, 0.32);
-/// Slow, almost flat settle for large surfaces (0.2% overshoot).
-pub const GENTLE: Spring = Spring::new(0.60, 0.10);
 /// Wobbly, liquid motion for glass that stretches and recovers (12.6% overshoot): the knob lens.
 pub const JELLY: Spring = Spring::new(0.42, 0.45);
 /// A glass surface growing into a larger shape (4.6% overshoot).
 pub const MORPH_OPEN: Spring = Spring::new(0.48, 0.30);
 /// A glass surface folding back: shorter than opening but with a clearer rebound (8.4% overshoot);
-/// an attached body dips a few px inside its trigger and settles back onto it.
+/// an attached body swells a few px past its trigger and settles back onto it.
 pub const MORPH_CLOSE: Spring = Spring::new(0.34, 0.38);
-/// A big attached body folding back into its trigger: calm and nearly flat (0.1% overshoot), so
-/// a 200 px surface does not swing around a 28 px button on its way home.
-pub const MORPH_FOLD: Spring = Spring::new(0.34, 0.04);
 /// A selection moving between options in a list or segmented control (3.8% overshoot).
 pub const SELECT: Spring = Spring::new(0.40, 0.28);
 /// Tooltips and other tiny hints: brisk, nearly flat (0.2% overshoot).
@@ -40,22 +33,19 @@ pub const STAGGER_OUT: f32 = 0.012;
 /// Rows beyond this index share the last row's delay, so long lists do not drag.
 pub const STAGGER_CAP: usize = 8;
 
-/// How strongly a surface squashes while its spring is pulled below rest (`secondary::squash`).
-pub const SQUASH_GAIN: f32 = 1.5;
-/// The smallest scale a squash may reach.
-pub const SQUASH_MIN: f32 = 0.94;
+/// Length of the cross-fade between two looks, in seconds. Eased in and out, not a spring.
+pub const CROSSFADE_SECONDS: f32 = 0.48;
+/// Length of a determinate progress fill change, in seconds. Linear, so the fill keeps pace.
+pub const PROGRESS_SECONDS: f32 = 0.20;
 
 /// Every spring token with its name, for galleries and tests.
-pub const ALL: [(&str, Spring); 13] = [
+pub const ALL: [(&str, Spring); 10] = [
 	("PRESS", PRESS),
 	("SNAPPY", SNAPPY),
 	("SMOOTH", SMOOTH),
-	("BOUNCY", BOUNCY),
-	("GENTLE", GENTLE),
 	("JELLY", JELLY),
 	("MORPH_OPEN", MORPH_OPEN),
 	("MORPH_CLOSE", MORPH_CLOSE),
-	("MORPH_FOLD", MORPH_FOLD),
 	("SELECT", SELECT),
 	("TOOLTIP", TOOLTIP),
 	("EXIT", EXIT),
@@ -72,12 +62,9 @@ mod tests {
 			("PRESS", 0.),
 			("SNAPPY", 0.6),
 			("SMOOTH", 0.),
-			("BOUNCY", 5.4),
-			("GENTLE", 0.2),
 			("JELLY", 12.6),
 			("MORPH_OPEN", 4.6),
 			("MORPH_CLOSE", 8.4),
-			("MORPH_FOLD", 0.0),
 			("SELECT", 3.8),
 			("TOOLTIP", 0.2),
 			("EXIT", 0.),

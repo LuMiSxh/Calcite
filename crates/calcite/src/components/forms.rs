@@ -17,7 +17,8 @@
 //! ```
 //!
 //! Every control is a tab stop with the accent focus ring. Space and Return flip a toggle, and a
-//! press can drag its knob to either side; the arrow keys step a slider and move a segmented selection.
+//! press can drag its knob to either side. The arrow keys step a slider, which also takes Home,
+//! End, PageUp, and PageDown; they move a segmented selection too.
 
 use std::{ops::RangeInclusive, rc::Rc};
 
@@ -37,9 +38,12 @@ use crate::{
 		arrow_direction, focus_handle, glow_enabled, glow_layer, key_step, register_key_target,
 	},
 	knob::{LENS_GROWTH, SliderPress, ToggleDrag, knob_surface, lens_amount, release_on, release_press},
-	motion::{self, Curve, secondary, tokens::SELECT},
+	motion::{
+		self, Curve, secondary,
+		tokens::{SELECT, SMOOTH},
+	},
 	theme::{ActiveTheme, Theme},
-	tokens::{self, Chromatic, control, scale_alpha, white, with_alpha},
+	tokens::{self, Chromatic, control, scale_alpha, with_alpha},
 };
 
 /// A shared change handler, for controls that hand it to several listeners.
@@ -150,9 +154,15 @@ impl Toggle {
 		self
 	}
 
-	pub fn disabled(mut self, disabled: bool) -> Self {
-		self.enabled = !disabled;
+	/// Whether the control responds. Enabled by default.
+	pub fn enabled(mut self, enabled: bool) -> Self {
+		self.enabled = enabled;
 		self
+	}
+
+	/// The inverse of `enabled`.
+	pub fn disabled(self, disabled: bool) -> Self {
+		self.enabled(!disabled)
 	}
 
 	pub fn on_change(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
@@ -205,6 +215,14 @@ impl RenderOnce for Toggle {
 			cx,
 		);
 
+		let rim = motion::value::landing(
+			(self.id.clone(), "landing"),
+			target,
+			thumb_spring,
+			reduce_motion,
+			window,
+			cx,
+		);
 		let SwitchMetrics {
 			track: (track_width, track_height),
 			thumb: (thumb_width, thumb_height),
@@ -220,7 +238,7 @@ impl RenderOnce for Toggle {
 		let off_track = if theme.reduce_transparency() {
 			theme.palette.opaque_surface
 		} else {
-			white(0.16)
+			theme.ink(0.18)
 		};
 		let track = tokens::mix(off_track, theme.accent, position.clamp(0., 1.));
 		let alpha = if self.enabled {
@@ -235,11 +253,13 @@ impl RenderOnce for Toggle {
 			.w(px(width))
 			.h(px(height))
 			.rounded_full();
+		// The knob rims with light for a moment as it lands, then the rim fades out.
+		let thumb = thumb.when(rim > 0.01, |thumb| thumb.border_1().border_color(theme.ink(rim)));
 		let thumb = knob_surface(thumb, lens, height, alpha, 0.28, &theme);
 		let on = self.on;
 		let glows = self.enabled && glow_enabled(&theme, self.glow, self.size == Size::Compact);
 		let glow = glows
-			.then(|| glow_layer(&frame, white(1.)))
+			.then(|| glow_layer(&frame, theme.ink(1.)))
 			.flatten()
 			.map(|glow| glow.rounded_full());
 		let track = div()
@@ -399,9 +419,15 @@ impl Slider {
 		self
 	}
 
-	pub fn disabled(mut self, disabled: bool) -> Self {
-		self.enabled = !disabled;
+	/// Whether the control responds. Enabled by default.
+	pub fn enabled(mut self, enabled: bool) -> Self {
+		self.enabled = enabled;
 		self
+	}
+
+	/// The inverse of `enabled`.
+	pub fn disabled(self, disabled: bool) -> Self {
+		self.enabled(!disabled)
 	}
 
 	pub fn on_change(mut self, handler: impl Fn(&f32, &mut Window, &mut App) + 'static) -> Self {
@@ -444,11 +470,36 @@ fn slider_value(x: Pixels, bounds: Bounds<Pixels>, range: &RangeInclusive<f32>, 
 	snap(start + (end - start) * fraction, range, step)
 }
 
-/// The value one arrow key press moves to, in the direction of the range.
-fn stepped_value(value: f32, direction: i32, range: &RangeInclusive<f32>, step: Option<f32>) -> f32 {
+/// The value a key press moves a slider to, or `None` for a key the slider does not use. Arrows
+/// move one step, PageUp and PageDown ten steps (a tenth of the range without a step), and Home
+/// and End go to the ends of the range.
+fn key_value(key: &str, value: f32, range: &RangeInclusive<f32>, step: Option<f32>) -> Option<f32> {
+	let (start, end) = (*range.start(), *range.end());
+	let page = match step.filter(|step| *step > 0.) {
+		Some(step) => 10. * step,
+		None => (end - start).abs() * 0.1,
+	};
+	match key {
+		"home" => Some(snap(start, range, step)),
+		"end" => Some(snap(end, range, step)),
+		"left" | "down" => Some(moved_value(value, -1., key_step(range, step), range, step)),
+		"right" | "up" => Some(moved_value(value, 1., key_step(range, step), range, step)),
+		"pagedown" => Some(moved_value(value, -1., page, range, step)),
+		"pageup" => Some(moved_value(value, 1., page, range, step)),
+		_ => None,
+	}
+}
+
+/// `value` moved `direction` (plus or minus 1) times `distance` along `range`, then snapped.
+fn moved_value(
+	value: f32,
+	direction: f32,
+	distance: f32,
+	range: &RangeInclusive<f32>,
+	step: Option<f32>,
+) -> f32 {
 	let sign = if range.end() >= range.start() { 1. } else { -1. };
-	let moved = value + direction as f32 * sign * key_step(range, step);
-	snap(moved, range, step)
+	snap(value + direction * sign * distance, range, step)
 }
 
 impl RenderOnce for Slider {
@@ -471,7 +522,12 @@ impl RenderOnce for Slider {
 		};
 		let secondary = scale_alpha(theme.palette.secondary_text, alpha);
 		let track_height = THUMB_HEIGHT + 4.;
-		let track_width = f32::from(self.width);
+		// The laid-out width wins once known: in a row with side items the track yields to them
+		// instead of overlapping, and the thumb math follows what is actually drawn.
+		let track_width = laid_out_width(
+			bounds.read(cx).map(|area| f32::from(area.size.width)),
+			f32::from(self.width),
+		);
 		// The ticks line up with the thumb's center at both ends of its travel.
 		let ticks = (self.ticks >= 2).then(|| {
 			div()
@@ -494,11 +550,24 @@ impl RenderOnce for Slider {
 			SliderPress::default()
 		});
 		let held = press_state.read(cx).held;
+		// The drawn value glides to the target on SMOOTH, so a track click or an arrow key moves the
+		// thumb smoothly. A held thumb is the exception: it sits exactly under the pointer.
+		let glide = motion::spring(
+			(self.id.clone(), "calcite-slider-fraction"),
+			fraction,
+			SMOOTH,
+			reduce_motion,
+			window,
+			cx,
+		)
+		.value
+		.clamp(0., 1.);
+		let drawn = if held { fraction } else { glide };
 		let lens = lens_amount((self.id.clone(), "lens"), held, reduce_motion, window, cx);
 		// The taller growth scales both sides, so the lens keeps the capsule's aspect.
 		let grow = 1. + LENS_GROWTH.1 * lens;
 		let (grown_width, grown_height) = (THUMB_WIDTH * grow, THUMB_HEIGHT * grow);
-		let center = thumb_center(fraction, track_width, THUMB_WIDTH);
+		let center = thumb_center(drawn, track_width, THUMB_WIDTH);
 		let knob = knob_surface(
 			div()
 				.absolute()
@@ -519,7 +588,8 @@ impl RenderOnce for Slider {
 			.relative()
 			.w(self.width)
 			.h(px(height))
-			.flex_none()
+			.flex_shrink(1.)
+			.min_w_0()
 			.role(Role::Slider)
 			.aria_label(self.label)
 			.aria_numeric_value(f64::from(self.value))
@@ -536,14 +606,14 @@ impl RenderOnce for Slider {
 					.top(px(THUMB_HEIGHT / 2.))
 					.h(px(4.))
 					.rounded_full()
-					.bg(white(0.18 * alpha)),
+					.bg(theme.ink(0.18 * alpha)),
 			)
 			.child(
 				div()
 					.absolute()
 					.left_0()
 					.top(px(THUMB_HEIGHT / 2.))
-					.w(px(thumb_center(fraction, track_width, THUMB_WIDTH)))
+					.w(px(thumb_center(drawn, track_width, THUMB_WIDTH)))
 					.h(px(4.))
 					.rounded_full()
 					.bg(scale_alpha(theme.accent, alpha)),
@@ -574,9 +644,12 @@ impl RenderOnce for Slider {
 			slider = slider
 				.on_key_down(move |event, window, cx| {
 					let (on_change, range, value) = &keys;
-					if let Some(direction) = arrow_direction(event) {
+					if event.keystroke.modifiers.modified() {
+						return;
+					}
+					if let Some(next) = key_value(&event.keystroke.key, *value, range, step) {
 						cx.stop_propagation();
-						on_change(&stepped_value(*value, direction, range, step), window, cx);
+						on_change(&next, window, cx);
 					}
 				})
 				.on_mouse_down(MouseButton::Left, move |event, window, cx| {
@@ -607,7 +680,7 @@ impl RenderOnce for Slider {
 				});
 		}
 		if self.leading_icon.is_none() && self.trailing_icon.is_none() && !self.value_label {
-			return slider.into_any_element();
+			return slider.flex_none().into_any_element();
 		}
 		// Side items center on the track, not on the track and its ticks.
 		let beside = || div().h(px(track_height)).flex().items_center().flex_none();
@@ -617,7 +690,7 @@ impl RenderOnce for Slider {
 			.font_family(theme.sans())
 			.items_start()
 			.gap(tokens::space::CONTROL)
-			.flex_none()
+			.max_w_full()
 			.when_some(self.leading_icon, |row, icon| {
 				row.child(beside().child(icon.render(tokens::text::BODY, secondary)))
 			})
@@ -643,6 +716,11 @@ impl RenderOnce for Slider {
 	}
 }
 
+/// The slider track's width: what layout gave it once measured, else the width it asked for.
+fn laid_out_width(measured: Option<f32>, requested: f32) -> f32 {
+	measured.filter(|width| *width > 0.).unwrap_or(requested)
+}
+
 /// A row of mutually exclusive options; the selection carries the accent glass.
 #[derive(IntoElement)]
 pub struct Segmented<T: Clone + PartialEq + 'static> {
@@ -650,6 +728,7 @@ pub struct Segmented<T: Clone + PartialEq + 'static> {
 	selected: T,
 	options: Vec<(T, SharedString)>,
 	enabled: bool,
+	label: Option<SharedString>,
 	theme: Option<Theme>,
 	on_change: Option<SharedChangeHandler<T>>,
 }
@@ -668,15 +747,28 @@ pub fn segmented<T: Clone + PartialEq + 'static, L: Into<SharedString>>(
 			.map(|(value, label)| (value, label.into()))
 			.collect(),
 		enabled: true,
+		label: None,
 		theme: None,
 		on_change: None,
 	}
 }
 
 impl<T: Clone + PartialEq + 'static> Segmented<T> {
-	pub fn disabled(mut self, disabled: bool) -> Self {
-		self.enabled = !disabled;
+	/// The accessible name of the group; each segment is named by its own label.
+	pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+		self.label = Some(label.into());
 		self
+	}
+
+	/// Whether the control responds. Enabled by default.
+	pub fn enabled(mut self, enabled: bool) -> Self {
+		self.enabled = enabled;
+		self
+	}
+
+	/// The inverse of `enabled`.
+	pub fn disabled(self, disabled: bool) -> Self {
+		self.enabled(!disabled)
 	}
 
 	pub fn on_change(mut self, handler: impl Fn(&T, &mut Window, &mut App) + 'static) -> Self {
@@ -694,12 +786,11 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let focus = focus_handle(&self.id, window, cx);
-		let accent = tokens::contrast_tint(theme.accent);
 		let reduced = theme.reduce_transparency();
 		let container_fill = if reduced {
 			theme.palette.opaque_surface
 		} else {
-			white(control::ENABLED_NEUTRAL_SURFACE_OPACITY)
+			theme.ink(control::ENABLED_NEUTRAL_SURFACE_OPACITY)
 		};
 		let chromatic = Chromatic::enabled(theme.accent);
 		let selected_glass = theme.surface(Some(chromatic.fill)).elevation(Elevation::None);
@@ -715,7 +806,35 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 			None::<Bounds<Pixels>>
 		});
 		let probe = bounds.clone();
-		let width = bounds.read(cx).map(|bounds| f32::from(bounds.size.width));
+		// Each cell reports its own laid-out bounds, so the indicator sits exactly behind a label
+		// whatever its width: cells size to their content, never to an assumed equal share.
+		let cell_bounds = window.use_keyed_state((id.clone(), "calcite-segmented-cells"), cx, |_, _| {
+			Vec::<Option<Bounds<Pixels>>>::new()
+		});
+		let cells: Option<Vec<(f32, f32)>> = bounds.read(cx).and_then(|container| {
+			let reported = cell_bounds.read(cx);
+			(reported.len() == count)
+				.then(|| {
+					reported
+						.iter()
+						.map(|cell| {
+							cell.map(|cell| {
+								(
+									f32::from(cell.origin.x - container.origin.x) - SEGMENTED_BORDER,
+									f32::from(cell.size.width),
+								)
+							})
+						})
+						.collect::<Option<Vec<_>>>()
+				})
+				.flatten()
+		});
+		let segment_states: Vec<Entity<ControlState>> = (0..count)
+			.map(|index| {
+				let segment_id: ElementId = (id.clone(), SharedString::from(index.to_string())).into();
+				ControlState::of(&segment_id, window, cx)
+			})
+			.collect();
 		let slide = motion::spring(
 			(id.clone(), "calcite-segmented-position"),
 			selected_index.unwrap_or(0) as f32,
@@ -725,17 +844,21 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 			cx,
 		);
 		let position = slide.value;
-		let indicator = width
+		// The indicator rims briefly as it lands on its new segment.
+		let rim = motion::value::landing(
+			(id.clone(), "calcite-segmented-landing"),
+			selected_index.unwrap_or(0) as f32,
+			SELECT,
+			theme.reduce_motion,
+			window,
+			cx,
+		);
+		let indicator = cells
+			.as_deref()
 			.filter(|_| selected_index.is_some() && count > 0)
-			.map(|width| {
-				let inner = width - 2. * SEGMENTED_PADDING;
-				let segment = (inner - SEGMENTED_GAP * (count as f32 - 1.)) / count as f32;
-				let (left, indicator_width) = lead_edge(
-					SEGMENTED_PADDING + position * (segment + SEGMENTED_GAP),
-					segment,
-					slide.velocity,
-					theme.reduce_motion,
-				);
+			.and_then(|cells| pill_rect(cells, position))
+			.map(|(left, width)| {
+				let (left, indicator_width) = lead_edge(left, width, slide.velocity, theme.reduce_motion);
 				let indicator = div()
 					.absolute()
 					.top(px(SEGMENTED_PADDING))
@@ -744,7 +867,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 					.w(px(indicator_width))
 					.rounded_full()
 					.border_1()
-					.border_color(chromatic.border);
+					.border_color(tokens::mix(chromatic.border, theme.ink(1.), rim));
 				match selected_glass.filter() {
 					Some(filter) => indicator.backdrop_filter(vec![Filter::Glass(filter)]),
 					None => indicator.bg(selected_glass.fill()),
@@ -764,8 +887,10 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 				.size_full(),
 			)
 			.children(indicator)
-			.flex()
-			.flex_row()
+			// Equal-width cells: every column is as wide as the widest label, so the capsule never
+			// favours one option and the selection pill is the same size wherever it rests.
+			.grid()
+			.grid_cols_min_content(count.max(1) as u16)
 			.gap(px(SEGMENTED_GAP))
 			.p(px(SEGMENTED_PADDING))
 			.rounded_full()
@@ -776,7 +901,10 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 				control::ENABLED_NEUTRAL_BORDER_OPACITY,
 			))
 			.role(Role::RadioGroup)
+			.when_some(self.label.clone(), |group, label| group.aria_label(label))
 			.aria_disabled(!enabled)
+			// A fast exit can skip a cell's own hover event; leaving the whole control clears all.
+			.clear_hover_on_leave(segment_states)
 			.when(enabled, |this| {
 				this.keyboard_focus(&focus, FocusShape::Capsule, &theme, window)
 			})
@@ -819,20 +947,21 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 						let foreground = if !enabled {
 							with_alpha(theme.accent, control::DISABLED_FOREGROUND_OPACITY)
 						} else if selected {
-							accent
+							theme.palette.primary_text
 						} else {
 							theme.palette.secondary_text
 						};
 						let segment = div()
 							.id(segment_id)
-							.flex_1()
 							.flex()
 							.items_center()
 							.justify_center()
+							.text_center()
+							.whitespace_nowrap()
 							.px(px(10.))
-							.py(px(5.))
+							.py(px(4.))
 							.rounded_full()
-							.text_size(tokens::text::CAPTION)
+							.text_size(tokens::text::BODY)
 							.font_weight(FontWeight::SEMIBOLD)
 							.text_color(foreground)
 							.role(Role::RadioButton)
@@ -841,6 +970,24 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 							.aria_toggled(if selected { Toggled::True } else { Toggled::False })
 							.aria_position_in_set(index + 1)
 							.aria_size_of_set(count)
+							.child(
+								canvas(
+									{
+										let cell_bounds = cell_bounds.clone();
+										move |bounds, _, cx| {
+											cell_bounds.update(cx, |cells, _| {
+												if cells.len() <= index {
+													cells.resize(index + 1, None);
+												}
+												cells[index] = Some(bounds);
+											})
+										}
+									},
+									|_, _, _, _| {},
+								)
+								.absolute()
+								.size_full(),
+							)
 							.child(label);
 						let segment = if selected && slides {
 							segment
@@ -852,7 +999,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 							}
 						} else {
 							segment
-								.bg(segment_frame.hover_fill(white(1.)))
+								.bg(segment_frame.hover_fill(theme.ink(1.)))
 								.control_state(&segment_state, false)
 						};
 						segment.when_some(
@@ -864,6 +1011,19 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 					}),
 			)
 	}
+}
+
+/// The indicator's `(left, width)` at a fractional `position` between the laid-out `cells`
+/// (`(left, width)` each, relative to the control's inner edge): exactly a cell's rect at a whole
+/// position, a blend of the two neighbours between them. `None` without cells.
+fn pill_rect(cells: &[(f32, f32)], position: f32) -> Option<(f32, f32)> {
+	let last = cells.len().checked_sub(1)?;
+	let position = position.clamp(0., last as f32);
+	let from = (position.floor() as usize).min(last);
+	let to = (from + 1).min(last);
+	let t = position - from as f32;
+	let lerp = |a: f32, b: f32| a + (b - a) * t;
+	Some((lerp(cells[from].0, cells[to].0), lerp(cells[from].1, cells[to].1)))
 }
 
 /// The indicator of a segmented control while it moves at `velocity` segments per second: the edge
@@ -879,8 +1039,9 @@ fn lead_edge(left: f32, width: f32, velocity: f32, reduced: bool) -> (f32, f32) 
 }
 
 /// Inner padding and spacing of a segmented control. The border sits outside the padding.
-const SEGMENTED_PADDING: f32 = 4.;
-const SEGMENTED_GAP: f32 = 4.;
+const SEGMENTED_PADDING: f32 = 3.;
+const SEGMENTED_GAP: f32 = 0.;
+const SEGMENTED_BORDER: f32 = 1.;
 
 /// Keeps a [`TextField`]'s observer of its state alive while the field is drawn. It watches
 /// the state it was made for, so a field that is given another state starts a new observer.
@@ -915,6 +1076,8 @@ pub struct TextField {
 	placeholder: SharedString,
 	icon: Option<IconRef>,
 	width: Option<Pixels>,
+	label: Option<SharedString>,
+	enabled: bool,
 	theme: Option<Theme>,
 }
 
@@ -926,6 +1089,8 @@ pub fn text_field(id: impl Into<ElementId>, state: &Entity<EditableTextState>) -
 		placeholder: SharedString::default(),
 		icon: None,
 		width: None,
+		label: None,
+		enabled: true,
 		theme: None,
 	}
 }
@@ -937,6 +1102,12 @@ pub fn text_state(initial: &str, cx: &mut App) -> Entity<EditableTextState> {
 }
 
 impl TextField {
+	/// The accessible name of the field; the placeholder names it when there is no label.
+	pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+		self.label = Some(label.into());
+		self
+	}
+
 	pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
 		self.placeholder = placeholder.into();
 		self
@@ -951,11 +1122,23 @@ impl TextField {
 		self.width = Some(width);
 		self
 	}
+
+	/// Whether the field takes focus and input. Enabled by default.
+	pub fn enabled(mut self, enabled: bool) -> Self {
+		self.enabled = enabled;
+		self
+	}
+
+	/// The inverse of [`TextField::enabled`].
+	pub fn disabled(self, disabled: bool) -> Self {
+		self.enabled(!disabled)
+	}
 }
 
 impl RenderOnce for TextField {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
+		let enabled = self.enabled;
 		let focus: FocusHandle = self.state.read(cx).focus_handle(cx);
 		let focused = focus.is_focused(window);
 		let hover_state = ControlState::of(&self.id, window, cx);
@@ -994,10 +1177,10 @@ impl RenderOnce for TextField {
 		let glass = theme
 			.surface(Some(chromatic.fill))
 			.elevation(Elevation::None)
-			.overlay(hover.hover_fill(white(1.)));
+			.overlay(hover.hover_fill(theme.ink(1.)));
 		let border = if focused { theme.accent } else { chromatic.border };
 		let icon_color = if focused {
-			tokens::contrast_tint(theme.accent)
+			theme.legible(theme.accent)
 		} else {
 			theme.palette.secondary_text
 		};
@@ -1016,24 +1199,40 @@ impl RenderOnce for TextField {
 			.text_size(tokens::text::BODY)
 			.text_color(theme.palette.primary_text)
 			.control_state(&hover_state, false)
+			.when_some(
+				self.label
+					.clone()
+					.or_else(|| (!self.placeholder.is_empty()).then(|| self.placeholder.clone())),
+				|field, name| field.aria_label(name),
+			)
 			.when_some(self.width, |field, width| field.w(width))
 			// The editor element does not join the tab order itself; the capsule joins it
 			// with the editor's handle, and focus still lands on the editor.
-			.track_focus(&focus.clone().tab_stop(true))
-			// The editor would swallow Tab for a tab character; a single line moves focus instead.
-			.capture_action(|_: &actions::Tab, window, cx| {
-				cx.stop_propagation();
-				window.focus_next(cx);
+			.when(enabled, |field| {
+				field
+					.track_focus(&focus.clone().tab_stop(true))
+					// The editor would swallow Tab for a tab character; a single line moves focus instead.
+					.capture_action(|_: &actions::Tab, window, cx| {
+						cx.stop_propagation();
+						// Confined to the topmost modal, like Tab on any other control.
+						crate::interaction::tab_step(true, window, cx);
+					})
+			})
+			.when(!enabled, |field| {
+				field
+					.aria_disabled(true)
+					.opacity(control::DISABLED_FOREGROUND_OPACITY)
 			})
 			.when_some(self.icon, |field, icon| {
 				field.child(icon.render(px(11.), icon_color))
 			})
 			.child(
 				text_input((self.id, "input"))
+					.accepts_input(enabled)
 					.state(self.state.downgrade())
 					.placeholder(self.placeholder)
 					.placeholder_color(theme.palette.secondary_text)
-					.caret_color(gpui::rgb_to_hsla(tokens::contrast_tint(theme.accent)))
+					.caret_color(gpui::rgb_to_hsla(theme.legible(theme.accent)))
 					.selection_color(gpui::rgb_to_hsla(scale_alpha(theme.accent, 0.35)))
 					.flex_1()
 					.min_w_0()
@@ -1052,6 +1251,52 @@ theme_override!(Toggle, Slider, TextField);
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn keys_step_page_and_jump_the_slider() {
+		let range = 0.0..=1.0;
+		let moved = |key: &str, step: Option<f32>| key_value(key, 0.5, &range, step).unwrap();
+		assert!((moved("right", Some(0.25)) - 0.75).abs() < 1e-6);
+		assert!((moved("left", Some(0.25)) - 0.25).abs() < 1e-6);
+		assert!((moved("pageup", None) - 0.6).abs() < 1e-6);
+		assert!((moved("pagedown", Some(0.05))).abs() < 1e-6);
+		assert_eq!(moved("home", None), 0.);
+		assert_eq!(moved("end", None), 1.);
+		assert_eq!(key_value("tab", 0.5, &range, None), None);
+	}
+
+	#[test]
+	fn the_track_follows_its_laid_out_width() {
+		assert_eq!(laid_out_width(None, 200.), 200.);
+		assert_eq!(laid_out_width(Some(0.), 200.), 200.);
+		assert_eq!(laid_out_width(Some(150.), 200.), 150.);
+	}
+
+	#[test]
+	fn the_indicator_is_exactly_the_selected_cell_for_any_cell_widths() {
+		let layouts: [&[(f32, f32)]; 3] = [
+			&[(4., 60.), (68., 60.)],
+			&[(4., 70.), (78., 80.), (162., 70.)],
+			&[(4., 44.), (52., 180.), (236., 36.)],
+		];
+		for cells in layouts {
+			for (index, cell) in cells.iter().enumerate() {
+				let (left, width) = pill_rect(cells, index as f32).unwrap();
+				assert_eq!((left, width), *cell);
+				// The label is centered in its cell, so its centre is the indicator's centre.
+				assert!((left + width / 2. - (cell.0 + cell.1 / 2.)).abs() < 1e-4);
+			}
+		}
+	}
+
+	#[test]
+	fn the_indicator_blends_between_neighbouring_cells_and_clamps() {
+		let cells = [(4., 40.), (48., 100.)];
+		assert_eq!(pill_rect(&cells, 0.5), Some((26., 70.)));
+		assert_eq!(pill_rect(&cells, -1.), Some((4., 40.)));
+		assert_eq!(pill_rect(&cells, 5.), Some((48., 100.)));
+		assert_eq!(pill_rect(&[], 0.), None);
+	}
 
 	#[test]
 	fn indicator_is_unchanged_at_rest_and_under_reduce_motion() {

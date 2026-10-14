@@ -10,10 +10,11 @@
 [![Rust 1.97+](https://img.shields.io/badge/Rust-1.97%2B-477acc?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
 [![gpui-ce](https://img.shields.io/badge/gpui--ce-patched-477acc?style=flat-square&labelColor=23252a)](patches/)
 [![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-477acc?style=flat-square&labelColor=23252a)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.2.0-477acc?style=flat-square&labelColor=23252a)](CHANGELOG.md)
 
-<img src="assets/github/gallery.png" width="1480" alt="The Calcite gallery: glass styles, actions, forms, settings panels, and HUD surfaces" />
+<img src="assets/github/preview.png" width="1480" alt="The Calcite Developer Preview: glass styles, actions, forms, settings panels, and HUD surfaces" />
 
-**[Library guide](crates/calcite/README.md)** · [Changelog](CHANGELOG.md) · [Gallery](crates/calcite-showcase/src/bin/gallery) · [Arknights Client](https://github.com/LuMiSxh/Arknights-MacOS-Client)
+**[Library guide](crates/calcite/README.md)** · [Changelog](CHANGELOG.md) · [Developer Preview](crates/calcite-showcase/src/bin/preview) · [Arknights Client](https://github.com/LuMiSxh/Arknights-MacOS-Client)
 
 </div>
 
@@ -23,6 +24,7 @@
 - Actions, toggles, sliders, segmented controls, text fields, menus, choice cards, step rails, settings pages, modals, confirmation dialogs, banners, spinners, HUD pills, and a progress outline.
 - Spring motion with SwiftUI `spring(duration:bounce:)` semantics. Press and hover scale without relayout.
 - A palette you choose at compile time with a `const`, or replace at runtime. Theme changes crossfade.
+- `Theme::follow_system` follows the OS light or dark appearance. `Theme::sync_reduce_motion` copies the app's Reduce Motion flag into the theme.
 - Dynamic Theme: `calcite-tint` takes the accent from artwork, like the Arknights Client launcher.
 - Keyboard focus rings, keyboard activation, and accessibility roles and labels.
 - Window chrome like the launcher's hidden title bar: the traffic lights on macOS, caption buttons with Snap Layouts on Windows, and client-side decorations on Linux.
@@ -37,7 +39,7 @@
 | `calcite-bundle`   | `cargo calcite bundle`: `.app` and DMG, NSIS and MSI, deb and AppImage. Embeds the Windows icon. |
 | `calcite-update`   | Signed updates with per-file deltas, staged next to the app and installed on quit. Sparkle's model on every platform. |
 | `calcite-exec`     | Execution layer for views: `TaskSlot`, `ActivityStore` with leases, `Throttle`, `bounded`.     |
-| `calcite-showcase` | `gallery` (every component once) and `home` (a launcher home screen with a simulated install). |
+| `calcite-showcase` | `preview` (the Developer Preview: grouped component sections with variant and state matrices) and `home` (a launcher home screen with a simulated install). |
 | `patches/`         | The gpui-ce patch that adds `Filter::Glass`, and the pinned gpui-ce commit.                    |
 
 > [!NOTE]
@@ -63,13 +65,27 @@
    ./scripts/bootstrap.ps1
    ```
 
-4. Start the gallery or the home screen:
+4. Start the developer preview or the home screen:
 
    ```sh
-   cargo run --release --bin gallery
-   cargo run --release --bin home
-   cargo run --release --bin home -- ~/Pictures/artwork.jpg
+   just run
+   just run home
+   just run home ~/Pictures/artwork.jpg
    ```
+
+   Without `just`, use `cargo run --release --bin preview` and `cargo run --release --bin home`.
+
+   The preview can open on a section and a look. Put the flags after `--`:
+
+   ```sh
+   just run preview -- --section buttons --palette ember --reduce-motion
+   ```
+
+   `--section` takes a sidebar name (`buttons`, `forms`, `motion-lab`). `--palette` takes
+   `arknights`, `ember`, or `light`. `--glass` takes `macos26`, `macos27-clear`,
+   `macos27-default`, `macos27-tinted`, or `reduce-transparency`. `--reduce-motion` and
+   `--reduce-transparency` start with those settings on. `preview --help` lists the flags; an
+   unknown flag prints the usage and exits with status 2.
 
 The first build compiles gpui-ce and takes several minutes. Run the bootstrap script again after
 `patches/` changes.
@@ -80,9 +96,10 @@ The first build compiles gpui-ce and takes several minutes. Run the bootstrap sc
 | ------- | --------- | --------------------------------------------------- |
 | both    | G         | Next glass style                                    |
 | both    | A         | Next accent (crossfades)                            |
-| gallery | P         | Switch between the Arknights and Ember palettes     |
+| preview | P         | Next palette: Arknights, Ember, Light               |
 | both    | M         | Toggle Reduce Motion                                |
-| gallery | ?         | Show or hide the shortcut list (top right)          |
+| preview | [, ]      | Previous or next section in the sidebar             |
+| preview | ?         | Show or hide the shortcut list (top right)          |
 | home    | Space     | Primary action: Install, Pause, Resume, Play, Stop  |
 | home    | 1, 2, 3   | Expand the music, version, or status pill           |
 | home    | U         | Show the neutral "Install Update" button            |
@@ -91,7 +108,12 @@ The first build compiles gpui-ce and takes several minutes. Run the bootstrap sc
 | both    | Command-Q | Quit                                                |
 
 The letter keys are inactive while a text field has focus, so typing never triggers them. The
-gallery's list comes from the same `shortcuts!` table as its key bindings.
+preview's list comes from the same `shortcuts!` table as its key bindings.
+
+The preview's toolbar sets Dark or Light, Reduce Motion, Reduce Transparency, and the accent for
+every section. The Light palette is the preview's own; the library's components still draw some
+dark layers under it. Each section prints the Rust call of its components, and a unit test fails
+when a `calcite::prelude` builder has no section.
 
 ## Updates
 
@@ -175,7 +197,7 @@ slot before it ends the lease.
 | Check                                         | Result                                                    |
 | --------------------------------------------- | --------------------------------------------------------- |
 | Linux build, clippy, tests                    | Pass                                                      |
-| Linux render (Xvfb, software Vulkan)          | Gallery and home render; screenshots reviewed             |
+| Linux render (Xvfb, software Vulkan)          | Developer Preview and home render; screenshots reviewed             |
 | macOS Metal backend (`cargo check --target aarch64-apple-darwin -p gpui_ce_apple`) | Compiles; not run on a Mac yet |
 | Windows Direct3D backend                      | Not compiled (needs MSVC); the change mirrors the Metal one |
 | gpui-ce shader ABI tests (`gpui_ce_render`)   | Pass                                                      |

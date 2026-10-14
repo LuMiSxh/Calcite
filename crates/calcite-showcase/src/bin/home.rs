@@ -453,7 +453,8 @@ impl Home {
 				)
 				.child(div().text_color(theme.palette.primary_text).child(label))
 		};
-		glass_panel(theme)
+		glass_panel()
+			.theme(*theme)
 			.absolute()
 			.top(px(64.))
 			.right(px(20.))

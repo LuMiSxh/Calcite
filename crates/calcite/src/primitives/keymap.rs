@@ -45,7 +45,7 @@ mod tests {
 	use gpui::{KeyBindingContextPredicate, KeyContext};
 
 	fn active(stack: &[&str]) -> bool {
-		let predicate = KeyBindingContextPredicate::parse(&scoped("Gallery")).unwrap();
+		let predicate = KeyBindingContextPredicate::parse(&scoped("Preview")).unwrap();
 		let contexts: Vec<KeyContext> = stack.iter().map(|c| KeyContext::parse(c).unwrap()).collect();
 		// The same matching the dispatcher uses: any ancestor depth may satisfy the predicate.
 		predicate.depth_of(&contexts).is_some()
@@ -53,12 +53,12 @@ mod tests {
 
 	#[test]
 	fn shortcuts_are_active_outside_text_inputs() {
-		assert!(active(&["Gallery"]));
-		assert!(active(&["Gallery", "Button"]));
+		assert!(active(&["Preview"]));
+		assert!(active(&["Preview", "Button"]));
 	}
 
 	#[test]
 	fn shortcuts_are_inactive_while_a_text_input_is_focused() {
-		assert!(!active(&["Gallery", INPUT_CONTEXT]));
+		assert!(!active(&["Preview", INPUT_CONTEXT]));
 	}
 }

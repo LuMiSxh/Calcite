@@ -46,6 +46,7 @@ macro_rules! app_icon {
 }
 
 impl AppIcon {
+	/// An icon from PNG bytes; usually through the [`app_icon!`](crate::app_icon!) macro.
 	pub const fn new(png: &'static [u8]) -> Self {
 		Self {
 			png,

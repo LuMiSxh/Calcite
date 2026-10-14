@@ -39,7 +39,7 @@ use crate::{
 	icons::Icon,
 	interaction::{ControlInteraction, ControlState, Feedback},
 	theme::{ActiveTheme, Theme},
-	tokens::{black, mix, rgba, white},
+	tokens::{mix, rgba, white},
 };
 
 /// The height of the title bar: room for a 44 pt hit target and the top padding.
@@ -117,6 +117,11 @@ pub struct WindowFrame {
 	content: AnyElement,
 }
 
+/// The window root around `content`.
+///
+/// ```ignore
+/// window_frame(div().size_full().child(title_bar("title")))
+/// ```
 pub fn window_frame(content: impl IntoElement) -> WindowFrame {
 	WindowFrame {
 		content: content.into_any_element(),
@@ -135,7 +140,8 @@ impl RenderOnce for WindowFrame {
 		}
 		let theme = cx.theme();
 		// The cursor is set while painting, so a repaint is only needed when the hovered edge
-		// changes. Refreshing on every move would also invalidate every cached view.
+		// changes. The keyed state's own notification re-renders the view that owns the frame;
+		// `window.refresh()` would invalidate every cached view instead.
 		let hovered_edge = window.use_keyed_state("calcite-frame-edge", cx, |_, _| None::<ResizeEdge>);
 		let radius = |tiled_a: bool, tiled_b: bool| if tiled_a || tiled_b { px(0.) } else { RADIUS };
 		let track_edge = {
@@ -143,8 +149,10 @@ impl RenderOnce for WindowFrame {
 			move |position: Point<Pixels>, window: &mut Window, cx: &mut App| {
 				let edge = resize_edge(position, window.viewport_size(), tiling);
 				if hovered_edge.read(cx) != &edge {
-					hovered_edge.update(cx, |current, _| *current = edge);
-					window.refresh();
+					hovered_edge.update(cx, |current, cx| {
+						*current = edge;
+						cx.notify();
+					});
 				}
 			}
 		};
@@ -164,7 +172,7 @@ impl RenderOnce for WindowFrame {
 			.when(!tiling.right, |frame| frame.border_r_1())
 			.when(!tiling.is_tiled(), |frame| {
 				frame.shadow(vec![
-					BoxShadow::new(px(0.), px(2.), black(0.42)).blur_radius(SHADOW / 2.),
+					BoxShadow::new(px(0.), px(2.), theme.shadow(0.42)).blur_radius(SHADOW / 2.),
 				])
 			})
 			// The frame takes the pointer, so the margin alone resizes.
@@ -248,6 +256,11 @@ pub struct TitleBar {
 	on_close: Option<CloseHandler>,
 }
 
+/// A title bar. Add the app's trailing controls with `.child(..)`.
+///
+/// ```ignore
+/// title_bar("main-title").child(icon_button("gear", Icon::Gear, "Settings"))
+/// ```
 pub fn title_bar(id: impl Into<ElementId>) -> TitleBar {
 	TitleBar {
 		id: id.into(),
@@ -457,9 +470,9 @@ fn round_captions(
 				} else {
 					glyph_color(theme, active)
 				};
-				(mix(white(strength), red, frame.light), glyph)
+				(mix(theme.ink(strength), red, frame.light), glyph)
 			} else {
-				(white(strength), glyph_color(theme, active))
+				(theme.ink(strength), glyph_color(theme, active))
 			};
 			let on_close = on_close.clone();
 			div()

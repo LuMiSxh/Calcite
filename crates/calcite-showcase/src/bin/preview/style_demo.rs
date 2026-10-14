@@ -6,7 +6,7 @@ use calcite::prelude::*;
 use gpui::{Context, IntoElement, ParentElement, Styled, div, px};
 
 use super::{
-	Gallery,
+	Preview,
 	sections::label,
 	states::{cell, stack, state_row},
 };
@@ -47,7 +47,7 @@ impl RadiusPreset {
 /// Glass strength range of the slider.
 pub const STRENGTH_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.5;
 
-impl Gallery {
+impl Preview {
 	/// Radius preset, glass strength, glass style, and glow: all of `Theme::style`.
 	pub fn style_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
 		let style = cx.target_theme().style;
@@ -55,6 +55,7 @@ impl Gallery {
 			state_row(
 				"Radii",
 				"Sharp · Default · Round",
+				"segmented(id, RadiusPreset::of(radii), RadiusPreset::ALL)",
 				vec![cell(
 					"every corner follows the preset",
 					segmented("style-radii", RadiusPreset::of(style.radii), RadiusPreset::ALL).on_change(
@@ -68,6 +69,7 @@ impl Gallery {
 			state_row(
 				"Glass strength",
 				"0 is flat, 1 the system look",
+				"slider(id, value).range(0.0..=1.5).step(0.05)",
 				vec![cell(
 					format!("{:.2}", style.glass_strength),
 					slider("style-strength", style.glass_strength)
@@ -84,6 +86,7 @@ impl Gallery {
 			state_row(
 				"Glass style",
 				"G cycles it too",
+				"menu_picker(id, glass, GlassStyle::ALL.map(|g| (g, g.label())))",
 				vec![cell(
 					style.glass.label(),
 					menu_picker(
@@ -100,6 +103,7 @@ impl Gallery {
 			state_row(
 				"Pointer glow",
 				"the default for every control",
+				"toggle(id, on).label(\"Cursor glow\")",
 				vec![cell(
 					if style.pointer_glow { "on" } else { "off" },
 					toggle("style-glow", style.pointer_glow)
@@ -113,6 +117,7 @@ impl Gallery {
 			state_row(
 				"Reset",
 				"back to macOS 27 Default",
+				"Theme::update(cx, |theme| theme.style = Style::default())",
 				vec![cell(
 					"Style::default()",
 					button("style-reset", "Reset style")

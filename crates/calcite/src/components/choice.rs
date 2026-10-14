@@ -30,7 +30,7 @@ use crate::{
 	layout::settings_panel,
 	motion::Curve,
 	theme::{ActiveTheme, Theme},
-	tokens::{self, Chromatic, control, over, scale_alpha, white},
+	tokens::{self, Chromatic, control, over, scale_alpha},
 };
 
 /// The trailing radio, checkbox, or chevron, and the size a filled glyph pops from.
@@ -86,6 +86,10 @@ pub struct ChoiceCard {
 }
 
 /// An answer card. Defaults: single choice, not selected, enabled.
+///
+/// ```ignore
+/// choice_card("global", "Global").icon(Icon::Globe).selected(true).on_click(..)
+/// ```
 pub fn choice_card(id: impl Into<ElementId>, title: impl Into<SharedString>) -> ChoiceCard {
 	ChoiceCard {
 		id: id.into(),
@@ -130,11 +134,13 @@ impl ChoiceCard {
 		self
 	}
 
+	/// Whether the card responds. Enabled by default.
 	pub fn enabled(mut self, enabled: bool) -> Self {
 		self.enabled = enabled;
 		self
 	}
 
+	/// The inverse of [`ChoiceCard::enabled`].
 	pub fn disabled(self, disabled: bool) -> Self {
 		self.enabled(!disabled)
 	}
@@ -167,7 +173,7 @@ impl RenderOnce for ChoiceCard {
 			cx,
 		);
 		let selected = self.selected && self.kind != ChoiceKind::Action;
-		let accent = tokens::contrast_tint(theme.accent);
+		let accent = theme.legible(theme.accent);
 		let (fill, border) = if selected {
 			let accent = Chromatic::enabled(theme.accent);
 			(over(accent.fill, palette.panel_background), accent.border)
@@ -175,10 +181,10 @@ impl RenderOnce for ChoiceCard {
 			(palette.panel_background, palette.panel_border)
 		};
 		// `OnboardingAnswerBody` adds the hover fill once for hover and once more for a press.
-		let hover = frame.hover_fill(white(1.));
+		let hover = frame.hover_fill(theme.ink(1.));
 		let fill = over(hover, fill);
 		let fill = if frame.pressed {
-			over(white(control::HOVER_OPACITY), fill)
+			over(theme.ink(control::HOVER_OPACITY), fill)
 		} else {
 			fill
 		};
@@ -327,6 +333,10 @@ pub struct ChoiceGroup {
 }
 
 /// A question panel. Add cards with `.child(..)`.
+///
+/// ```ignore
+/// choice_group("Which server?", Icon::Globe).child(choice_card("global", "Global"))
+/// ```
 pub fn choice_group(title: impl Into<SharedString>, icon: impl Into<IconRef>) -> ChoiceGroup {
 	ChoiceGroup {
 		title: title.into(),
@@ -392,6 +402,11 @@ pub struct Tag {
 	theme: Option<Theme>,
 }
 
+/// An outlined caption capsule.
+///
+/// ```ignore
+/// choice_card("global", "Global").accessory(tag("Recommended"))
+/// ```
 pub fn tag(text: impl Into<SharedString>) -> Tag {
 	Tag {
 		text: text.into(),
@@ -464,6 +479,9 @@ impl RenderOnce for StepRail {
 	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		div()
+			.id(ElementId::Name(self.header.clone()))
+			.role(Role::List)
+			.aria_label(self.header.clone())
 			.font_family(theme.sans())
 			.h_full()
 			.w(px(205.))
@@ -508,6 +526,11 @@ pub struct Step {
 	on_click: Option<ClickHandler>,
 }
 
+/// One step with an icon and its state.
+///
+/// ```ignore
+/// step_rail("SETUP").child(step("Language", Icon::Globe, StepState::Current))
+/// ```
 pub fn step(title: impl Into<SharedString>, icon: impl Into<IconRef>, state: StepState) -> Step {
 	Step {
 		title: title.into(),
@@ -534,7 +557,7 @@ impl RenderOnce for Step {
 		let current = self.state == StepState::Current;
 		let foreground: Rgba = match self.state {
 			StepState::Done => theme.palette.primary_text,
-			StepState::Current => tokens::contrast_tint(theme.accent),
+			StepState::Current => theme.legible(theme.accent),
 			StepState::Upcoming => theme.palette.secondary_text,
 		};
 		let icon = match self.state {
@@ -566,6 +589,11 @@ impl RenderOnce for Step {
 			.bg(row.fill(&theme, if current { 1. } else { 0. }))
 			.role(if clickable { Role::Button } else { Role::ListItem })
 			.aria_label(self.title.clone())
+			.aria_description(match self.state {
+				StepState::Done => "Completed",
+				StepState::Current => "Current step",
+				StepState::Upcoming => "Upcoming",
+			})
 			.aria_selected(current);
 		// Only a done step responds, so it alone is hovered, focusable, and clickable.
 		let item = if clickable {

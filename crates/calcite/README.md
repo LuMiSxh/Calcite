@@ -129,7 +129,7 @@ stretch, and glass-boost helpers. Reduce Motion jumps to the target.
 Components use them directly: controls press flat (`PRESS`, shadow shrinks) and release with a jelly
 overshoot, menu rows cascade in with a 4 px slide, toggle knobs and the segmented indicator stretch
 along their travel, glass surfaces brighten while they move fast, and ticker digits roll
-right-to-left with a small overshoot. The gallery's Motion lab section tunes open and close springs
+right-to-left with a small overshoot. The preview's Motion lab section tunes open and close springs
 live and plots their step response.
 
 ## Theme
@@ -145,6 +145,12 @@ Theme::set_dynamic_accent(cx, Some(gpui::rgba(0xF59E38FF)));
 
 Theme changes crossfade over the `Crossfade` curve (0.48 s). Under Reduce Motion they apply at
 once. Use `Theme::set_immediately` to skip the crossfade.
+
+`Theme::follow_system(window, cx)` installs the Arknights palette in dark windows and
+`Palette::LIGHT` in light ones, and follows changes of the OS appearance. It leaves the theme's
+Reduce Motion flag alone. gpui-ce has no notification for the system flag, so call
+`Theme::sync_reduce_motion(cx)` to copy `cx.reduce_motion()` into the theme. gpui-ce does not expose
+Reduce Transparency or Increase Contrast, so set those yourself.
 
 | Field             | Effect                                                                    |
 | ----------------- | ------------------------------------------------------------------------- |

@@ -13,31 +13,30 @@
 //! |---------------|----------|--------|-----------|--------------------------------------------|
 //! | `PRESS`       | 0.16     | 0.00   | 0.0%      | held-down response                         |
 //! | `SNAPPY`      | 0.30     | 0.15   | 0.6%      | small controls snapping between states     |
-//! | `SMOOTH`      | 0.45     | 0.00   | 0.0%      | calm travel: sheets, sliders, fills        |
-//! | `BOUNCY`      | 0.45     | 0.32   | 5.4%      | toggles, toasts, pop-ins                   |
-//! | `GENTLE`      | 0.60     | 0.10   | 0.2%      | large surfaces settling                    |
+//! | `SMOOTH`      | 0.45     | 0.00   | 0.0%      | calm travel: slider thumbs and fills       |
 //! | `JELLY`       | 0.42     | 0.45   | 12.6%     | glass that stretches and recovers          |
 //! | `MORPH_OPEN`  | 0.48     | 0.30   | 4.6%      | glass growing into a larger shape          |
 //! | `MORPH_CLOSE` | 0.34     | 0.38   | 8.4%      | glass folding back, attached closing       |
-//! | `MORPH_FOLD`  | 0.34     | 0.04   | 0.0%      | an attached body folding into its trigger  |
 //! | `SELECT`      | 0.40     | 0.28   | 3.8%      | selection moving between options           |
 //! | `TOOLTIP`     | 0.22     | 0.10   | 0.2%      | tooltips and tiny hints                    |
 //! | `EXIT`        | 0.20     | 0.00   | 0.0%      | things leaving                             |
 //! | `TICKER`      | 0.34     | 0.30   | 4.6%      | rolling digits                             |
 //!
 //! Where they are used: `PRESS` and `JELLY` are the press and release of every control
-//! (`interaction`); `SNAPPY` and `EXIT` drive menu rows opening and closing; `SELECT` the segmented
-//! indicator; `TOOLTIP` the tooltip enter; `TICKER` the ticker digits; `MORPH_*` the pill and the
-//! lab demo. Toggles use `Curve::Release`, and attached bodies `Curve::Present` / `MORPH_CLOSE`.
+//! (`interaction`), and `Curve::Release` drives the switch knob. `SNAPPY` and `EXIT` drive menu
+//! rows opening and closing. `SELECT` moves every selection: the segmented indicator, list rows,
+//! and nav rail entries. `SMOOTH` follows slider values. `TOOLTIP` is the tooltip enter, `TICKER`
+//! the ticker digits. `MORPH_OPEN` is `Curve::Present` (popups and pills), and `MORPH_CLOSE` an
+//! attached body closing.
 //!
-//! Stagger steps are [`STAGGER_IN`] 24 ms and [`STAGGER_OUT`] 12 ms; menu rows cascade on them
-//! (at most 8 rows) and `Curve::stagger` uses `STAGGER_IN`. The other semantic [`Curve`]s keep their
-//! own numbers ([`Curve::spring`]).
+//! Stagger steps are [`STAGGER_IN`] 24 ms and [`STAGGER_OUT`] 12 ms. Menu rows cascade on them,
+//! and [`Curve::stagger`] spaces HUD siblings on `STAGGER_IN`. Past [`STAGGER_CAP`] (8) rows share
+//! the last row's delay. The semantic [`Curve`]s run on the tokens listed by [`Curve::spring`].
 //!
 //! # Secondary motion
 //!
-//! [`secondary`] holds pure helpers for effects that follow the main spring: squash, stretch,
-//! glass reacting to speed, a landing pulse, and staggered delays. All return the identity under
+//! [`secondary`] holds pure helpers for effects that follow the main spring: stretch, glass
+//! reacting to speed, a landing rim pulse, and staggered delays. All return the identity under
 //! Reduce Motion.
 
 pub mod secondary;
@@ -53,7 +52,7 @@ use gpui::{
 };
 
 pub use self::spring::Spring;
-pub use self::tokens::{STAGGER_IN, STAGGER_OUT};
+pub use self::tokens::{STAGGER_CAP, STAGGER_IN, STAGGER_OUT};
 pub use self::value::{SpringSample, SpringState, spring, spring_from};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,22 +119,19 @@ impl Curve {
 	fn kind(self) -> Kind {
 		use Kind::*;
 		match self {
-			Self::Press => Spring(self::spring::Spring::new(0.20, 0.)),
-			Self::Release => Spring(self::spring::Spring::new(0.46, 0.42)),
-			Self::Hover => Spring(self::spring::Spring::new(0.32, 0.22)),
-			Self::State => Spring(self::spring::Spring::new(0.38, 0.16)),
-			Self::Present => Spring(self::spring::Spring::new(0.50, 0.24)),
-			Self::Dismiss => Spring(self::spring::Spring::new(0.24, 0.)),
+			Self::Press => Spring(tokens::PRESS),
+			Self::Release => Spring(tokens::JELLY),
+			Self::Hover => Spring(tokens::SNAPPY),
+			Self::State => Spring(tokens::SNAPPY),
+			Self::Present => Spring(tokens::MORPH_OPEN),
+			Self::Dismiss => Spring(tokens::EXIT),
 			Self::Crossfade => Eased {
-				duration: 0.48,
+				duration: tokens::CROSSFADE_SECONDS,
 				easing: ease_in_out,
 			},
-			Self::Select => Eased {
-				duration: 0.16,
-				easing: ease_in_out,
-			},
+			Self::Select => Spring(tokens::SELECT),
 			Self::Progress => Eased {
-				duration: 0.20,
+				duration: tokens::PROGRESS_SECONDS,
 				easing: linear,
 			},
 			Self::Disclosure => Spring(tokens::SNAPPY),
@@ -166,7 +162,7 @@ impl Curve {
 	/// How long the curve runs; springs report their settle time.
 	pub fn duration(self) -> Duration {
 		match self.kind() {
-			Kind::Spring(spring) => Duration::from_secs_f32(spring.response * 1.6),
+			Kind::Spring(spring) => Duration::from_secs_f32(spring.settle_time()),
 			Kind::Eased { duration, .. } => Duration::from_secs_f32(duration),
 		}
 	}
@@ -182,12 +178,12 @@ impl Curve {
 	}
 
 	/// The delay of the sibling at `index` when siblings enter together, such as HUD pills:
-	/// [`STAGGER_IN`] (24 ms) per sibling.
+	/// [`STAGGER_IN`] (24 ms) per sibling. Siblings past [`STAGGER_CAP`] share its delay.
 	pub fn stagger(index: usize, reduce_motion: bool) -> Duration {
 		if reduce_motion {
 			return Duration::ZERO;
 		}
-		Duration::from_secs_f32(index as f32 * STAGGER_IN)
+		Duration::from_secs_f32(index.min(STAGGER_CAP) as f32 * STAGGER_IN)
 	}
 
 	/// A quiet fade that keeps a state change legible under Reduce Motion
@@ -215,7 +211,7 @@ impl Curve {
 /// Motion for a one-shot `with_animation` driven by `spring`, sampled over its settle time.
 /// SwiftUI's `duration` is the perceptual duration; the tail settles later.
 fn timed_spring(spring: Spring) -> Motion {
-	let settle = Duration::from_secs_f32(spring.response * 1.6);
+	let settle = Duration::from_secs_f32(spring.settle_time());
 	settle.with_spring(spring.to_config())
 }
 
@@ -322,7 +318,11 @@ pub trait EnterExt: AnimationExt + Styled + Sized + 'static {
 			let t = if waits && phase == 0 { 0. } else { t };
 			let shown = Materialize::at(t, reduce_motion);
 			let rise = if reduce_motion { 0. } else { ENTER_RISE * (1. - t) };
-			let element = element.opacity(shown.opacity.clamp(0., 1.)).mt(px(rise));
+			// Paint-time offset: a margin would relayout every frame of the rise.
+			let element = element
+				.opacity(shown.opacity.clamp(0., 1.))
+				.relative()
+				.top(px(rise));
 			match enter_blur(t, reduce_motion) {
 				blur if blur > 0.01 => element.filter(vec![Filter::Blur(px(blur))]),
 				_ => element,
@@ -338,11 +338,23 @@ mod tests {
 	use super::*;
 
 	#[test]
+	fn curves_run_on_the_named_tokens() {
+		assert_eq!(Curve::Press.spring(), Some(tokens::PRESS));
+		assert_eq!(Curve::Release.spring(), Some(tokens::JELLY));
+		assert_eq!(Curve::Present.spring(), Some(tokens::MORPH_OPEN));
+		assert_eq!(Curve::Dismiss.spring(), Some(tokens::EXIT));
+		assert_eq!(Curve::Select.spring(), Some(tokens::SELECT));
+		assert_eq!(Curve::Disclosure.spring(), Some(tokens::SNAPPY));
+		assert_eq!(Curve::Crossfade.spring(), None);
+	}
+
+	#[test]
 	fn siblings_enter_one_stagger_step_apart() {
 		assert_eq!(Curve::stagger(0, false), Duration::ZERO);
 		assert_eq!(Curve::stagger(1, false), Duration::from_secs_f32(STAGGER_IN));
 		assert_eq!(Curve::stagger(3, false), Duration::from_secs_f32(3. * STAGGER_IN));
 		assert_eq!(Curve::stagger(3, true), Duration::ZERO);
+		assert_eq!(Curve::stagger(20, false), Curve::stagger(STAGGER_CAP, false));
 	}
 
 	#[test]

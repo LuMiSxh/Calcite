@@ -24,7 +24,7 @@ use crate::{
 	motion::cycle,
 	surface::Surface,
 	theme::{ActiveTheme, Theme},
-	tokens::{self, control, is_chromatic, scale_alpha, white, with_alpha},
+	tokens::{self, control, is_chromatic, scale_alpha, with_alpha},
 };
 
 pub(crate) type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
@@ -32,27 +32,46 @@ pub(crate) type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 
 /// A click handler that several listeners share, such as a click and a key.
 pub(crate) type SharedClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
-/// The semantic tone of an action.
+/// The one semantic tone of the library: it tints buttons and badges, banners
+/// ([`Banner::tone`](crate::notice::Banner::tone)), and settings panels
+/// ([`SettingsPanel::tone`](crate::layout::SettingsPanel::tone)).
+///
+/// ```ignore
+/// button("save", "Save").tone(Tone::Accent)
+/// banner("saved", "Preset saved").tone(Tone::Success)
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tone {
-	/// The theme's dynamic accent: the current primary operation.
+	/// The theme's dynamic accent: the current primary operation, or an informational notice.
 	Accent,
 	/// A fixed chromatic color.
 	Color(Rgba),
-	/// Secondary actions: quiet neutral surface.
+	/// Secondary actions: quiet neutral surface. On a panel, the plain text color.
 	Neutral,
+	/// A positive outcome.
+	Success,
 	Warning,
 	Danger,
 }
 
 impl Tone {
-	fn foreground(self, theme: &Theme) -> Rgba {
+	pub(crate) fn foreground(self, theme: &Theme) -> Rgba {
 		match self {
 			Self::Accent => theme.accent,
 			Self::Color(color) => color,
 			Self::Neutral => theme.palette.control,
+			Self::Success => theme.palette.success,
 			Self::Warning => theme.palette.warning,
 			Self::Danger => theme.palette.danger_text,
+		}
+	}
+
+	/// The color of a notice or panel title in this tone: like [`Tone::foreground`], except
+	/// that neutral is the plain text color.
+	pub(crate) fn text(self, theme: &Theme) -> Rgba {
+		match self {
+			Self::Neutral => theme.palette.primary_text,
+			tone => tone.foreground(theme),
 		}
 	}
 
@@ -75,14 +94,24 @@ impl Tone {
 	fn label(self, theme: &Theme) -> Rgba {
 		match self {
 			Self::Neutral => self.foreground(theme),
-			_ => tokens::contrast_tint(self.foreground(theme)),
+			_ => theme.legible(self.foreground(theme)),
 		}
 	}
 
 	fn disabled_foreground(self, theme: &Theme) -> Rgba {
 		match self {
-			Self::Neutral => white(control::DISABLED_NEUTRAL_FOREGROUND_OPACITY),
-			_ => with_alpha(self.foreground(theme), control::DISABLED_FOREGROUND_OPACITY),
+			Self::Neutral => theme.ink(control::DISABLED_NEUTRAL_FOREGROUND_OPACITY),
+			// Legible like the enabled label, so a pale warning or success stays readable in light.
+			_ => with_alpha(self.label(theme), control::DISABLED_FOREGROUND_OPACITY),
+		}
+	}
+
+	/// The solid fill of a prominent button. Neutral has no color of its own, so a prominent
+	/// neutral button takes the accent, like the default button of a dialog.
+	fn prominent_fill(self, theme: &Theme) -> Rgba {
+		match self {
+			Self::Neutral => with_alpha(theme.accent, 1.),
+			_ => with_alpha(self.surface(theme), 1.),
 		}
 	}
 }
@@ -120,6 +149,11 @@ impl Size {
 			_ => tokens::text::BODY,
 		}
 	}
+
+	/// The corner radius: half the height, so every size is a capsule.
+	fn corner(self) -> Pixels {
+		self.height() / 2.
+	}
 }
 
 /// A text action whose visible capsule and hit target share the same bounds. Standard and
@@ -133,6 +167,7 @@ pub struct Button {
 	size: Size,
 	enabled: bool,
 	default_action: bool,
+	prominent: bool,
 	glow: Option<bool>,
 	theme: Option<Theme>,
 	on_click: Option<SharedClickHandler>,
@@ -148,6 +183,7 @@ pub fn button(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Butto
 		size: Size::Regular,
 		enabled: true,
 		default_action: false,
+		prominent: false,
 		glow: None,
 		theme: None,
 		on_click: None,
@@ -167,6 +203,10 @@ impl Button {
 
 	pub fn neutral(self) -> Self {
 		self.tone(Tone::Neutral)
+	}
+
+	pub fn success(self) -> Self {
+		self.tone(Tone::Success)
 	}
 
 	pub fn warning(self) -> Self {
@@ -195,19 +235,30 @@ impl Button {
 		self
 	}
 
+	/// Whether the button responds. Enabled by default.
 	pub fn enabled(mut self, enabled: bool) -> Self {
 		self.enabled = enabled;
 		self
 	}
 
+	/// The inverse of [`Button::enabled`].
 	pub fn disabled(self, disabled: bool) -> Self {
 		self.enabled(!disabled)
 	}
 
 	/// Return clicks this button when no focused control consumes Return
-	/// (`.keyboardShortcut(.defaultAction)`). The last default action rendered wins.
+	/// (`.keyboardShortcut(.defaultAction)`). The last default action rendered wins. A default
+	/// action is also [`prominent`](Button::prominent).
 	pub fn default_action(mut self) -> Self {
 		self.default_action = true;
+		self.prominent = true;
+		self
+	}
+
+	/// The filled style: a solid fill in the tone (the accent for a neutral button) with a label
+	/// that stays legible on it, white where it reads and near-black on a light accent.
+	pub fn prominent(mut self) -> Self {
+		self.prominent = true;
 		self
 	}
 
@@ -243,13 +294,22 @@ impl RenderOnce for Button {
 			window,
 			cx,
 		);
-		let surface = Surface::resolve(
-			self.tone.surface(&theme),
-			self.tone.chromatic(&theme),
-			self.enabled,
-			&theme,
-		);
-		let foreground = if self.enabled {
+		let filled = self.prominent && self.enabled;
+		let fill = self.tone.prominent_fill(&theme);
+		let on_fill = tokens::on_color(fill);
+		let surface = if filled {
+			Surface::solid(fill, on_fill)
+		} else {
+			Surface::resolve(
+				self.tone.surface(&theme),
+				self.tone.chromatic(&theme),
+				self.enabled,
+				&theme,
+			)
+		};
+		let foreground = if filled {
+			on_fill
+		} else if self.enabled {
 			self.tone.label(&theme)
 		} else {
 			self.tone.disabled_foreground(&theme)
@@ -257,11 +317,11 @@ impl RenderOnce for Button {
 		let horizontal = self.size.padding();
 		let text_size = self.size.text_size();
 		let has_sheen = self.enabled && glow_enabled(&theme, self.glow, self.size == Size::Compact);
-		let pointer_tint = has_sheen.then(|| self.tone.foreground(&theme));
+		let pointer_tint = (has_sheen && !filled).then(|| self.tone.foreground(&theme));
 
 		let surface_layer = surface
 			.paint(layer(), &frame, pointer_tint)
-			.rounded_full()
+			.rounded(self.size.corner())
 			.border_1()
 			.border_color(surface.border);
 		let content = div()
@@ -315,6 +375,7 @@ pub struct IconButton {
 	label: SharedString,
 	diameter: Pixels,
 	surface: f32,
+	enabled: bool,
 	glow: Option<bool>,
 	theme: Option<Theme>,
 	on_click: Option<ClickHandler>,
@@ -332,6 +393,7 @@ pub fn icon_button(
 		label: label.into(),
 		diameter: px(40.),
 		surface: 1.,
+		enabled: true,
 		glow: None,
 		theme: None,
 		on_click: None,
@@ -342,6 +404,17 @@ impl IconButton {
 	pub fn diameter(mut self, diameter: Pixels) -> Self {
 		self.diameter = diameter;
 		self
+	}
+
+	/// Whether the button responds. Enabled by default.
+	pub fn enabled(mut self, enabled: bool) -> Self {
+		self.enabled = enabled;
+		self
+	}
+
+	/// The inverse of [`IconButton::enabled`].
+	pub fn disabled(self, disabled: bool) -> Self {
+		self.enabled(!disabled)
 	}
 
 	/// Opacity of the button's own glass and border, 1 by default. At 0 only the icon remains,
@@ -369,11 +442,19 @@ impl RenderOnce for IconButton {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let state = ControlState::of(&self.id, window, cx);
 		let focus = focus_handle(&self.id, window, cx);
-		let frame = ControlState::frame(&state, Feedback::Standard, true, theme.reduce_motion, window, cx);
-		let glows = glow_enabled(&theme, self.glow, false);
+		let enabled = self.enabled;
+		let frame = ControlState::frame(
+			&state,
+			Feedback::Standard,
+			enabled,
+			theme.reduce_motion,
+			window,
+			cx,
+		);
+		let glows = enabled && glow_enabled(&theme, self.glow, false);
 		let glass = theme
 			.hud_surface()
-			.overlay(scale_alpha(white(control::HOVER_OPACITY), frame.light));
+			.overlay(scale_alpha(theme.ink(control::HOVER_OPACITY), frame.light));
 		let glass = match frame.pointer {
 			Some(point) if glows => glass
 				.pointer(Some(point), with_alpha(theme.palette.primary_text, frame.light))
@@ -417,9 +498,23 @@ impl RenderOnce for IconButton {
 							.relative()
 							.child(self.icon.render(px(glyph), theme.palette.primary_text)),
 					)
-					.control_state(&state, glows)
-					.keyboard_focus(&focus, FocusShape::Capsule, &theme, window)
-					.when_some(self.on_click, |button, on_click| button.on_click(on_click))
+					.when(enabled, |button| {
+						button.control_state(&state, glows).keyboard_focus(
+							&focus,
+							FocusShape::Capsule,
+							&theme,
+							window,
+						)
+					})
+					.when(!enabled, |button| {
+						button
+							.aria_disabled(true)
+							.cursor_default()
+							.opacity(control::DISABLED_FOREGROUND_OPACITY)
+					})
+					.when_some(self.on_click.filter(|_| enabled), |button, on_click| {
+						button.on_click(on_click)
+					})
 					.scaled(frame.scale),
 			)
 	}
@@ -527,7 +622,27 @@ mod tests {
 
 	const STEPS: usize = 40;
 
-	/// A palette whose control tint is chromatic (chroma 0.12), like the gallery's Ember.
+	#[test]
+	fn all_buttons_are_capsules() {
+		for size in [Size::Compact, Size::Regular, Size::Large] {
+			assert_eq!(size.corner(), size.height() / 2.);
+		}
+	}
+
+	#[test]
+	fn a_prominent_label_reads_on_its_fill_in_both_palettes() {
+		for palette in [Palette::ARKNIGHTS, Palette::LIGHT] {
+			let theme = Theme::new(palette);
+			for tone in [Tone::Neutral, Tone::Accent, Tone::Warning, Tone::Danger] {
+				let fill = tone.prominent_fill(&theme);
+				assert_eq!(fill.alpha, 1.);
+				assert!(tokens::contrast_ratio(tokens::on_color(fill), fill) >= 3.);
+			}
+			assert_eq!(Tone::Neutral.prominent_fill(&theme), with_alpha(theme.accent, 1.));
+		}
+	}
+
+	/// A palette whose control tint is chromatic (chroma 0.12), like the preview's Ember.
 	fn warm() -> Palette {
 		Palette {
 			control: rgba(0.78, 0.72, 0.66, 1.),

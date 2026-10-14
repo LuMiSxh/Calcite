@@ -22,7 +22,7 @@ use gpui::{
 };
 
 use crate::{
-	controls::{ClickHandler, theme_override},
+	controls::{ClickHandler, ThemeOverride, theme_override},
 	glass::{Elevation, GlassExt},
 	icons::{Icon, IconRef},
 	interaction::{ScaleAnchor, layer, presence, scale_effect, spring_value},
@@ -81,6 +81,7 @@ pub struct Pill {
 	detail: Option<AnyElement>,
 	expanded: bool,
 	receded: bool,
+	enabled: bool,
 	expanded_size: (Pixels, Pixels),
 	theme: Option<Theme>,
 	on_toggle: Option<ClickHandler>,
@@ -89,6 +90,10 @@ pub struct Pill {
 /// A HUD pill with an icon and a title. Add `.detail(..)` to make it expandable. The title is a
 /// builder because the pill may render it twice: once visible, once as an invisible measurement of
 /// the collapsed width when the pill starts expanded.
+///
+/// ```ignore
+/// pill("region", Icon::Globe, || "Global").detail(list, px(220.), px(160.)).expanded(open)
+/// ```
 pub fn pill<E: IntoElement>(
 	id: impl Into<ElementId>,
 	icon: impl Into<IconRef>,
@@ -102,6 +107,7 @@ pub fn pill<E: IntoElement>(
 		detail: None,
 		expanded: false,
 		receded: false,
+		enabled: true,
 		expanded_size: (hud::EXPANDED_STATUS_WIDTH, px(180.)),
 		theme: None,
 		on_toggle: None,
@@ -133,6 +139,17 @@ impl Pill {
 		self
 	}
 
+	/// Whether the pill's disclosure responds. Enabled by default.
+	pub fn enabled(mut self, enabled: bool) -> Self {
+		self.enabled = enabled;
+		self
+	}
+
+	/// The inverse of [`Pill::enabled`].
+	pub fn disabled(self, disabled: bool) -> Self {
+		self.enabled(!disabled)
+	}
+
 	pub fn on_toggle(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
 		self.on_toggle = Some(Box::new(handler));
 		self
@@ -145,7 +162,7 @@ impl RenderOnce for Pill {
 		let reduce_motion = theme.reduce_motion;
 		let can_expand = self.detail.is_some();
 		let expanded = self.expanded && can_expand;
-		let accent_foreground = tokens::contrast_tint(theme.accent);
+		let accent_foreground = theme.legible(theme.accent);
 		let glass = theme.hud_surface().elevation(if expanded {
 			Elevation::Raised
 		} else {
@@ -239,8 +256,12 @@ impl RenderOnce for Pill {
 					.child(chevron.render(px(10.), accent_foreground))
 					.role(Role::Button)
 					.aria_label(toggle_label)
+					.aria_expanded(expanded)
+					.when(!self.enabled, |header| header.aria_disabled(true))
 			})
-			.when_some(self.on_toggle, |header, on_toggle| header.on_click(on_toggle))
+			.when_some(self.on_toggle.filter(|_| self.enabled), |header, on_toggle| {
+				header.on_click(on_toggle)
+			})
 			.when(needs_probe(collapsed_width, settled_closed), |header| {
 				// Collapsed layout, invisible and out of flow: its width is the collapsed width.
 				let probe_state = natural_width.clone();
@@ -420,7 +441,7 @@ impl RenderOnce for ControlBar {
 					.children(self.actions),
 			)
 			.when_some(self.progress, |bar, (mode, active)| {
-				bar.child(progress_outline(mode, &theme, active, motion, window, cx))
+				bar.child(progress_outline(mode).glint(active).animated(motion).theme(theme))
 			})
 	}
 }

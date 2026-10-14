@@ -63,7 +63,9 @@ pub mod control {
 	/// Gap between the parts of a compact capsule (chip, menu picker).
 	pub const CHIP_GAP: f32 = 6.;
 	pub const SEMANTIC_BORDER_OPACITY: f32 = 0.28;
-	pub const OVERLAY_DIM: f32 = 0.55;
+	/// The dim behind a modal, on a dark palette; [`Theme::scrim`](crate::theme::Theme::scrim)
+	/// softens it on a light one.
+	pub const OVERLAY_DIM: f32 = 0.30;
 	pub const ENABLED_NEUTRAL_SURFACE_OPACITY: f32 = 0.07;
 	pub const DISABLED_NEUTRAL_SURFACE_OPACITY: f32 = 0.025;
 	pub const ENABLED_NEUTRAL_BORDER_OPACITY: f32 = 0.24;
@@ -132,10 +134,16 @@ impl Chromatic {
 		}
 	}
 
-	/// The disabled look: a faint white fill and a 14 % border in `tint`.
+	/// The disabled look on a dark palette: a faint white fill and a 14 % border in `tint`. Use
+	/// [`Chromatic::disabled_with`] with the palette's ink on a light one.
 	pub fn disabled(tint: Rgba) -> Self {
+		Self::disabled_with(tint, white(1.))
+	}
+
+	/// The disabled look: a faint fill in `ink` (the palette's neutral) and a 14 % border in `tint`.
+	pub fn disabled_with(tint: Rgba, ink: Rgba) -> Self {
 		Self {
-			fill: white(control::DISABLED_CHROMATIC_SURFACE_OPACITY),
+			fill: with_alpha(ink, control::DISABLED_CHROMATIC_SURFACE_OPACITY),
 			border: with_alpha(tint, control::DISABLED_CHROMATIC_BORDER_OPACITY),
 		}
 	}
@@ -185,6 +193,37 @@ pub fn contrast_tint(color: Rgba) -> Rgba {
 		color.alpha,
 	)
 }
+
+/// WCAG relative luminance of an sRGB color; alpha is ignored.
+pub fn luminance(color: Rgba) -> f32 {
+	let linear = |c: f32| {
+		if c <= 0.04045 {
+			c / 12.92
+		} else {
+			((c + 0.055) / 1.055).powf(2.4)
+		}
+	};
+	0.2126 * linear(color.red) + 0.7152 * linear(color.green) + 0.0722 * linear(color.blue)
+}
+
+/// WCAG contrast ratio of two colors (alpha ignored), 1 to 21.
+pub fn contrast_ratio(a: Rgba, b: Rgba) -> f32 {
+	let (la, lb) = (luminance(a), luminance(b));
+	(la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// The label color for text drawn on a solid `fill`: white where it reads at 3:1 or better
+/// (large, semibold text), otherwise near-black.
+pub fn on_color(fill: Rgba) -> Rgba {
+	if contrast_ratio(white(1.), fill) >= ON_COLOR_WHITE_MINIMUM {
+		white(1.)
+	} else {
+		black(0.88)
+	}
+}
+
+/// The least contrast white text needs on a solid fill to stay white.
+const ON_COLOR_WHITE_MINIMUM: f32 = 3.;
 
 /// Source-over composite of `top` onto `bottom`, both straight alpha.
 pub fn over(top: Rgba, bottom: Rgba) -> Rgba {

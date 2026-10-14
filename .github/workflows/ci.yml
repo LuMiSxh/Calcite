@@ -39,14 +39,14 @@ jobs:
       - name: Fetch and patch gpui-ce
         run: ./scripts/bootstrap.sh
 
-      - name: Check the gallery with frame stats
-        run: cargo check -p calcite-showcase --features frame-stats --bin gallery
+      - name: Check the developer preview with frame stats
+        run: cargo check -p calcite-showcase --features frame-stats --bin preview
 
       - name: Check source
         run: ./scripts/check.sh
 
-      - name: Package the gallery as a deb
-        run: cargo run -p calcite-bundle -- calcite bundle -p calcite-showcase --bin gallery --format deb --debug
+      - name: Package the developer preview as a deb
+        run: cargo run -p calcite-bundle -- calcite bundle -p calcite-showcase --bin preview --format deb --debug
 
   macos:
     name: Lint (macOS, Metal)

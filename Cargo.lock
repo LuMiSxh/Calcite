@@ -786,7 +786,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "calcite"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "calcite-tint",
  "gpui-ce",
@@ -802,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "calcite-bundle"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cargo-packager",
  "embed-resource",
@@ -812,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "calcite-exec"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures",
  "gpui-ce",
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "calcite-showcase"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "calcite",
  "calcite-bundle",
@@ -832,11 +832,11 @@ dependencies = [
 
 [[package]]
 name = "calcite-tint"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "calcite-update"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "calcite-update",
  "ed25519-dalek",

@@ -14,12 +14,16 @@ use gpui::{
 use crate::{
 	continuous::ContinuousMotion,
 	motion::cycle,
-	tokens::{scale_alpha, white},
+	theme::{ActiveTheme, Theme},
+	tokens::scale_alpha,
 };
 
 const LINE_WIDTH: f32 = 2.;
 const SAMPLE_SPACING: f32 = 2.;
+/// Opacity of the sweep highlight.
+const SWEEP_OPACITY: f32 = 0.55;
 
+/// What a [`progress_outline`] shows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OutlineMode {
 	/// Known fraction in 0..=1.
@@ -120,6 +124,8 @@ struct OutlineCanvas {
 	mode: OutlineMode,
 	tint: Rgba,
 	track: Rgba,
+	/// The highlight of the travelling sweep: the palette's ink.
+	sweep: Rgba,
 	is_glint_active: bool,
 	phase: f32,
 }
@@ -161,7 +167,7 @@ impl RenderOnce for OutlineCanvas {
 								scale_alpha(self.tint, 0.35),
 								window,
 							);
-							sweep(&path, fraction, self.phase, window);
+							sweep(&path, fraction, self.phase, self.sweep, window);
 						}
 					}
 				}
@@ -175,7 +181,7 @@ impl RenderOnce for OutlineCanvas {
 }
 
 /// The light that travels from the start to the progress head, then rests.
-fn sweep(path: &CapsulePath, fraction: f32, phase: f32, window: &mut Window) {
+fn sweep(path: &CapsulePath, fraction: f32, phase: f32, color: Rgba, window: &mut Window) {
 	let total = cycle::progress_sweep_total();
 	let time = phase * total;
 	let fade_in = cycle::PROGRESS_SWEEP_FADE_IN;
@@ -193,7 +199,7 @@ fn sweep(path: &CapsulePath, fraction: f32, phase: f32, window: &mut Window) {
 	};
 	let head = position * fraction;
 	let tail = (head - 0.08).max(0.);
-	path.stroke(tail, head, LINE_WIDTH, white(0.55 * alpha), window);
+	path.stroke(tail, head, LINE_WIDTH, scale_alpha(color, alpha), window);
 }
 
 fn wrapped(from: f32, to: f32) -> Vec<(f32, f32)> {
@@ -204,34 +210,71 @@ fn wrapped(from: f32, to: f32) -> Vec<(f32, f32)> {
 	}
 }
 
-/// Outline overlay for a capsule. `motion` is the app's own gate for this outline; the
-/// loops also follow [`ContinuousMotion`]: they hold their phase while the window is in the
-/// background and stop under Reduce Motion, where the glow and sweep are hidden as well.
-pub fn progress_outline(
+/// Outline overlay for a capsule: place it as the last child of a `relative` capsule.
+///
+/// ```ignore
+/// progress_outline(OutlineMode::Determinate(0.42)).glint(true)
+/// ```
+#[derive(IntoElement)]
+pub struct ProgressOutline {
 	mode: OutlineMode,
-	theme: &crate::theme::Theme,
-	is_glint_active: bool,
-	motion: bool,
-	window: &mut Window,
-	cx: &mut App,
-) -> impl IntoElement {
-	let animates =
-		motion && !theme.reduce_motion && (is_glint_active || matches!(mode, OutlineMode::Indeterminate));
-	let (key, period) = match mode {
-		OutlineMode::Indeterminate => ("calcite-outline-breathing", cycle::BREATHING),
-		OutlineMode::Determinate(_) => ("calcite-progress-sweep", cycle::progress_sweep_total()),
-	};
-	let phase = if animates {
-		ContinuousMotion::phase(key, period, theme, window, cx)
-	} else {
-		0.
-	};
-	let canvas = OutlineCanvas {
-		mode,
-		tint: theme.accent,
-		track: crate::tokens::CLEAR,
-		is_glint_active: is_glint_active && !theme.reduce_motion,
-		phase,
-	};
-	div().absolute().top_0().left_0().size_full().child(canvas)
+	glint: bool,
+	animated: bool,
+	theme: Option<Theme>,
 }
+
+/// An outline in `mode`. Defaults: no glint, animation allowed.
+pub fn progress_outline(mode: OutlineMode) -> ProgressOutline {
+	ProgressOutline {
+		mode,
+		glint: false,
+		animated: true,
+		theme: None,
+	}
+}
+
+impl ProgressOutline {
+	/// Shows the glow at the leading edge and the travelling sweep of a determinate outline.
+	pub fn glint(mut self, glint: bool) -> Self {
+		self.glint = glint;
+		self
+	}
+
+	/// The app's own gate for this outline's loops, on by default. They also follow
+	/// [`ContinuousMotion`]: they hold their phase while the window is in the background and
+	/// stop under Reduce Motion, where the glow and sweep are hidden as well.
+	pub fn animated(mut self, animated: bool) -> Self {
+		self.animated = animated;
+		self
+	}
+}
+
+impl RenderOnce for ProgressOutline {
+	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+		let theme = self.theme.unwrap_or_else(|| cx.theme());
+		let mode = self.mode;
+		let animates = self.animated
+			&& !theme.reduce_motion
+			&& (self.glint || matches!(mode, OutlineMode::Indeterminate));
+		let (key, period) = match mode {
+			OutlineMode::Indeterminate => ("calcite-outline-breathing", cycle::BREATHING),
+			OutlineMode::Determinate(_) => ("calcite-progress-sweep", cycle::progress_sweep_total()),
+		};
+		let phase = if animates {
+			ContinuousMotion::phase(key, period, &theme, window, cx)
+		} else {
+			0.
+		};
+		let canvas = OutlineCanvas {
+			mode,
+			tint: theme.accent,
+			track: crate::tokens::CLEAR,
+			sweep: theme.ink(SWEEP_OPACITY),
+			is_glint_active: self.glint && !theme.reduce_motion,
+			phase,
+		};
+		div().absolute().top_0().left_0().size_full().child(canvas)
+	}
+}
+
+crate::controls::theme_override!(ProgressOutline);

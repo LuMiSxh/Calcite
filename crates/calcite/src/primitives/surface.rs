@@ -9,7 +9,7 @@ use crate::{
 	glass::{Elevation, Glass, flat_surface},
 	interaction::ControlFrame,
 	theme::Theme,
-	tokens::{self, Chromatic, control, over, scale_alpha, white, with_alpha},
+	tokens::{self, Chromatic, control, over, scale_alpha, with_alpha},
 };
 
 /// How one control state paints its surface (`adaptiveControlSurface`).
@@ -37,14 +37,14 @@ impl Surface {
 			let fill = if reduced {
 				theme.palette.opaque_disabled_surface
 			} else if chromatic {
-				Chromatic::disabled(tint).fill
+				Chromatic::disabled_with(tint, theme.palette.ink).fill
 			} else {
-				white(control::DISABLED_NEUTRAL_SURFACE_OPACITY)
+				theme.ink(control::DISABLED_NEUTRAL_SURFACE_OPACITY)
 			};
 			let border = if chromatic {
-				Chromatic::disabled(tint).border
+				Chromatic::disabled_with(tint, theme.palette.ink).border
 			} else {
-				white(control::DISABLED_NEUTRAL_BORDER_OPACITY)
+				theme.ink(control::DISABLED_NEUTRAL_BORDER_OPACITY)
 			};
 			return Self {
 				paint: Paint::Plain(fill),
@@ -69,12 +69,21 @@ impl Surface {
 		let paint = if reduced {
 			Paint::Plain(theme.palette.opaque_surface)
 		} else {
-			Paint::Flat(white(control::ENABLED_NEUTRAL_SURFACE_OPACITY))
+			Paint::Flat(theme.ink(control::ENABLED_NEUTRAL_SURFACE_OPACITY))
 		};
 		Self {
 			paint,
-			hover_overlay: white(control::HOVER_OPACITY),
+			hover_overlay: theme.ink(control::HOVER_OPACITY),
 			border: with_alpha(tint, border_opacity),
+		}
+	}
+
+	/// A solid fill with a label-colored hover wash and no border: the prominent button.
+	pub(crate) fn solid(fill: Rgba, label: Rgba) -> Self {
+		Self {
+			paint: Paint::Plain(fill),
+			hover_overlay: with_alpha(label, control::HOVER_OPACITY),
+			border: tokens::CLEAR,
 		}
 	}
 

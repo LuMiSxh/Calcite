@@ -49,6 +49,12 @@ pub struct Palette {
 	pub hud_tint: Rgba,
 	/// How the HUD tint picks up the accent hue: saturation, brightness, opacity.
 	pub hud_hue_tint: (f32, f32, f32),
+	/// The neutral that fills, tracks, dividers and hover lights are drawn in: white on a dark
+	/// palette, black on a light one. Alpha is ignored; components set their own.
+	pub ink: Rgba,
+	/// The opposite neutral, laid behind glass as its backplate: black on a dark palette, white on a
+	/// light one. Shadows stay black and soften on a light palette.
+	pub shade: Rgba,
 }
 
 impl Palette {
@@ -73,12 +79,46 @@ impl Palette {
 		opaque_disabled_surface: rgba(0.094, 0.098, 0.114, 1.),
 		hud_tint: black(0.52),
 		hud_hue_tint: (0.1, 0.1, 0.52),
+		ink: white(1.),
+		shade: black(1.),
+	};
+
+	/// A light look: pale glass and backdrop, near-black text, a deeper accent, and ink and shade
+	/// swapped so fills, tracks and the backplate turn dark-on-light. The HUD tint is a pale veil,
+	/// so menus, tooltips and HUD surfaces keep the dark `primary_text` legible.
+	pub const LIGHT: Self = Self {
+		accent: rgba(0.0, 0.50, 0.80, 1.),
+		control: rgba(0.36, 0.38, 0.42, 1.),
+		quiet_control: rgba(0.46, 0.49, 0.53, 1.),
+		hairline: black(0.14),
+		danger: rgba(0.78, 0.16, 0.22, 1.),
+		danger_text: rgba(0.74, 0.12, 0.2, 1.),
+		warning: rgba(0.78, 0.46, 0.04, 1.),
+		success: rgba(0.10, 0.56, 0.32, 1.),
+		primary_text: black(0.88),
+		secondary_text: black(0.58),
+		backdrop: rgba(0.93, 0.94, 0.96, 1.),
+		panel_background: rgba(0.97, 0.97, 0.98, 1.),
+		panel_border: black(0.10),
+		navigation_rail: white(0.55),
+		navigation_hover: black(0.05),
+		opaque_surface: rgba(0.90, 0.91, 0.93, 1.),
+		opaque_disabled_surface: rgba(0.85, 0.86, 0.88, 1.),
+		hud_tint: white(0.55),
+		hud_hue_tint: (0.12, 0.95, 0.55),
+		ink: black(1.),
+		shade: white(1.),
 	};
 
 	/// This palette with another fallback accent.
 	pub const fn with_accent(mut self, accent: Rgba) -> Self {
 		self.accent = accent;
 		self
+	}
+
+	/// Whether the palette draws dark ink on light surfaces.
+	pub fn is_light(&self) -> bool {
+		self.ink.red < 0.5
 	}
 
 	/// Each color mixed from `self` toward `to`, for animated palette changes.
@@ -107,6 +147,8 @@ impl Palette {
 			opaque_disabled_surface: m(self.opaque_disabled_surface, to.opaque_disabled_surface),
 			hud_tint: m(self.hud_tint, to.hud_tint),
 			hud_hue_tint: (lerp(s0, s1), lerp(b0, b1), lerp(o0, o1)),
+			ink: m(self.ink, to.ink),
+			shade: m(self.shade, to.shade),
 		}
 	}
 
@@ -130,10 +172,100 @@ impl Default for Palette {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::{
+		glass::{GlassStyle, Transparency},
+		theme::Theme,
+		tokens::{contrast_ratio, on_color, over},
+	};
+
+	/// The palette's main surfaces as the opaque color they show over its backdrop, for each glass
+	/// style.
+	fn surfaces(palette: Palette) -> Vec<(String, Rgba)> {
+		let mut out = vec![
+			("backdrop".into(), palette.backdrop),
+			("panel".into(), palette.panel_background),
+			("opaque surface".into(), palette.opaque_surface),
+		];
+		let styles = [
+			GlassStyle::MacOS26,
+			GlassStyle::MacOS27(Transparency::Default),
+			GlassStyle::MacOS27(Transparency::Clear),
+			GlassStyle::ReducedTransparency,
+		];
+		for style in styles {
+			let theme = Theme::new(palette).with_glass(style);
+			out.push((
+				format!("glass {style:?}"),
+				over(theme.surface(None).fill(), palette.backdrop),
+			));
+			out.push((
+				format!("hud {style:?}"),
+				over(theme.hud_surface().fill(), palette.backdrop),
+			));
+		}
+		out
+	}
+
+	#[test]
+	fn text_reads_on_every_main_surface_in_both_palettes() {
+		for (name, palette) in [("dark", Palette::ARKNIGHTS), ("light", Palette::LIGHT)] {
+			for (surface, base) in surfaces(palette) {
+				let base = with_alpha_one(base);
+				let primary = contrast_ratio(over(palette.primary_text, base), base);
+				let secondary = contrast_ratio(over(palette.secondary_text, base), base);
+				assert!(primary >= 4.5, "{name} primary text on {surface}: {primary:.2}");
+				assert!(
+					secondary >= 3.,
+					"{name} secondary text on {surface}: {secondary:.2}"
+				);
+			}
+		}
+	}
+
+	fn with_alpha_one(color: Rgba) -> Rgba {
+		crate::tokens::with_alpha(color, 1.)
+	}
+
+	#[test]
+	fn the_light_palette_is_light_and_its_hud_tint_is_a_pale_veil() {
+		assert!(Palette::LIGHT.is_light());
+		assert!(!is_chromatic(Palette::LIGHT.hud_tint));
+		assert!(Palette::LIGHT.hud_tint.red > 0.9);
+	}
+
+	#[test]
+	fn prominent_labels_read_on_the_accent_and_status_fills() {
+		for palette in [Palette::ARKNIGHTS, Palette::LIGHT] {
+			for fill in [palette.accent, palette.danger, palette.warning, palette.success] {
+				let ratio = contrast_ratio(on_color(fill), fill);
+				assert!(ratio >= 3., "label on {fill:?}: {ratio:.2}");
+			}
+		}
+	}
 
 	#[test]
 	fn hud_tint_stays_neutral() {
 		let palette = Palette::ARKNIGHTS;
 		assert!(!is_chromatic(palette.hud_tint_for(palette.accent)));
+	}
+
+	#[test]
+	fn a_light_palette_flips_the_neutrals_the_glass_and_fills_draw_with() {
+		let light = Palette {
+			ink: black(1.),
+			shade: white(1.),
+			..Palette::ARKNIGHTS
+		};
+		assert!(!Palette::ARKNIGHTS.is_light());
+		assert!(light.is_light());
+		let theme = crate::theme::Theme::new(light);
+		assert_eq!(theme.ink(0.2), black(0.2));
+		let glass = theme.surface(None);
+		assert_eq!((glass.ink, glass.shade), (black(1.), white(1.)));
+		// The backplate behind neutral glass is light, and the shadow softer.
+		let dark_fill = crate::theme::Theme::default().surface(None).fill();
+		assert!(glass.fill().red > dark_fill.red);
+		assert!(theme.shadow(0.4).alpha < 0.4);
+		assert_eq!(light.mix(&Palette::ARKNIGHTS, 1.).ink, white(1.));
 	}
 }

@@ -5,7 +5,7 @@
 //! and suggestions).
 //!
 //! ```ignore
-//! banner("saved", "Preset saved").tone(BannerTone::Success).on_dismiss(..)
+//! banner("saved", "Preset saved").tone(Tone::Success).on_dismiss(..)
 //! confirm_dialog("delete", "Delete preset?", "This cannot be undone.")
 //!     .confirm("Delete", ConfirmRole::Destructive)
 //!     .on_confirm(..)
@@ -21,7 +21,7 @@ use gpui::{
 
 use crate::{
 	continuous::ContinuousMotion,
-	controls::{button, icon_button, theme_override},
+	controls::{Tone, button, icon_button, theme_override},
 	glass::{Elevation, GlassExt},
 	icons::{Icon, IconRef},
 	interaction::{
@@ -32,7 +32,7 @@ use crate::{
 	overlay::{floating_action_bar, modal_layer},
 	surface::chip_capsule,
 	theme::{ActiveTheme, Theme},
-	tokens::{self, Chromatic, contrast_tint, control, over, stack, white, with_alpha},
+	tokens::{self, Chromatic, control, over, stack, with_alpha},
 };
 
 type Handler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
@@ -45,16 +45,22 @@ const GLINT_WIDTH: f32 = 0.3;
 #[derive(IntoElement)]
 pub struct Spinner {
 	id: ElementId,
-	size: Pixels,
+	diameter: Pixels,
+	label: SharedString,
 	color: Option<Rgba>,
 	theme: Option<Theme>,
 }
 
 /// A 16 pt spinner in the secondary text color.
+///
+/// ```ignore
+/// spinner().id("sync-spinner").diameter(px(20.)).label("Syncing")
+/// ```
 pub fn spinner() -> Spinner {
 	Spinner {
 		id: "calcite-spinner".into(),
-		size: px(16.),
+		diameter: px(16.),
+		label: "Loading".into(),
 		color: None,
 		theme: None,
 	}
@@ -67,8 +73,15 @@ impl Spinner {
 		self
 	}
 
-	pub fn size(mut self, size: Pixels) -> Self {
-		self.size = size;
+	/// The glyph's width and height.
+	pub fn diameter(mut self, diameter: Pixels) -> Self {
+		self.diameter = diameter;
+		self
+	}
+
+	/// The accessible name, "Loading" by default.
+	pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+		self.label = label.into();
 		self
 	}
 
@@ -81,7 +94,8 @@ impl Spinner {
 impl RenderOnce for Spinner {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
-		let glyph = Icon::LoaderCircle.render(self.size, self.color.unwrap_or(theme.palette.secondary_text));
+		let glyph =
+			Icon::LoaderCircle.render(self.diameter, self.color.unwrap_or(theme.palette.secondary_text));
 		// Every spinner turns on one shared clock and holds its angle while paused.
 		let glyph = if theme.reduce_motion {
 			glyph
@@ -92,9 +106,9 @@ impl RenderOnce for Spinner {
 		div()
 			.id(self.id)
 			.flex_none()
-			.size(self.size)
+			.size(self.diameter)
 			.role(Role::ProgressIndicator)
-			.aria_label("Loading")
+			.aria_label(self.label)
 			.child(glyph)
 	}
 }
@@ -110,6 +124,10 @@ pub struct ProgressBar {
 }
 
 /// A 4 pt bar. `Some(fraction)` fills 0..=1; `None` slides an indeterminate glint.
+///
+/// ```ignore
+/// progress_bar("download", Some(0.4)).label("Downloading update")
+/// ```
 pub fn progress_bar(id: impl Into<ElementId>, fraction: Option<f32>) -> ProgressBar {
 	ProgressBar {
 		id: id.into(),
@@ -145,7 +163,7 @@ impl RenderOnce for ProgressBar {
 			.flex_none()
 			.overflow_hidden()
 			.rounded_full()
-			.bg(white(TRACK_OPACITY))
+			.bg(theme.ink(TRACK_OPACITY))
 			.role(Role::ProgressIndicator)
 			.aria_label(self.label);
 		let fill = div().absolute().top_0().bottom_0().rounded_full().bg(accent);
@@ -167,6 +185,7 @@ impl RenderOnce for ProgressBar {
 					.child(fill.left_0().w(relative(shown.clamp(0., 1.))))
 			}
 			None if !theme.reduce_motion => {
+				let track = track.aria_value("In progress");
 				let t = ContinuousMotion::phase(
 					"calcite-progress-sweep",
 					cycle::progress_sweep_total(),
@@ -182,7 +201,9 @@ impl RenderOnce for ProgressBar {
 				)
 			}
 			// Without motion an indeterminate bar reads as a dimmed full fill.
-			None => track.child(fill.left_0().w_full().bg(with_alpha(accent, 0.35))),
+			None => track
+				.aria_value("In progress")
+				.child(fill.left_0().w_full().bg(with_alpha(accent, 0.35))),
 		}
 	}
 }
@@ -197,6 +218,11 @@ pub struct EmptyState {
 	theme: Option<Theme>,
 }
 
+/// A centered icon, title, and optional detail and action.
+///
+/// ```ignore
+/// empty_state(Icon::Search, "No results").detail("Try another search.")
+/// ```
 pub fn empty_state(icon: impl Into<IconRef>, title: impl Into<SharedString>) -> EmptyState {
 	EmptyState {
 		icon: icon.into(),
@@ -235,6 +261,9 @@ impl RenderOnce for EmptyState {
 			.p(px(24.))
 			.role(Role::Group)
 			.aria_label(self.title.clone())
+			.when_some(self.detail.clone(), |state, detail| {
+				state.aria_description(detail)
+			})
 			.child(
 				div()
 					.pb(px(4.))
@@ -264,32 +293,14 @@ impl RenderOnce for EmptyState {
 	}
 }
 
-/// The semantic tone of a [`banner`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BannerTone {
-	Info,
-	Success,
-	Warning,
-	Danger,
-}
-
-impl BannerTone {
-	fn color(self, theme: &Theme) -> Rgba {
-		match self {
-			Self::Info => theme.accent,
-			Self::Success => theme.palette.success,
-			Self::Warning => theme.palette.warning,
-			Self::Danger => theme.palette.danger_text,
-		}
-	}
-
-	fn icon(self) -> Icon {
-		match self {
-			Self::Info => Icon::Info,
-			Self::Success => Icon::Checkmark,
-			Self::Warning => Icon::Warning,
-			Self::Danger => Icon::CircleAlert,
-		}
+/// The glyph of a banner in `tone`: a check, a warning triangle, or an alert circle, and an
+/// info mark for the accent, neutral, and custom tones.
+fn tone_icon(tone: Tone) -> Icon {
+	match tone {
+		Tone::Success => Icon::Checkmark,
+		Tone::Warning => Icon::Warning,
+		Tone::Danger => Icon::CircleAlert,
+		Tone::Accent | Tone::Neutral | Tone::Color(_) => Icon::Info,
 	}
 }
 
@@ -299,7 +310,7 @@ impl BannerTone {
 pub struct Banner {
 	id: ElementId,
 	title: SharedString,
-	tone: BannerTone,
+	tone: Tone,
 	detail: Option<SharedString>,
 	action: Option<AnyElement>,
 	on_dismiss: Option<Handler>,
@@ -307,11 +318,16 @@ pub struct Banner {
 	theme: Option<Theme>,
 }
 
+/// A banner. Defaults: accent (informational) tone, shown.
+///
+/// ```ignore
+/// banner("offline", "You are offline").tone(Tone::Warning).detail("Changes sync later.")
+/// ```
 pub fn banner(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Banner {
 	Banner {
 		id: id.into(),
 		title: title.into(),
-		tone: BannerTone::Info,
+		tone: Tone::Accent,
 		detail: None,
 		action: None,
 		on_dismiss: None,
@@ -327,7 +343,8 @@ impl Banner {
 		self
 	}
 
-	pub fn tone(mut self, tone: BannerTone) -> Self {
+	/// The banner's tone: the glyph and its color. Warning and danger read as alerts.
+	pub fn tone(mut self, tone: Tone) -> Self {
 		self.tone = tone;
 		self
 	}
@@ -363,7 +380,8 @@ impl RenderOnce for Banner {
 		) else {
 			return div().into_any_element();
 		};
-		let tint = contrast_tint(self.tone.color(&theme));
+		let tint = theme.legible(self.tone.text(&theme));
+		let detail_text = self.detail.clone();
 		let has_detail = self.detail.is_some();
 		let text = div()
 			.flex_1()
@@ -407,11 +425,12 @@ impl RenderOnce for Banner {
 			})
 			.glass_hud_at(&theme, Elevation::Raised)
 			.role(match self.tone {
-				BannerTone::Warning | BannerTone::Danger => Role::Alert,
-				BannerTone::Info | BannerTone::Success => Role::Status,
+				Tone::Warning | Tone::Danger => Role::Alert,
+				_ => Role::Status,
 			})
 			.aria_label(self.title)
-			.child(self.tone.icon().render(px(15.), tint))
+			.when_some(detail_text, |banner, detail| banner.aria_description(detail))
+			.child(tone_icon(self.tone).render(px(15.), tint))
 			.child(text)
 			.when_some(self.action, |banner, action| banner.child(action))
 			.when_some(self.on_dismiss, |banner, on_dismiss| {
@@ -524,6 +543,7 @@ impl RenderOnce for ConfirmDialog {
 			ConfirmRole::Default => confirm.accent(),
 			ConfirmRole::Destructive => confirm.danger(),
 		}
+		.prominent()
 		.when_some(self.on_confirm, |confirm, on_confirm| {
 			confirm.on_click(move |event, window, cx| on_confirm(event, window, cx))
 		});
@@ -543,10 +563,12 @@ impl RenderOnce for ConfirmDialog {
 			.border_1()
 			.border_color(theme.palette.hairline)
 			.shadow(vec![
-				gpui::BoxShadow::new(px(0.), px(10.), tokens::black(0.45)).blur_radius(px(48.)),
+				gpui::BoxShadow::new(px(0.), px(10.), theme.shadow(0.45)).blur_radius(px(48.)),
 			])
 			.role(Role::AlertDialog)
 			.aria_label(self.title.clone())
+			.aria_description(self.message.clone())
+			.aria_modal(true)
 			.child(
 				div()
 					.text_size(px(17.))
@@ -566,7 +588,7 @@ impl RenderOnce for ConfirmDialog {
 					.flex()
 					.flex_row()
 					.justify_end()
-					.child(floating_action_bar(&theme).child(cancel).child(confirm)),
+					.child(floating_action_bar().theme(theme).child(cancel).child(confirm)),
 			);
 		modal_layer(self.id, card)
 			.shown(self.shown)
@@ -583,17 +605,25 @@ pub struct Chip {
 	id: ElementId,
 	text: SharedString,
 	selected: bool,
+	enabled: bool,
 	glow: Option<bool>,
 	on_click: Option<Handler>,
 	on_remove: Option<Handler>,
 	theme: Option<Theme>,
 }
 
+/// A search tag or suggestion.
+///
+/// ```ignore
+/// chip("rust", "Rust").selected(true).on_click(..)
+/// chip("tag", "draft").on_remove(..)
+/// ```
 pub fn chip(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Chip {
 	Chip {
 		id: id.into(),
 		text: text.into(),
 		selected: false,
+		enabled: true,
 		glow: None,
 		on_click: None,
 		on_remove: None,
@@ -606,6 +636,17 @@ impl Chip {
 	pub fn selected(mut self, selected: bool) -> Self {
 		self.selected = selected;
 		self
+	}
+
+	/// Whether the chip responds. Enabled by default.
+	pub fn enabled(mut self, enabled: bool) -> Self {
+		self.enabled = enabled;
+		self
+	}
+
+	/// The inverse of [`Chip::enabled`].
+	pub fn disabled(self, disabled: bool) -> Self {
+		self.enabled(!disabled)
 	}
 
 	/// Forces the pointer light on or off. Without it the chip follows
@@ -633,15 +674,23 @@ impl RenderOnce for Chip {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let state = ControlState::of(&self.id, window, cx);
 		let focus = focus_handle(&self.id, window, cx);
-		let frame = ControlState::frame(&state, Feedback::Standard, true, theme.reduce_motion, window, cx);
+		let enabled = self.enabled;
+		let frame = ControlState::frame(
+			&state,
+			Feedback::Standard,
+			enabled,
+			theme.reduce_motion,
+			window,
+			cx,
+		);
 		let (fill, border, foreground) = if self.selected {
 			let accent = Chromatic::enabled(theme.accent);
-			(accent.fill, accent.border, contrast_tint(theme.accent))
+			(accent.fill, accent.border, theme.legible(theme.accent))
 		} else {
 			let fill = if theme.reduce_transparency() {
 				theme.palette.opaque_surface
 			} else {
-				white(control::ENABLED_NEUTRAL_SURFACE_OPACITY)
+				theme.ink(control::ENABLED_NEUTRAL_SURFACE_OPACITY)
 			};
 			(
 				fill,
@@ -649,8 +698,8 @@ impl RenderOnce for Chip {
 				theme.palette.secondary_text,
 			)
 		};
-		let hover = frame.hover_fill(white(1.));
-		let glows = glow_enabled(&theme, self.glow, false);
+		let hover = frame.hover_fill(theme.ink(1.));
+		let glows = enabled && glow_enabled(&theme, self.glow, false);
 		let glow = glows
 			.then(|| glow_layer(&frame, foreground))
 			.flatten()
@@ -703,9 +752,16 @@ impl RenderOnce for Chip {
 			.children(glow)
 			.child(div().relative().child(self.text))
 			.children(remove)
-			.control_state(&state, glows)
-			.keyboard_focus(&focus, FocusShape::Capsule, &theme, window)
-			.when_some(on_click, |chip, on_click| {
+			.when(enabled, |chip| {
+				chip.control_state(&state, glows)
+					.keyboard_focus(&focus, FocusShape::Capsule, &theme, window)
+			})
+			.when(!enabled, |chip| {
+				chip.aria_disabled(true)
+					.cursor_default()
+					.opacity(control::DISABLED_FOREGROUND_OPACITY)
+			})
+			.when_some(on_click.filter(|_| enabled), |chip, on_click| {
 				chip.on_click(move |event, window, cx| on_click(event, window, cx))
 			})
 			.scaled(frame.scale)

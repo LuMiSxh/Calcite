@@ -39,6 +39,12 @@ impl Spring {
 		SpringConfig::new(stiffness, damping, 1.)
 	}
 
+	/// How long the spring takes to settle, in seconds: 1.6 response times. One-shot timings and
+	/// [`landing`](super::value::landing) use it.
+	pub fn settle_time(self) -> f32 {
+		self.response * 1.6
+	}
+
 	/// The damping ratio, `1 − bounce`.
 	pub fn damping_ratio(self) -> f32 {
 		1. - self.bounce

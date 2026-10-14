@@ -7,13 +7,13 @@ use calcite::prelude::*;
 use gpui::{Context, IntoElement};
 
 use super::{
-	Gallery, Rendering,
+	Preview, Rendering,
 	states::{cell, stack, state_row},
 };
 
 const LOCALES: [&str; 6] = ["English", "Deutsch", "日本語", "한국어", "简体中文", "Français"];
 
-impl Gallery {
+impl Preview {
 	pub fn menus_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
 		let rendering = |id: &'static str| {
 			menu_picker(
@@ -38,6 +38,7 @@ impl Gallery {
 			state_row(
 				"menu_picker",
 				"the select: click, the options fuse to the trigger's bottom edge",
+				"menu_picker(id, value, [(value, label)]).on_change(handler)",
 				vec![
 					cell(
 						"rest · hover me · click to open",
@@ -66,6 +67,7 @@ impl Gallery {
 			state_row(
 				"action_menu",
 				"commands with icons and a divider",
+				"action_menu(id, label, icon).item(label, icon, handler).divider()",
 				vec![
 					cell("rest · click to open", actions("menu-actions")),
 					cell("disabled", actions("menu-actions-disabled").disabled(true)),

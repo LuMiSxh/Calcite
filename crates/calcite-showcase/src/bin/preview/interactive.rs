@@ -1,20 +1,30 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Gallery sections whose components change gallery state.
+//! Preview sections whose components change preview state.
 
 use calcite::{interaction::spring_value, prelude::*, tokens::hud};
-use gpui::{Context, Div, FontWeight, IntoElement, ParentElement, SharedString, Styled, Window, div, px};
+use gpui::{
+	AnyElement, Context, Div, FontWeight, IntoElement, ParentElement, SharedString, Styled, Window, div, px,
+};
 
-use super::{Display, Gallery, Page, Rendering, sections::label};
+use super::{
+	Display, Page, Preview, Rendering,
+	sections::label,
+	states::{cell, stack, state_row},
+};
 
 const REGIONS: [&str; 5] = ["Global", "Japan", "Korea", "China", "China (Bilibili)"];
-const ACCENTS: [&str; 4] = ["Default", "Amber", "Rose", "Violet"];
+pub const ACCENTS: [&str; 4] = ["Default", "Amber", "Rose", "Violet"];
 
-impl Gallery {
+impl Preview {
 	pub fn settings_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
 		let theme = cx.theme();
-		let rail = nav_rail(&theme)
+		let rail = nav_rail("settings-rail")
 			.pt(px(14.))
+			// overflow_hidden clips to the frame's rectangle, so the rail's own fill takes the
+			// frame's left corners.
+			.rounded_tl(tokens::radius::MODAL)
+			.rounded_bl(tokens::radius::MODAL)
 			.children(Page::ALL.iter().enumerate().map(|(index, page)| {
 				nav_item(
 					SharedString::from(format!("nav-{index}")),
@@ -42,9 +52,9 @@ impl Gallery {
 			.flex_col()
 			.gap(px(14.))
 			.p(px(20.))
-			.child(page_header(self.page.title(), self.page.subtitle(), &theme))
+			.child(page_header(self.page.title(), self.page.subtitle()))
 			.child(body);
-		div()
+		let frame = div()
 			.h(px(660.))
 			.flex()
 			.flex_row()
@@ -58,6 +68,115 @@ impl Gallery {
 			.border_color(theme.palette.hairline)
 			.child(rail)
 			.child(page)
+			.into_any_element();
+		stack(vec![frame, Self::panel_variants(&theme)])
+	}
+
+	/// The settings parts the live page does not reach: panel tones, collapsed panels, a page
+	/// of its own, the header, the hairline, and the glass panel.
+	fn panel_variants(theme: &Theme) -> AnyElement {
+		let panel = |id: &'static str, tone: Tone, title: &'static str| {
+			div().w(px(260.)).child(
+				settings_panel(id, title, Lucide::Settings).tone(tone).child(
+					action_row("Row title")
+						.detail("Row detail")
+						.action(badge("Value").tone(Tone::Neutral)),
+				),
+			)
+		};
+		let collapsible = |id: &'static str, expanded: bool| {
+			div().w(px(260.)).child(
+				settings_panel(id, "Advanced", Icon::Gear)
+					.collapsible(expanded, |_, _, _| {})
+					.child(document_link(
+						SharedString::from(format!("{id}-link")),
+						"Open log files",
+						Icon::Document,
+					)),
+			)
+		};
+		let page = div()
+			.w(px(360.))
+			.h(px(230.))
+			.overflow_hidden()
+			.rounded(tokens::radius::PANEL)
+			.border_1()
+			.border_color(theme.palette.hairline)
+			.bg(theme.palette.panel_background)
+			.child(
+				settings_page(
+					"preview-settings-page",
+					"Page title",
+					"A page scrolls and ends in a panel.",
+				)
+				.child(
+					settings_panel("settings-page-panel", "Panel", Lucide::Settings)
+						.child(action_row("Row").action(toggle("settings-page-toggle", true))),
+				),
+			);
+		stack(vec![
+			state_row(
+				"settings_panel · tone",
+				"Neutral · Success · Warning · Danger",
+				"settings_panel(id, title, icon).tone(Tone::Warning)",
+				vec![
+					cell("Neutral", panel("tone-neutral", Tone::Neutral, "Neutral")),
+					cell("Success", panel("tone-success", Tone::Success, "Success")),
+					cell("Warning", panel("tone-warning", Tone::Warning, "Warning")),
+					cell("Danger", panel("tone-danger", Tone::Danger, "Danger")),
+				],
+			),
+			state_row(
+				"settings_panel · collapsible",
+				"expanded and collapsed (static here; the live page above toggles)",
+				"settings_panel(id, title, icon).collapsible(expanded, handler)",
+				vec![
+					cell("expanded", collapsible("collapsible-open", true)),
+					cell("collapsed", collapsible("collapsible-closed", false)),
+					cell(
+						"danger_zone",
+						div().w(px(260.)).child(
+							danger_zone("variant-danger-zone").child(
+								action_row("Remove files")
+									.action(button("variant-remove", "Remove…").danger().compact()),
+							),
+						),
+					),
+				],
+			),
+			state_row(
+				"settings_page · page_header",
+				"the header, the rule under it, and a hairline",
+				"settings_page(id, title, subtitle) · page_header(title, subtitle) · hairline()",
+				vec![
+					cell("settings_page", page),
+					cell(
+						"page_header",
+						div()
+							.w(px(320.))
+							.child(page_header("Header", "Subtitle under the title.")),
+					),
+					cell("hairline", div().w(px(200.)).child(hairline())),
+				],
+			),
+			state_row(
+				"glass_panel",
+				"a raised glass panel with the HUD radius",
+				"glass_panel().child(content)",
+				vec![cell(
+					"glass_panel",
+					div().w(px(260.)).child(
+						glass_panel()
+							.flex()
+							.flex_col()
+							.gap(px(8.))
+							.child(div().font_weight(FontWeight::SEMIBOLD).child("Glass panel"))
+							.child(label("Children go inside; the radius is fixed.")),
+					),
+				)],
+			),
+		])
+		.into_any_element()
 	}
 
 	fn game_page(&self, cx: &mut Context<Self>) -> Div {
@@ -143,7 +262,6 @@ impl Gallery {
 	}
 
 	fn updates_page(&self, cx: &mut Context<Self>) -> Div {
-		let theme = cx.theme();
 		div()
 			.flex()
 			.flex_col()
@@ -168,7 +286,7 @@ impl Gallery {
 									.icon(Lucide::RefreshCw),
 							),
 					)
-					.child(hairline(&theme))
+					.child(hairline())
 					.child(
 						action_row("Release channel")
 							.detail("Canary features stay opt-in")
@@ -260,7 +378,7 @@ impl Gallery {
 
 	pub fn hud_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
 		let rows = REGIONS.iter().enumerate().map(|(index, name)| {
-			list_row(SharedString::from(format!("gallery-region-{index}")), *name)
+			list_row(SharedString::from(format!("preview-region-{index}")), *name)
 				.value("04:12:09")
 				.selected(index == self.region)
 				.on_click(cx.listener(move |this, _, _, cx| {
@@ -482,7 +600,7 @@ impl Gallery {
 			.items_start()
 			.child(
 				modal("sample-modal", "Update available")
-					.size(px(520.), px(330.))
+					.dimensions(px(520.), px(330.))
 					.child(
 						div().child(
 							"Arknights Client 0.8.0 is ready. It installs when you quit the launcher.",
@@ -501,8 +619,8 @@ impl Gallery {
 							.flex()
 							.flex_col()
 							.gap(px(6.))
-							.child(skeleton("line-1").size(px(320.), px(12.)).pulses(true))
-							.child(skeleton("line-2").size(px(240.), px(12.)).pulses(true)),
+							.child(skeleton("line-1").dimensions(px(320.), px(12.)).pulses(true))
+							.child(skeleton("line-2").dimensions(px(240.), px(12.)).pulses(true)),
 					)
 					.action(button("later", "Later"))
 					.action(done_button("install").icon(Icon::ArrowDown)),
@@ -515,7 +633,7 @@ impl Gallery {
 					.child(label("Floating action bar"))
 					.child(
 						div().flex().child(
-							floating_action_bar(&theme)
+							floating_action_bar()
 								.child(button("fab-cancel", "Cancel"))
 								.child(done_button("fab-done")),
 						),
@@ -547,8 +665,15 @@ impl Gallery {
 							.flex()
 							.flex_row()
 							.gap(px(8.))
-							.child(skeleton("sk-1").size(px(64.), px(14.)))
-							.child(skeleton("sk-2").size(px(96.), px(14.)).pulses(true)),
+							.child(skeleton("sk-1").dimensions(px(64.), px(14.)))
+							.child(skeleton("sk-2").dimensions(px(96.), px(14.)).pulses(true))
+							.child(skeleton("sk-3").dimensions(px(96.), px(14.)).corner(px(7.)))
+							.child(
+								skeleton("sk-4")
+									.dimensions(px(36.), px(36.))
+									.corner(px(18.))
+									.pulses(true),
+							),
 					)
 					.child(label(
 						"Modal layer: open with the button, close by clicking outside",

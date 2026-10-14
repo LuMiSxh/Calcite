@@ -6,7 +6,7 @@
 //! presenting the frame to the platform.
 //!
 //! The numbers come from gpui's frame profiler, so the `frame-stats` cargo feature has to be
-//! on (`cargo run --release --features calcite-showcase/frame-stats --bin gallery`). Without
+//! on (`cargo run --release --features calcite-showcase/frame-stats --bin preview`). Without
 //! it, [`install`] only says so.
 
 use gpui::App;

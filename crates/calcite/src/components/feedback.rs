@@ -4,7 +4,7 @@
 //! tooltips through [`TooltipExt::glass_tooltip`].
 
 use gpui::{
-	AnyView, App, Context, FontWeight, IntoElement, ParentElement, Pixels, Render, SharedString,
+	AnyView, App, Context, FontWeight, IntoElement, ParentElement, Pixels, Render, Role, SharedString,
 	StatefulInteractiveElement, Styled, Window, div, prelude::*, px,
 };
 
@@ -14,7 +14,7 @@ use crate::{
 	glass::{Elevation, GlassExt},
 	motion::{EnterExt, tokens::TOOLTIP},
 	theme::{ActiveTheme, Theme},
-	tokens::{self, control, white, with_alpha},
+	tokens::{self, control, with_alpha},
 };
 
 const SKELETON_BASELINE: f32 = 0.12;
@@ -33,6 +33,10 @@ pub struct Skeleton {
 }
 
 /// A placeholder. Leave the size unset to fill a cell the caller constrains.
+///
+/// ```ignore
+/// skeleton("line").dimensions(px(320.), px(12.)).pulses(true)
+/// ```
 pub fn skeleton(id: impl Into<gpui::ElementId>) -> Skeleton {
 	Skeleton {
 		id: id.into(),
@@ -45,8 +49,21 @@ pub fn skeleton(id: impl Into<gpui::ElementId>) -> Skeleton {
 }
 
 impl Skeleton {
-	pub fn size(mut self, width: Pixels, height: Pixels) -> Self {
+	/// Both the width and the height.
+	pub fn dimensions(mut self, width: Pixels, height: Pixels) -> Self {
 		self.width = Some(width);
+		self.height = Some(height);
+		self
+	}
+
+	/// The width; without it the placeholder fills the width of its cell.
+	pub fn width(mut self, width: Pixels) -> Self {
+		self.width = Some(width);
+		self
+	}
+
+	/// The height; without it the placeholder fills the height of its cell.
+	pub fn height(mut self, height: Pixels) -> Self {
 		self.height = Some(height);
 		self
 	}
@@ -70,7 +87,7 @@ impl RenderOnce for Skeleton {
 			.id(self.id)
 			// Without an explicit corner, a placeholder rounds like a control of the theme.
 			.rounded(self.corner.unwrap_or(theme.style.radii.control))
-			.bg(white(SKELETON_BASELINE))
+			.bg(theme.ink(SKELETON_BASELINE))
 			.map(|this| match self.width {
 				Some(width) => this.w(width),
 				None => this.w_full(),
@@ -88,9 +105,7 @@ impl RenderOnce for Skeleton {
 			};
 			let eased = wave * wave * (3. - 2. * wave);
 			placeholder
-				.bg(white(
-					SKELETON_BASELINE + (SKELETON_PEAK - SKELETON_BASELINE) * eased,
-				))
+				.bg(theme.ink(SKELETON_BASELINE + (SKELETON_PEAK - SKELETON_BASELINE) * eased))
 				.into_any_element()
 		} else {
 			placeholder.into_any_element()
@@ -106,6 +121,11 @@ pub struct Badge {
 	theme: Option<Theme>,
 }
 
+/// A badge in the accent tone.
+///
+/// ```ignore
+/// badge("Beta").tone(Tone::Warning)
+/// ```
 pub fn badge(text: impl Into<SharedString>) -> Badge {
 	Badge {
 		text: text.into(),
@@ -124,13 +144,7 @@ impl Badge {
 impl RenderOnce for Badge {
 	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
-		let color = match self.tone {
-			Tone::Accent => theme.accent,
-			Tone::Color(color) => color,
-			Tone::Neutral => theme.palette.control,
-			Tone::Warning => theme.palette.warning,
-			Tone::Danger => theme.palette.danger_text,
-		};
+		let color = self.tone.foreground(&theme);
 		div()
 			.font_family(theme.sans())
 			.px(px(control::BADGE_HORIZONTAL_PADDING))
@@ -141,7 +155,7 @@ impl RenderOnce for Badge {
 			.border_color(with_alpha(color, 0.4))
 			.text_size(tokens::text::CAPTION)
 			.font_weight(FontWeight::BOLD)
-			.text_color(tokens::contrast_tint(color))
+			.text_color(theme.legible(color))
 			.child(self.text)
 	}
 }
@@ -155,6 +169,9 @@ impl Render for GlassTooltip {
 	fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
 		let theme = cx.theme();
 		div()
+			.id("calcite-tooltip")
+			.role(Role::Tooltip)
+			.aria_label(self.text.clone())
 			.font_family(theme.sans())
 			.max_w(px(280.))
 			.px(px(10.))
@@ -170,6 +187,11 @@ impl Render for GlassTooltip {
 
 /// Adds a glass tooltip to any interactive element with an id.
 pub trait TooltipExt: StatefulInteractiveElement + Sized {
+	/// Shows `text` in a glass tooltip while the pointer rests on the element.
+	///
+	/// ```ignore
+	/// icon_button("gear", Icon::Gear, "Settings").glass_tooltip("Settings")
+	/// ```
 	fn glass_tooltip(self, text: impl Into<SharedString>) -> Self {
 		let text = text.into();
 		self.tooltip(move |_, cx| AnyView::from(cx.new(|_| GlassTooltip { text: text.clone() })))

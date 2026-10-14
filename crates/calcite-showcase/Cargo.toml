@@ -1,6 +1,6 @@
 [package]
 name = "calcite-showcase"
-description = "Showcase and component gallery for Calcite and calcite-exec"
+description = "Showcase and developer preview of Calcite and calcite-exec"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,8 +12,8 @@ name = "home"
 path = "src/bin/home.rs"
 
 [[bin]]
-name = "gallery"
-path = "src/bin/gallery/main.rs"
+name = "preview"
+path = "src/bin/preview/main.rs"
 
 [dependencies]
 
@@ -29,9 +29,9 @@ calcite-bundle = { workspace = true, default-features = false }
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 
-# `cargo calcite bundle -p calcite-showcase --bin gallery` packages the showcase.
+# `cargo calcite bundle -p calcite-showcase --bin preview` packages the developer preview.
 [package.metadata.calcite.bundle]
-name = "Calcite Showcase"
+name = "Calcite - preview"
 identifier = "dev.lumisxh.calcite.showcase"
 icon = "assets/icon.png"
 category = "DeveloperTool"
@@ -39,5 +39,5 @@ copyright = "© 2026 Luca Michael Schmidt"
 minimum-macos = "13.0"
 
 [features]
-# `CALCITE_FRAME_STATS=1 cargo run --release --features frame-stats --bin gallery`
+# `CALCITE_FRAME_STATS=1 cargo run --release --features frame-stats --bin preview`
 frame-stats = ["calcite/frame-stats"]

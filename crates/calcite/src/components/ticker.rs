@@ -13,6 +13,7 @@ use gpui::{
 
 use crate::{
 	controls::theme_override,
+	interaction,
 	motion::{self, secondary, tokens::TICKER},
 	theme::{ActiveTheme, Theme},
 };
@@ -42,7 +43,7 @@ pub struct Ticker {
 ///
 /// // `percent` is any number the view owns; it rolls whenever the text changes.
 /// ticker("download-percent", format!("{percent}%"))
-///     .size(px(28.))
+///     .font_size(px(28.))
 ///     .color(theme.palette.primary_text)
 /// ```
 pub fn ticker(id: impl Into<gpui::ElementId>, text: impl Into<SharedString>) -> Ticker {
@@ -58,7 +59,7 @@ pub fn ticker(id: impl Into<gpui::ElementId>, text: impl Into<SharedString>) -> 
 
 impl Ticker {
 	/// The font size; the line box is 1.25 times this.
-	pub fn size(mut self, size: Pixels) -> Self {
+	pub fn font_size(mut self, size: Pixels) -> Self {
 		self.size = size;
 		self
 	}
@@ -216,7 +217,7 @@ impl RenderOnce for Ticker {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let color = self.color.unwrap_or(theme.palette.primary_text);
-		let reduce_motion = theme.reduce_motion;
+		let reduce_motion = theme.reduce_motion || interaction::reduce_motion(cx);
 		let size = self.size;
 		let height = f32::from(size) * LINE;
 		let mono = self.mono_width;
@@ -304,7 +305,7 @@ impl RenderOnce for Ticker {
 				rolling: active,
 			}));
 		}
-		if rolling {
+		if rolling && !reduce_motion {
 			window.request_animation_frame();
 		}
 

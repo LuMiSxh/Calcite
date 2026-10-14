@@ -7,6 +7,11 @@
 //! radius, and the colour from the chip's to the menu's. It grows downward, or upward when the
 //! window has no room below, and closes by a choice, Escape, or a click outside it.
 //!
+//! From the keyboard, Space, Return, Up, and Down on the chip open the menu and move focus to the
+//! checked row (or the first). Up, Down, Home, and End move between rows, a letter jumps to the
+//! next row that starts with it, Return and Space choose, and Escape closes and returns focus to
+//! the chip.
+//!
 //! ```ignore
 //! menu_picker("rendering", self.rendering, [(Rendering::Retina, "Retina"), (Rendering::MetalFx, "MetalFX")])
 //!     .on_change(cx.listener(|this, value: &Rendering, _, cx| { this.rendering = *value; cx.notify(); }))
@@ -18,8 +23,8 @@
 use std::{rc::Rc, time::Instant};
 
 use gpui::{
-	AnyElement, App, ElementId, Entity, Filter, IntoElement, ParentElement, Rgba, Role, SharedString, Styled,
-	Window, div, prelude::*, px,
+	AnyElement, App, ElementId, Entity, Filter, FocusHandle, IntoElement, ParentElement, Rgba, Role,
+	SharedString, Styled, Toggled, Window, div, prelude::*, px,
 };
 
 use crate::{
@@ -28,7 +33,8 @@ use crate::{
 	glass::Elevation,
 	icons::{Icon, IconRef},
 	interaction::{
-		ClickableRow, FocusShape, KeyHandler, KeyRole, KeyboardFocus, focus_handle, register_key_target,
+		ClickableRow, FocusShape, KeyHandler, KeyRole, KeyboardFocus, focus_handle, reduce_motion,
+		register_key_target,
 	},
 	morph::{self, RowSpec},
 	motion::{
@@ -46,17 +52,43 @@ struct Item {
 	label: SharedString,
 	icon: Option<IconRef>,
 	checked: bool,
+	/// Whether the row is one choice of a set (a picker option) rather than an action.
+	choice: bool,
 	divider_before: bool,
 	action: Action,
 }
 
+/// The focus handles of a menu's chip and rows, written while they render (each inside its own
+/// element scope, where their keyed state lives) and read by the key handlers.
+#[derive(Default)]
+struct MenuFocus {
+	trigger: Option<FocusHandle>,
+	rows: Vec<FocusHandle>,
+}
+
 /// The open state of a menu, kept across frames. While the menu is open, Escape closes it
-/// before anything under it.
-fn open_state(id: &ElementId, window: &mut Window, cx: &mut App) -> Entity<bool> {
+/// before anything under it, and returns focus to the chip if a row had it.
+fn open_state(
+	id: &ElementId,
+	handles: &Entity<MenuFocus>,
+	window: &mut Window,
+	cx: &mut App,
+) -> Entity<bool> {
 	let open = window.use_keyed_state((id.clone(), "calcite-menu"), cx, |_, _| false);
 	if *open.read(cx) {
 		let close = open.clone();
-		let dismiss: KeyHandler = Rc::new(move |_, cx| {
+		let handles = handles.clone();
+		let dismiss: KeyHandler = Rc::new(move |window, cx| {
+			let (trigger, in_rows) = {
+				let handles = handles.read(cx);
+				(
+					handles.trigger.clone(),
+					handles.rows.iter().any(|row| row.is_focused(window)),
+				)
+			};
+			if let Some(trigger) = trigger.filter(|_| in_rows) {
+				window.focus(&trigger, cx);
+			}
 			close.update(cx, |open, cx| {
 				*open = false;
 				cx.notify();
@@ -74,10 +106,93 @@ fn set_open(open: &Entity<bool>, value: Option<bool>, cx: &mut App) {
 	});
 }
 
+/// Closes the open menu when focus leaves the chip and all of its rows (Tab past the last row, or
+/// a click on another control). Registered once per handle, kept in keyed state beside it.
+fn close_when_focus_leaves(
+	key: ElementId,
+	handle: &FocusHandle,
+	open: &Entity<bool>,
+	menu_focus: &Entity<MenuFocus>,
+	window: &mut Window,
+	cx: &mut App,
+) {
+	window.use_keyed_state((key, "calcite-menu-leave"), cx, |window, cx| {
+		let (open, menu_focus) = (open.clone(), menu_focus.clone());
+		window.on_focus_out(handle, cx, move |_, window, cx| {
+			if !*open.read(cx) {
+				return;
+			}
+			// No focus at all (window deactivated, field blurred): leave the menu as it is.
+			if window.focused(cx).is_none() {
+				return;
+			}
+			let inside = {
+				let focus = menu_focus.read(cx);
+				focus
+					.trigger
+					.iter()
+					.chain(focus.rows.iter())
+					.any(|h| h.is_focused(window))
+			};
+			if !inside {
+				set_open(&open, Some(false), cx);
+			}
+		})
+	});
+}
+
+/// Asks the open menu to move focus onto a row once its rows exist (opened from the keyboard).
+fn set_pending(pending: &Entity<bool>, cx: &mut App) {
+	pending.update(cx, |pending, cx| {
+		*pending = true;
+		cx.notify();
+	});
+}
+
+/// The element id of row `index` of the menu `id`.
+fn row_id(id: &ElementId, index: usize) -> ElementId {
+	(id.clone(), SharedString::from(index.to_string())).into()
+}
+
+/// The row a menu key moves focus to. `current` is the focused row, if any; `key_char` is the
+/// text the key types. Arrow keys wrap, Home and End jump, and a letter selects the next row
+/// (after `current`, wrapping) whose label starts with it, ignoring case.
+fn row_for_key(
+	key: &str,
+	key_char: Option<&str>,
+	labels: &[SharedString],
+	current: Option<usize>,
+) -> Option<usize> {
+	let count = labels.len();
+	if count == 0 {
+		return None;
+	}
+	match key {
+		"down" => Some(current.map_or(0, |index| (index + 1) % count)),
+		"up" => Some(current.map_or(count - 1, |index| (index + count - 1) % count)),
+		"home" => Some(0),
+		"end" => Some(count - 1),
+		_ => {
+			let typed = key_char?
+				.chars()
+				.next()
+				.filter(|c| !c.is_whitespace() && !c.is_control())?;
+			let starts = |index: &usize| {
+				labels[*index]
+					.chars()
+					.next()
+					.is_some_and(|first| first.to_lowercase().eq(typed.to_lowercase()))
+			};
+			let from = current.map_or(0, |index| index + 1);
+			(0..count).map(|offset| (from + offset) % count).find(starts)
+		}
+	}
+}
+
 /// The label color of the chip.
 fn chip_foreground(theme: &Theme, enabled: bool) -> Rgba {
 	if enabled {
-		tokens::contrast_tint(theme.accent)
+		theme.legible(theme.accent)
 	} else {
 		with_alpha(theme.accent, control::DISABLED_FOREGROUND_OPACITY)
 	}
@@ -125,7 +240,7 @@ fn chip(
 		(true, Some(_)) if rim <= 0. => chip,
 		(true, Some(filter)) => chip.backdrop_filter(vec![Filter::Glass(filter)]),
 		(true, None) => chip.bg(tokens::scale_alpha(glass.fill(), rim)),
-		(false, _) => chip.bg(Chromatic::disabled(theme.accent).fill),
+		(false, _) => chip.bg(Chromatic::disabled_with(theme.accent, theme.palette.ink).fill),
 	}
 }
 
@@ -169,6 +284,7 @@ fn row_cascade(
 	window: &mut Window,
 	cx: &mut App,
 ) -> (f32, f32) {
+	let reduced = reduced || reduce_motion(cx);
 	let now = Instant::now();
 	let cell = window.use_keyed_state((row_id.clone(), "cascade"), cx, |_, _| Cascade {
 		open,
@@ -188,7 +304,7 @@ fn row_cascade(
 		}
 		(cell.effective, waiting)
 	});
-	if waiting {
+	if waiting && !reduced {
 		window.request_animation_frame();
 	}
 	let spring = if open { SNAPPY } else { EXIT };
@@ -205,17 +321,37 @@ fn row_cascade(
 }
 
 /// The option rows, as wide as the menu body they sit in.
+#[allow(clippy::too_many_arguments)]
 fn menu_rows(
 	id: &ElementId,
 	theme: &Theme,
 	open: &Entity<bool>,
+	focus_pending: &Entity<bool>,
+	menu_focus: &Entity<MenuFocus>,
 	enabled: bool,
 	items: Vec<Item>,
 	window: &mut Window,
 	cx: &mut App,
 ) -> AnyElement {
-	let accent = tokens::contrast_tint(theme.accent);
+	let accent = theme.legible(theme.accent);
 	let is_open = *open.read(cx) && enabled;
+	let handles: Vec<FocusHandle> = (0..items.len())
+		.map(|index| focus_handle(&row_id(id, index), window, cx))
+		.collect();
+	menu_focus.update(cx, |focus, _| focus.rows = handles.clone());
+	for (index, handle) in handles.iter().enumerate() {
+		close_when_focus_leaves(row_id(id, index), handle, open, menu_focus, window, cx);
+	}
+	let labels: Vec<SharedString> = items.iter().map(|item| item.label.clone()).collect();
+	// Opened from the keyboard: focus lands once the rows are in the dispatch tree, after this frame.
+	if is_open && *focus_pending.read(cx) {
+		focus_pending.update(cx, |pending, _| *pending = false);
+		let target = items.iter().position(|item| item.checked).unwrap_or(0);
+		if let Some(handle) = handles.get(target).cloned() {
+			window.defer(cx, move |window, cx| window.focus(&handle, cx));
+		}
+	}
+	let key_handles = handles.clone();
 	div()
 		.w_full()
 		.p(px(morph::PANEL_PADDING + morph::BORDER))
@@ -225,6 +361,17 @@ fn menu_rows(
 		.font_family(theme.sans())
 		.text_size(tokens::text::SUPPORTING)
 		.text_color(theme.palette.primary_text)
+		.on_key_down(move |event, window, cx| {
+			let stroke = &event.keystroke;
+			if stroke.modifiers.modified() {
+				return;
+			}
+			let current = key_handles.iter().position(|handle| handle.is_focused(window));
+			if let Some(target) = row_for_key(&stroke.key, stroke.key_char.as_deref(), &labels, current) {
+				window.focus(&key_handles[target], cx);
+				cx.stop_propagation();
+			}
+		})
 		.children(items.into_iter().enumerate().flat_map(|(index, item)| {
 			let open = open.clone();
 			let divider = item.divider_before.then(|| {
@@ -236,7 +383,8 @@ fn menu_rows(
 					.into_any_element()
 			});
 			let action = item.action.clone();
-			let row_id: ElementId = (id.clone(), SharedString::from(index.to_string())).into();
+			let row_id = row_id(id, index);
+			let menu_focus = menu_focus.clone();
 			let (opacity, slide) = row_cascade(&row_id, index, is_open, theme.reduce_motion, window, cx);
 			let clickable = ClickableRow::new(&row_id, theme, window, cx);
 			let row = div()
@@ -249,9 +397,19 @@ fn menu_rows(
 				.gap(px(7.))
 				.rounded(theme.style.radii.row)
 				.bg(clickable.fill(theme, 0.))
-				.role(Role::MenuItem)
+				.role(if item.choice {
+					Role::MenuItemRadio
+				} else {
+					Role::MenuItem
+				})
 				.aria_label(item.label.clone())
-				.aria_selected(item.checked);
+				.when(item.choice, |row| {
+					row.aria_toggled(if item.checked {
+						Toggled::True
+					} else {
+						Toggled::False
+					})
+				});
 			let row = clickable
 				.wire(row, FocusShape::Rounded(theme.style.radii.row), theme, window)
 				.child(div().w(px(12.)).when(item.checked, |this| {
@@ -261,8 +419,13 @@ fn menu_rows(
 					row.child(icon.render(px(12.), theme.palette.secondary_text))
 				})
 				.child(div().flex_1().whitespace_nowrap().child(item.label))
-				.on_click(move |_, window, cx| {
+				.on_click(move |event, window, cx| {
 					set_open(&open, Some(false), cx);
+					if event.is_keyboard()
+						&& let Some(trigger) = menu_focus.read(cx).trigger.clone()
+					{
+						window.focus(&trigger, cx);
+					}
 					action(window, cx);
 				})
 				.relative()
@@ -285,7 +448,11 @@ impl MenuView {
 			items,
 			content,
 		} = self;
-		let open = open_state(&id, window, cx);
+		let menu_focus = window.use_keyed_state((id.clone(), "calcite-menu-handles"), cx, |_, _| {
+			MenuFocus::default()
+		});
+		let open = open_state(&id, &menu_focus, window, cx);
+		let focus_pending = window.use_keyed_state((id.clone(), "calcite-menu-focus"), cx, |_, _| false);
 		let is_open = *open.read(cx);
 		let specs: Vec<RowSpec> = items
 			.iter()
@@ -299,10 +466,14 @@ impl MenuView {
 		let menu = morph::menu_size(0., &specs);
 		let radius: f32 = theme.style.radii.panel.into();
 		let toggle = open.clone();
+		let leave_open = open.clone();
 		let close = open.clone();
 		let rows_id = id.clone();
 		let rows_theme = theme;
 		let rows_open = open.clone();
+		let rows_pending = focus_pending.clone();
+		let rows_focus = menu_focus.clone();
+		let pending = focus_pending.clone();
 
 		attached_surface(id.clone())
 			.theme(theme)
@@ -316,6 +487,9 @@ impl MenuView {
 			.trigger(move |state, window, cx| {
 				// The label keeps the chip's colour: the trigger stays itself while the body opens.
 				let foreground = chip_foreground(&theme, enabled);
+				let handle = focus_handle(&id, window, cx);
+				close_when_focus_leaves(id.clone(), &handle, &leave_open, &menu_focus, window, cx);
+				menu_focus.update(cx, |focus, _| focus.trigger = Some(handle));
 				chip(
 					id.clone(),
 					&theme,
@@ -330,12 +504,39 @@ impl MenuView {
 				.aria_expanded(is_open)
 				.aria_label(label)
 				.when(enabled, |chip| {
-					chip.on_click(move |_, _, cx| set_open(&toggle, None, cx))
+					let key_toggle = toggle.clone();
+					let key_pending = pending.clone();
+					chip.on_click(move |event, _, cx| {
+						let opening = !*toggle.read(cx);
+						set_open(&toggle, None, cx);
+						if opening && event.is_keyboard() {
+							set_pending(&pending, cx);
+						}
+					})
+					// Down and Up open the menu, or step into it when a click opened it.
+					.on_key_down(move |event, _, cx| {
+						let stroke = &event.keystroke;
+						if !stroke.modifiers.modified() && matches!(stroke.key.as_str(), "down" | "up") {
+							set_open(&key_toggle, Some(true), cx);
+							set_pending(&key_pending, cx);
+							cx.stop_propagation();
+						}
+					})
 				})
 				.into_any_element()
 			})
 			.body(menu, radius, move |window, cx| {
-				menu_rows(&rows_id, &rows_theme, &rows_open, enabled, items, window, cx)
+				menu_rows(
+					&rows_id,
+					&rows_theme,
+					&rows_open,
+					&rows_pending,
+					&rows_focus,
+					enabled,
+					items,
+					window,
+					cx,
+				)
 			})
 	}
 }
@@ -379,9 +580,15 @@ impl<T: Clone + PartialEq + 'static> MenuPicker<T> {
 		self
 	}
 
-	pub fn disabled(mut self, disabled: bool) -> Self {
-		self.enabled = !disabled;
+	/// Whether the control responds. Enabled by default.
+	pub fn enabled(mut self, enabled: bool) -> Self {
+		self.enabled = enabled;
 		self
+	}
+
+	/// The inverse of `enabled`.
+	pub fn disabled(self, disabled: bool) -> Self {
+		self.enabled(!disabled)
 	}
 
 	pub fn on_change(mut self, handler: impl Fn(&T, &mut Window, &mut App) + 'static) -> Self {
@@ -414,6 +621,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for MenuPicker<T> {
 					label: label.clone(),
 					icon: None,
 					checked: value == self.selected,
+					choice: true,
 					divider_before: self.divider_before.contains(&value),
 					action: Rc::new(move |window, cx| {
 						if let Some(on_change) = &on_change {
@@ -476,6 +684,7 @@ impl ActionMenu {
 			label: label.into(),
 			icon: Some(icon.into()),
 			checked: false,
+			choice: false,
 			divider_before: false,
 			action: Rc::new(action),
 		});
@@ -488,15 +697,22 @@ impl ActionMenu {
 			label: SharedString::default(),
 			icon: None,
 			checked: false,
+			choice: false,
 			divider_before: true,
 			action: Rc::new(|_, _| {}),
 		});
 		self
 	}
 
-	pub fn disabled(mut self, disabled: bool) -> Self {
-		self.enabled = !disabled;
+	/// Whether the control responds. Enabled by default.
+	pub fn enabled(mut self, enabled: bool) -> Self {
+		self.enabled = enabled;
 		self
+	}
+
+	/// The inverse of `enabled`.
+	pub fn disabled(self, disabled: bool) -> Self {
+		self.enabled(!disabled)
 	}
 }
 
@@ -572,5 +788,37 @@ mod tests {
 		assert!(close(3) < open(3));
 		assert_eq!(open(8), open(30));
 		assert_eq!(secondary::stagger_delay(5, true, STAGGER_IN, true), 0.);
+	}
+
+	fn labels() -> Vec<SharedString> {
+		["Alpha", "beta", "Bravo", "Gamma"]
+			.map(SharedString::from)
+			.to_vec()
+	}
+
+	#[test]
+	fn arrows_wrap_and_start_from_the_ends() {
+		let labels = labels();
+		assert_eq!(row_for_key("down", None, &labels, None), Some(0));
+		assert_eq!(row_for_key("up", None, &labels, None), Some(3));
+		assert_eq!(row_for_key("down", None, &labels, Some(3)), Some(0));
+		assert_eq!(row_for_key("up", None, &labels, Some(0)), Some(3));
+		assert_eq!(row_for_key("home", None, &labels, Some(2)), Some(0));
+		assert_eq!(row_for_key("end", None, &labels, Some(0)), Some(3));
+		assert_eq!(row_for_key("down", None, &[], None), None);
+	}
+
+	#[test]
+	fn a_letter_jumps_to_the_next_row_that_starts_with_it() {
+		let labels = labels();
+		assert_eq!(row_for_key("g", Some("g"), &labels, Some(0)), Some(3));
+		// Case does not matter, and repeated presses cycle through the matches.
+		assert_eq!(row_for_key("b", Some("b"), &labels, Some(0)), Some(1));
+		assert_eq!(row_for_key("b", Some("b"), &labels, Some(1)), Some(2));
+		assert_eq!(row_for_key("b", Some("b"), &labels, Some(2)), Some(1));
+		assert_eq!(row_for_key("b", Some("B"), &labels, None), Some(1));
+		assert_eq!(row_for_key("z", Some("z"), &labels, Some(0)), None);
+		assert_eq!(row_for_key("space", Some(" "), &labels, Some(0)), None);
+		assert_eq!(row_for_key("enter", None, &labels, Some(0)), None);
 	}
 }

@@ -16,11 +16,11 @@
 //!   has settled at 0 and stopped, at which point it is the trigger's rect and radius.
 //! - Every edge of the surface moves from the trigger's edge to its final place, and none ever
 //!   goes more than [`MAX_OVERSHOOT_PX`] past its final place.
-//! - Closing rebounds: while `t < 0` the whole surface shrinks uniformly inside the trigger by at
-//!   most [`CLOSE_DIP_PX`] per edge (radius shrinks with it, so a capsule stays a capsule). The
-//!   trigger paints no glass of its own then either, so the dip is just the glass getting smaller
-//!   with nothing doubled and nothing to switch at `t = 0`; the surface still ends exactly on the
-//!   trigger's rect and radius.
+//! - Closing rebounds outward: the surface is never smaller than the trigger. While `t < 0` it
+//!   swells uniformly past the trigger by at most [`CLOSE_BUMP_PX`] per edge (the radius grows with
+//!   it, so a capsule stays a capsule) and then settles back. The surface stays the only glass and
+//!   covers the trigger's rect, with the trigger's content painted above it, so nothing is doubled
+//!   and nothing switches at `t = 0`; it ends exactly on the trigger's rect and radius.
 //! - The direction (down, up, or flipped by the final size and the window) is decided once, when
 //!   the body opens, never while it moves.
 //! - The body's content fades and slides in during the second half of `t` and out during the
@@ -37,7 +37,22 @@
 //! ```
 //!
 //! The geometry, the gradient, and the flip logic are pure functions ([`surface_frame`],
-//! [`trigger_rim`], [`resolve_direction`], [`Look::mix`]) so the endpoints can be tested.
+//! [`trigger_rim`], [`resolve_direction`], [`body_shift`], [`Look::mix`]) so the endpoints can be tested.
+//!
+//! # Why placement is not gpui's `anchored()`
+//!
+//! `anchored()` places one child at a point and snaps it into the window, but it hides the rect it
+//! chose and knows nothing of the trigger. The morph needs both: ONE surface interpolated from the
+//! trigger's rect to the union of trigger and body, with the content laid out at the body's final
+//! rect on every frame. So the window fit is computed here, from the trigger's measured bounds,
+//! and the result stays visible to the geometry:
+//!
+//! - the direction flips Up/Down when the body does not fit ([`resolve_direction`]);
+//! - the body size is capped to the window minus the margin on every side, so a window shorter than
+//!   the body still shows the body inside it;
+//! - the body is shifted horizontally and vertically to stay at least `margin` (8 px by default)
+//!   inside the window ([`body_shift`]). The shift moves only the body's final rect; the surface still
+//!   starts exactly on the trigger and the edges still travel from the trigger to their final place.
 
 use std::rc::Rc;
 
@@ -58,8 +73,8 @@ pub const CONTENT_SLIDE: f32 = 6.;
 /// The most an edge of the surface may go past its final place, in px, however large the surface
 /// is: a ratio would let a 230 px card swing 6 px around a 28 px trigger.
 pub const MAX_OVERSHOOT_PX: f32 = 2.;
-/// The most an edge of the surface may dip inside the trigger while closing rebounds, in px.
-pub const CLOSE_DIP_PX: f32 = 4.;
+/// The most an edge of the surface may swell past the trigger while closing rebounds, in px.
+pub const CLOSE_BUMP_PX: f32 = 4.;
 
 #[cfg(test)]
 thread_local! {
@@ -164,13 +179,12 @@ pub fn body_spring(open: bool) -> Spring {
 	}
 }
 
-/// How far the surface sits inside the trigger when the spring is `depth` below 0: the pull
-/// (`depth` times the longest edge travel) saturates smoothly at [`CLOSE_DIP_PX`], so a large
-/// body rebounds visibly and a small one proportionally, and never more than a quarter of the
-/// trigger's short side (the size stays positive).
-fn close_dip(depth: f32, span: f32, trigger: (f32, f32)) -> f32 {
-	let cap = CLOSE_DIP_PX.min(trigger.0.min(trigger.1) / 4.).max(0.);
-	if cap <= 0. || span <= 0. || depth <= 0. {
+/// How far the surface sits outside the trigger when the spring is `depth` below 0: the
+/// reflected overshoot (`depth` times the longest edge travel) saturates smoothly at
+/// [`CLOSE_BUMP_PX`], so a large body rebounds visibly and a small one proportionally.
+fn close_bump(depth: f32, span: f32) -> f32 {
+	let cap = CLOSE_BUMP_PX;
+	if span <= 0. || depth <= 0. {
 		return 0.;
 	}
 	cap * (depth * span / cap).tanh()
@@ -184,12 +198,63 @@ pub fn final_width(align: Align, trigger_width: f32, body_width: f32) -> f32 {
 	}
 }
 
+/// The body's top left corner relative to the trigger's, before any window shift. `body` is the
+/// final size ([`final_width`] already applied).
+fn body_origin(
+	direction: Direction,
+	align: Align,
+	offset: f32,
+	trigger: (f32, f32),
+	body: (f32, f32),
+) -> (f32, f32) {
+	let left = match align {
+		Align::Start | Align::Stretch => 0.,
+		Align::Center => (trigger.0 - body.0) / 2.,
+		Align::End => trigger.0 - body.0,
+	};
+	let top = match direction {
+		Direction::Down => trigger.1 + offset,
+		Direction::Up => -offset - body.1,
+	};
+	(left, top)
+}
+
+/// How far the body must move, `(dx, dy)`, to stay `margin` inside the window. `origin` is the
+/// trigger's top left in window coordinates, `body` the final size (already capped to the window),
+/// `viewport` the window size. When the body is larger than the window allows, its top left edge
+/// wins, so the start of the content stays visible. [`Align::Stretch`] bodies never shift
+/// horizontally: they are the trigger's width and stay attached to it.
+#[allow(clippy::too_many_arguments)]
+pub fn body_shift(
+	direction: Direction,
+	align: Align,
+	offset: f32,
+	origin: (f32, f32),
+	trigger: (f32, f32),
+	body: (f32, f32),
+	viewport: (f32, f32),
+	margin: f32,
+) -> (f32, f32) {
+	let (left, top) = body_origin(direction, align, offset, trigger, body);
+	let fit = |pos: f32, size: f32, limit: f32| {
+		let hi = (limit - margin - size).max(margin);
+		pos.clamp(margin, hi) - pos
+	};
+	let dx = if align == Align::Stretch {
+		0.
+	} else {
+		fit(origin.0 + left, body.0, viewport.0)
+	};
+	(dx, fit(origin.1 + top, body.1, viewport.1))
+}
+
 /// The surface at spring value `t`. At 0 it is exactly the trigger's rect, with the trigger's
 /// radius; at 1 it covers the trigger and `body` (the trigger's width when stretched), the body
 /// placed `offset` away from the trigger's edge (positive is a gap, negative overlaps the
 /// trigger). Overshoot moves an edge at most [`MAX_OVERSHOOT_PX`] past its final place;
-/// undershoot (`t < 0`) shrinks the rect uniformly inside the trigger by at most
-/// [`CLOSE_DIP_PX`] per edge, with the radius shrinking along.
+/// undershoot (`t < 0`) is reflected outward: the rect swells uniformly past the trigger by at
+/// most [`CLOSE_BUMP_PX`] per edge, with the radius growing along. It is never smaller than the
+/// trigger.
 #[allow(clippy::too_many_arguments)]
 pub fn surface_frame(
 	t: f32,
@@ -201,36 +266,55 @@ pub fn surface_frame(
 	trigger_radius: f32,
 	body_radius: f32,
 ) -> Surface {
+	surface_frame_shifted(
+		t,
+		direction,
+		align,
+		offset,
+		trigger,
+		body,
+		trigger_radius,
+		body_radius,
+		(0., 0.),
+	)
+}
+
+/// [`surface_frame`] with the body's final rect moved by `shift` (see [`body_shift`]).
+#[allow(clippy::too_many_arguments)]
+pub fn surface_frame_shifted(
+	t: f32,
+	direction: Direction,
+	align: Align,
+	offset: f32,
+	trigger: (f32, f32),
+	body: (f32, f32),
+	trigger_radius: f32,
+	body_radius: f32,
+	shift: (f32, f32),
+) -> Surface {
 	let unit = t.clamp(0., 1.);
 	let (tw, th) = trigger;
 	let bw = final_width(align, tw, body.0);
 	let bh = body.1.max(0.);
-	let body_left = match align {
-		Align::Start | Align::Stretch => 0.,
-		Align::Center => (tw - bw) / 2.,
-		Align::End => tw - bw,
-	};
-	let body_top = match direction {
-		Direction::Down => th + offset,
-		Direction::Up => -offset - bh,
-	};
+	let (body_left, body_top) = body_origin(direction, align, offset, trigger, (bw, bh));
+	let (body_left, body_top) = (body_left + shift.0, body_top + shift.1);
 	// The final surface is the trigger and the body together. Each edge travels from the
 	// trigger's edge to its final place; an edge that does not move never moves.
 	let edge = |from: f32, to: f32| lerp(from, to, t.clamp(0., max_grow((to - from).abs())));
 	let (to_left, to_top) = (body_left.min(0.), body_top.min(0.));
 	let (to_right, to_bottom) = ((body_left + bw).max(tw), (body_top + bh).max(th));
-	let dip = if t < 0. {
+	let bump = if t < 0. {
 		let span = [-to_left, -to_top, to_right - tw, to_bottom - th]
 			.into_iter()
 			.fold(0., f32::max);
-		close_dip(-t, span, trigger)
+		close_bump(-t, span)
 	} else {
 		0.
 	};
-	let left = edge(0., to_left) + dip;
-	let top = edge(0., to_top) + dip;
-	let right = edge(tw, to_right) - dip;
-	let bottom = edge(th, to_bottom) - dip;
+	let left = edge(0., to_left) - bump;
+	let top = edge(0., to_top) - bump;
+	let right = edge(tw, to_right) + bump;
+	let bottom = edge(th, to_bottom) + bump;
 	let (width, height) = (right - left, bottom - top);
 	let content = ((unit - 0.5) / 0.5).clamp(0., 1.);
 	Surface {
@@ -238,7 +322,7 @@ pub fn surface_frame(
 		top,
 		width,
 		height,
-		radius: (lerp(trigger_radius, body_radius, unit) - dip)
+		radius: (lerp(trigger_radius, body_radius, unit) + bump)
 			.min(width.min(height) / 2.)
 			.max(0.),
 		body_left,
@@ -561,6 +645,8 @@ impl RenderOnce for AttachedSurface {
 		let size = (f32::from(bounds.size.width), f32::from(bounds.size.height));
 		// The body is never narrower than the trigger it hangs from.
 		spec.size.0 = spec.size.0.max(size.0);
+		let viewport = window.viewport_size();
+		let viewport = (f32::from(viewport.width), f32::from(viewport.height));
 		let direction = match *chosen.read(cx) {
 			Some(direction) => direction,
 			None => {
@@ -570,7 +656,7 @@ impl RenderOnce for AttachedSurface {
 					size.1,
 					spec.size.1,
 					self.offset,
-					f32::from(window.viewport_size().height),
+					viewport.1,
 					self.margin,
 				);
 				chosen.update(cx, |stored, _| *stored = Some(direction));
@@ -578,7 +664,20 @@ impl RenderOnce for AttachedSurface {
 			}
 		};
 		let trigger_radius = self.trigger_radius.unwrap_or(size.0.min(size.1) / 2.);
-		let frame = surface_frame(
+		// Never taller or wider than the window allows, then moved inside it.
+		let cap = |size: f32, limit: f32| size.min((limit - 2. * self.margin).max(0.));
+		spec.size = (cap(spec.size.0, viewport.0), cap(spec.size.1, viewport.1));
+		let shift = body_shift(
+			direction,
+			self.align,
+			self.offset,
+			(f32::from(bounds.origin.x), f32::from(bounds.origin.y)),
+			size,
+			(final_width(self.align, size.0, spec.size.0), spec.size.1),
+			viewport,
+			self.margin,
+		);
+		let frame = surface_frame_shifted(
 			t,
 			direction,
 			self.align,
@@ -587,6 +686,7 @@ impl RenderOnce for AttachedSurface {
 			spec.size,
 			trigger_radius,
 			spec.radius,
+			shift,
 		);
 
 		// Without glass (Reduce Transparency) the surface only crossfades in.
@@ -712,7 +812,7 @@ mod tests {
 						(0., 0., TRIGGER.0, TRIGGER.1, 12.),
 						"{direction:?} {align:?} offset {offset}"
 					);
-					// A hair below 0 is a hair inside the trigger: continuous at the crossing.
+					// A hair below 0 is a hair outside the trigger: continuous at the crossing.
 					let s = frame_at(-1e-6, direction, align, offset);
 					assert!(s.left < 1e-3 && s.top < 1e-3 && (s.width - TRIGGER.0).abs() < 1e-3);
 					assert!((s.height - TRIGGER.1).abs() < 1e-3 && (s.radius - 12.).abs() < 1e-3);
@@ -734,33 +834,33 @@ mod tests {
 	}
 
 	#[test]
-	fn undershoot_dips_inside_the_trigger_by_at_most_the_cap_and_overshoot_is_capped() {
+	fn undershoot_bumps_outside_the_trigger_by_at_most_the_cap_and_overshoot_is_capped() {
 		for direction in [Direction::Down, Direction::Up] {
 			for align in [Align::Start, Align::Center, Align::End, Align::Stretch] {
-				let mut last_dip = 0.;
+				let mut last_bump = 0.;
 				for step in 1..=400 {
 					let t = -(step as f32) * 0.005;
 					let s = frame_at(t, direction, align, 0.);
-					let dip = s.left;
-					// Uniform on all four edges, inside the trigger, never past the cap.
-					assert!((s.top - dip).abs() < 1e-4, "{direction:?} {align:?} t {t}");
-					assert!((TRIGGER.0 - (s.left + s.width) - dip).abs() < 1e-4);
-					assert!((TRIGGER.1 - (s.top + s.height) - dip).abs() < 1e-4);
-					assert!(dip > 0. && dip <= CLOSE_DIP_PX + 1e-4, "dip {dip}");
-					assert!(s.width > 0. && s.height > 0. && s.radius >= 0.);
+					let bump = -s.left;
+					// Uniform on all four edges, outside the trigger, never past the cap.
+					assert!((-s.top - bump).abs() < 1e-4, "{direction:?} {align:?} t {t}");
+					assert!((s.left + s.width - TRIGGER.0 - bump).abs() < 1e-4);
+					assert!((s.top + s.height - TRIGGER.1 - bump).abs() < 1e-4);
+					assert!(bump > 0. && bump <= CLOSE_BUMP_PX + 1e-4, "bump {bump}");
+					assert!(s.width >= TRIGGER.0 && s.height >= TRIGGER.1);
 					assert!(s.radius <= s.width.min(s.height) / 2. + 1e-4);
-					// Deeper rebound, deeper dip.
-					assert!(dip >= last_dip - 1e-5);
-					last_dip = dip;
+					// Deeper rebound, bigger bump.
+					assert!(bump >= last_bump - 1e-5);
+					last_bump = bump;
 					assert_eq!((s.unit, s.shadow, s.content), (0., 0., 0.));
 				}
 				assert!(
-					last_dip > CLOSE_DIP_PX - 0.1,
+					last_bump > CLOSE_BUMP_PX - 0.1,
 					"a deep rebound nearly reaches the cap"
 				);
 			}
 		}
-		// The radius shrinks with the rect: a capsule stays a capsule.
+		// The radius grows with the rect: a capsule stays a capsule.
 		let capsule = |t: f32| {
 			surface_frame(
 				t,
@@ -780,18 +880,6 @@ mod tests {
 				"t {t}: {s:?}"
 			);
 		}
-		// A tiny trigger never collapses.
-		let tiny = surface_frame(
-			-1.,
-			Direction::Down,
-			Align::Start,
-			0.,
-			(6., 6.),
-			(100., 100.),
-			3.,
-			8.,
-		);
-		assert!(tiny.width >= 3. - 1e-4 && tiny.height >= 3. - 1e-4);
 		let s = frame_at(1.04, Direction::Down, Align::Start, 0.);
 		assert!(s.width > 180. && s.height > 144.);
 		let capped = frame_at(9., Direction::Down, Align::Start, 0.);
@@ -887,20 +975,20 @@ mod tests {
 
 	#[test]
 	fn trigger_rim_never_overlaps_the_surface_with_glass() {
-		// Including the dip: the surface alone is the glass, so crossing t = 0 switches nothing.
+		// Including the bump: the surface alone is the glass, so crossing t = 0 switches nothing.
 		for t in [-0.3, -0.02, -1e-6, 0., 0.0005, 0.001, 0.5, 1., 1.06] {
 			assert_eq!(trigger_rim(t, true), 0., "t = {t}");
 		}
 	}
 
 	#[test]
-	fn the_dip_leaves_no_hole_in_the_glass() {
+	fn the_bump_always_covers_the_trigger_with_the_surface_glass() {
 		// With glass, either the surface exists and the trigger paints no glass, or the reverse;
-		// the visible glass shape is the surface, which is inside the trigger by <= the cap on
-		// every edge, so the only uncovered pixels are the glass shrinking.
+		// the surface contains the trigger's rect on every moving frame (no hole) and sticks out
+		// by at most the cap.
 		let (_, open) = run(motion::SpringState::at_rest(0.), true, 600);
 		let (frames, _) = run(open, false, 600);
-		assert!(frames.iter().any(|(t, _)| *t < 0.), "the close never dipped");
+		assert!(frames.iter().any(|(t, _)| *t < 0.), "the close never rebounded");
 		// The last frame is the settled one: exactly 0, where the surface is removed.
 		let (settled, moving) = frames.split_last().expect("frames");
 		assert!(!settled.1 && settled.0 == 0.);
@@ -918,12 +1006,16 @@ mod tests {
 				14.,
 				20.,
 			);
-			assert!(s.left <= CLOSE_DIP_PX + 1e-4 && s.top <= CLOSE_DIP_PX + 1e-4);
-			assert!(28. - (s.left + s.width) <= CLOSE_DIP_PX + 1e-4);
-			assert!(28. - (s.top + s.height) <= CLOSE_DIP_PX + 1e-4);
+			let c = CLOSE_BUMP_PX + 1e-4;
+			assert!(s.left <= 1e-4 && s.top <= 1e-4);
+			assert!(s.left + s.width >= 28. - 1e-4 && s.top + s.height >= 28. - 1e-4);
+			if *t < 0. {
+				assert!(s.left >= -c && s.top >= -c);
+				assert!(s.left + s.width <= 28. + c && s.top + s.height <= 28. + c);
+			}
 		}
-		// The dip is where it is visible: several px, not a rounding error.
-		let deepest = frames
+		// The bump is visible: several px, not a rounding error.
+		let widest = frames
 			.iter()
 			.map(|(t, _)| {
 				surface_frame(
@@ -938,8 +1030,8 @@ mod tests {
 				)
 				.left
 			})
-			.fold(0., f32::max);
-		assert!(deepest > 2., "dip only {deepest} px");
+			.fold(0., f32::min);
+		assert!(widest < -2., "bump only {} px", -widest);
 	}
 
 	#[test]
@@ -1029,6 +1121,106 @@ mod tests {
 		);
 	}
 
+	/// The body's final rect in window coordinates after the same steps `render` takes:
+	/// resolve the side, cap the size to the window, shift inside it.
+	fn placed(
+		placement: Placement,
+		align: Align,
+		origin: (f32, f32),
+		viewport: (f32, f32),
+		body: (f32, f32),
+	) -> (Direction, [f32; 4]) {
+		let margin = 8.;
+		let offset = 4.;
+		let direction = resolve_direction(placement, origin.1, TRIGGER.1, body.1, offset, viewport.1, margin);
+		let cap = |size: f32, limit: f32| size.min((limit - 2. * margin).max(0.));
+		let body = (cap(body.0, viewport.0), cap(body.1, viewport.1));
+		let body = (final_width(align, TRIGGER.0, body.0), body.1);
+		let (dx, dy) = body_shift(direction, align, offset, origin, TRIGGER, body, viewport, margin);
+		let (left, top) = body_origin(direction, align, offset, TRIGGER, body);
+		let (x, y) = (origin.0 + left + dx, origin.1 + top + dy);
+		(direction, [x, y, x + body.0, y + body.1])
+	}
+
+	#[test]
+	fn the_body_stays_inside_the_window_for_triggers_at_every_edge_and_corner() {
+		let vp = (400., 300.);
+		let xs = [0., 160., vp.0 - TRIGGER.0];
+		let ys = [0., 140., vp.1 - TRIGGER.1];
+		for placement in [Placement::Auto, Placement::Down, Placement::Up] {
+			for align in [Align::Start, Align::Center, Align::End] {
+				for x in xs {
+					for y in ys {
+						let (_, [l, t, r, b]) = placed(placement, align, (x, y), vp, BODY);
+						let ctx = format!("{placement:?} {align:?} at ({x}, {y}): {l} {t} {r} {b}");
+						assert!(l >= 8. - 1e-3 && t >= 8. - 1e-3, "{ctx}");
+						assert!(r <= vp.0 - 8. + 1e-3 && b <= vp.1 - 8. + 1e-3, "{ctx}");
+					}
+				}
+			}
+		}
+	}
+
+	#[test]
+	fn the_body_shifts_horizontally_at_the_left_and_right_edges() {
+		let vp = (400., 300.);
+		// Start-aligned at the right edge would overflow: it moves left by exactly the overflow.
+		let (_, [l, _, r, _]) = placed(Placement::Down, Align::Start, (vp.0 - TRIGGER.0, 100.), vp, BODY);
+		assert_eq!(r, vp.0 - 8.);
+		assert_eq!(l, r - BODY.0);
+		// End-aligned at the left edge would overflow: it moves right.
+		let (_, [l, _, r, _]) = placed(Placement::Down, Align::End, (0., 100.), vp, BODY);
+		assert_eq!(l, 8.);
+		assert_eq!(r, 8. + BODY.0);
+		// A body that already fits does not move.
+		let (_, [l, ..]) = placed(Placement::Down, Align::Start, (100., 100.), vp, BODY);
+		assert_eq!(l, 100.);
+		// A stretched body stays exactly as wide as, and attached to, the trigger.
+		assert_eq!(
+			body_shift(
+				Direction::Down,
+				Align::Stretch,
+				0.,
+				(390., 10.),
+				TRIGGER,
+				TRIGGER,
+				vp,
+				8.
+			)
+			.0,
+			0.
+		);
+	}
+
+	#[test]
+	fn a_window_shorter_than_the_body_caps_it_inside_the_margins() {
+		let vp = (400., 100.);
+		for placement in [Placement::Auto, Placement::Down, Placement::Up] {
+			for y in [0., 40., 76.] {
+				let (_, [_, t, _, b]) = placed(placement, Align::Start, (100., y), vp, BODY);
+				assert_eq!((t, b), (8., vp.1 - 8.), "{placement:?} at {y}");
+			}
+		}
+	}
+
+	#[test]
+	fn auto_picks_the_side_with_more_room_and_clamps_when_neither_fits() {
+		let vp = (400., 300.);
+		// Trigger low in the window: more room above.
+		let (d, [_, t, _, b]) = placed(Placement::Auto, Align::Start, (100., 240.), vp, BODY);
+		assert_eq!(d, Direction::Up);
+		assert!(t >= 8. && b <= 240.);
+		// Trigger high in the window: more room below.
+		let (d, [_, t, _, b]) = placed(Placement::Auto, Align::Start, (100., 20.), vp, BODY);
+		assert_eq!(d, Direction::Down);
+		assert!(t >= 20. + TRIGGER.1 && b <= vp.1 - 8.);
+		// Neither side fits a 250 px body in 300 px: the side with more room wins and is clamped in.
+		let tall = (180., 250.);
+		let (d, [_, t, _, b]) = placed(Placement::Auto, Align::Start, (100., 200.), vp, tall);
+		assert_eq!(d, Direction::Up);
+		assert!(t >= 8. && b <= vp.1 - 8.);
+	}
+
 	#[test]
 	fn opening_keeps_present_and_closing_uses_the_rebounding_spring() {
 		assert_eq!(body_spring(true), Curve::Present.spring().unwrap());
@@ -1057,7 +1249,7 @@ mod tests {
 	}
 
 	#[test]
-	fn closing_dips_a_little_inside_the_trigger_and_settles_without_a_snap() {
+	fn closing_bumps_a_little_past_the_trigger_and_settles_without_a_snap() {
 		// A big body on a small round trigger, like the shortcut legend.
 		let frame = |t: f32| {
 			surface_frame(
@@ -1075,11 +1267,13 @@ mod tests {
 		let (frames, end) = run(open, false, 600);
 		assert_eq!(end, motion::SpringState::at_rest(0.));
 		assert!(!frames.last().unwrap().1);
-		// Never more than the cap inside the trigger, and the last frame is exactly its rect and radius.
+		// Never smaller than the trigger, at most the cap past it, and the last frame is exactly its
+		// rect and radius.
 		let all: Vec<Surface> = frames.iter().map(|(t, _)| frame(*t)).collect();
-		for s in &all {
-			let c = CLOSE_DIP_PX + 1e-4;
-			assert!(s.width >= 28. - 2. * c && s.height >= 28. - 2. * c && s.left <= c && s.top <= c);
+		for (s, (t, _)) in all.iter().zip(&frames) {
+			let c = CLOSE_BUMP_PX + 1e-4;
+			assert!(s.width >= 28. - 1e-4 && s.height >= 28. - 1e-4 && s.left <= 1e-4 && s.top <= 1e-4);
+			assert!(*t >= 0. || (s.left >= -c && s.top >= -c));
 		}
 		let last = all[all.len() - 1];
 		assert_eq!(
@@ -1092,12 +1286,17 @@ mod tests {
 			"snap of {} px",
 			before.height - last.height
 		);
-		// It falls monotonically until the dip, then rebounds by at most the cap.
-		let low = all.iter().map(|s| s.height).fold(f32::MAX, f32::min);
-		assert!((28. - 2. * CLOSE_DIP_PX - 1e-4..28.).contains(&low));
-		let first_dip = all.iter().position(|s| s.height < 28.).expect("dips");
+		// It falls monotonically to the trigger, bumps past it by at most the cap, and settles.
+		let high_after = frames
+			.iter()
+			.zip(&all)
+			.filter(|((t, _), _)| *t < 0.)
+			.map(|(_, s)| s.height)
+			.fold(0., f32::max);
+		assert!(high_after > 28. + 1. && high_after <= 28. + 2. * CLOSE_BUMP_PX + 1e-4);
+		let first_bump = frames.iter().position(|(t, _)| *t < 0.).expect("bumps");
 		assert!(
-			all[..first_dip]
+			all[..first_bump]
 				.windows(2)
 				.all(|w| w[1].height <= w[0].height + 1e-3)
 		);
@@ -1282,13 +1481,10 @@ mod window_tests {
 				);
 				last_painted = probes.painted.get();
 				if let Some(s) = surface() {
-					let cap = px(CLOSE_DIP_PX) + eps;
-					assert!(s.origin.y - rest.origin.y <= cap && s.origin.x - rest.origin.x <= cap);
-					assert!(s.bottom() >= rest.bottom() - cap && s.right() >= rest.right() - cap);
-					assert!(
-						s.origin.x >= rest.origin.x - eps && s.origin.y >= rest.origin.y - eps,
-						"{s:?} starts left of or above {rest:?}"
-					);
+					let cap = px(CLOSE_BUMP_PX) + eps;
+					assert!(s.origin.y <= rest.origin.y + eps && s.origin.x <= rest.origin.x + eps);
+					assert!(s.origin.y >= rest.origin.y - cap && s.origin.x >= rest.origin.x - cap);
+					assert!(s.bottom() >= rest.bottom() - eps && s.right() >= rest.right() - eps);
 					assert!(s.size.width <= px(BODY.0 + 3.) && s.size.height <= px(TRIGGER.1 + BODY.1 + 3.));
 					grew |= s.size.height > rest.size.height + px(1.);
 				}

@@ -1,29 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Secondary motion: small effects that follow the main spring, such as squash, stretch, glass
-//! reacting to speed, and a rim pulse on landing. Pure functions of the spring's value, velocity,
+//! Secondary motion: small effects that follow the main spring, such as stretch, glass reacting
+//! to speed, and a rim pulse on landing. Pure functions of the spring's value, velocity,
 //! or elapsed time. Each takes `reduced` (Reduce Motion) and returns the identity when it is set.
 
-use super::tokens::{SQUASH_GAIN, SQUASH_MIN, STAGGER_CAP, STAGGER_IN, STAGGER_OUT};
+use super::tokens::{STAGGER_CAP, STAGGER_IN, STAGGER_OUT};
 
-/// A spring value below rest (negative) is pulled past its start, so the surface squashes.
-const SQUASH_RANGE: f32 = 0.06;
 /// The speed (units per second) at which glass effects reach full strength.
 const FULL_SPEED: f32 = 6.;
 /// The speed at which a knob or segment reaches full stretch.
 const FULL_STRETCH_SPEED: f32 = 8.;
 /// How long the rim stays lit after landing, in seconds.
 pub const LANDING_DURATION: f32 = 0.18;
-
-/// Uniform scale for a surface whose spring value `t` dipped below rest (`t < 0`): `1 − 1.5u` with
-/// `u = min(−t, 0.06)`, never below 0.94. At or above rest the scale is 1.
-pub fn squash(t: f32, reduced: bool) -> f32 {
-	if reduced || t >= 0. || t.is_nan() {
-		return 1.;
-	}
-	let u = (-t).min(SQUASH_RANGE);
-	(1. - SQUASH_GAIN * u).max(SQUASH_MIN)
-}
 
 /// How fast something moves, from 0 (still) to 1 (at or above 6 units per second).
 pub fn speed_factor(velocity: f32) -> f32 {
@@ -106,16 +94,6 @@ mod tests {
 
 	fn close(a: f32, b: f32) -> bool {
 		(a - b).abs() < 1e-5
-	}
-
-	#[test]
-	fn squash_only_acts_below_rest_and_is_clamped() {
-		assert_eq!(squash(0., false), 1.);
-		assert_eq!(squash(0.5, false), 1.);
-		assert!(close(squash(-0.02, false), 0.97));
-		assert_eq!(squash(-0.06, false), SQUASH_MIN);
-		assert_eq!(squash(-5., false), SQUASH_MIN);
-		assert_eq!(squash(-0.03, true), 1.);
 	}
 
 	#[test]

@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use gpui::{App, ElementId, SpringState as Physics, Window};
 
-use super::spring::Spring;
+use super::{secondary, spring::Spring};
 
 /// The longest step the simulation takes at once; a stalled frame must not catapult the value.
 pub const MAX_DT: f32 = 1. / 30.;
@@ -38,7 +38,7 @@ impl SpringState {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpringSample {
 	pub value: f32,
-	/// Change per second; feeds secondary motion such as squash and stretch.
+	/// Change per second; feeds secondary motion such as stretch.
 	pub velocity: f32,
 	/// Whether the value is still moving, so the caller must ask for another frame.
 	pub active: bool,
@@ -101,6 +101,50 @@ pub fn spring(
 	spring_from(id, target, target, spring, reduce_motion, window, cx)
 }
 
+/// The last target a [`landing`] saw, and when it changed.
+struct Landing {
+	target: f32,
+	since: Option<Instant>,
+}
+
+/// The rim light a view shows as `target` lands. The light starts when `target` changes, waits out
+/// `spring`'s settle time, then fades over [`secondary::landing_pulse`]. Zero at rest and under
+/// Reduce Motion. It asks for frames only while the pulse is pending or running.
+pub fn landing(
+	id: impl Into<ElementId>,
+	target: f32,
+	spring: Spring,
+	reduce_motion: bool,
+	window: &mut Window,
+	cx: &mut App,
+) -> f32 {
+	if reduce_motion || crate::interaction::reduce_motion(cx) {
+		return 0.;
+	}
+	let cell = window.use_keyed_state(id, cx, |_, _| Landing { target, since: None });
+	let now = Instant::now();
+	let elapsed = cell.update(cx, |cell, _| {
+		if cell.target != target {
+			cell.target = target;
+			cell.since = Some(now);
+		}
+		cell.since
+			.map(|since| now.saturating_duration_since(since).as_secs_f32())
+	});
+	let Some(elapsed) = elapsed else {
+		return 0.;
+	};
+	let after = elapsed - spring.settle_time();
+	if after < 0. {
+		window.request_animation_frame();
+		return 0.;
+	}
+	if after < secondary::LANDING_DURATION {
+		window.request_animation_frame();
+	}
+	secondary::landing_pulse(after, false)
+}
+
 /// Pins the spring `id` at `value` at rest, for a value that something else (a drag) drives for a
 /// while. When [`spring`] resumes it moves on from `value` with no velocity.
 pub fn hold(id: impl Into<ElementId>, value: f32, window: &mut Window, cx: &mut App) {
@@ -126,6 +170,8 @@ pub fn spring_from(
 	window: &mut Window,
 	cx: &mut App,
 ) -> SpringSample {
+	// The system setting counts as well as the caller's flag: the value snaps and asks for no frames.
+	let reduce_motion = reduce_motion || crate::interaction::reduce_motion(cx);
 	let cell = window.use_keyed_state(id, cx, |_, _| Cell {
 		state: SpringState::at_rest(initial),
 		last: Instant::now(),

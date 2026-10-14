@@ -8,7 +8,7 @@ use std::ops::Range;
 use calcite::prelude::*;
 use gpui::{Context, IntoElement, ParentElement, Styled, div, px};
 
-use super::{Gallery, sections::label};
+use super::{Preview, sections::label};
 
 /// Tiles per page.
 pub const PAGE_SIZE: usize = 96;
@@ -79,7 +79,7 @@ fn tile(glyph: gpui::Svg, name: &'static str) -> impl IntoElement {
 		)
 }
 
-impl Gallery {
+impl Preview {
 	pub fn icons_section(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
 		let results = matching(Lucide::ALL, IconSet::name, &self.icon_text);
 		let pages = page_count(results.len());
@@ -92,6 +92,17 @@ impl Gallery {
 			.flex_col()
 			.gap(px(12.))
 			.child(label("Icon: the semantic set the components use"))
+			.child(
+				div()
+					.flex()
+					.flex_row()
+					.items_center()
+					.gap(px(10.))
+					.child(icon(Icon::Gear).size(px(24.)).text_color(color))
+					.child(label(
+						"icon(Icon::Gear).size(px(24.)).text_color(color): any size and color",
+					)),
+			)
 			.child(
 				div().flex().flex_row().flex_wrap().gap(px(10.)).children(
 					Icon::ALL

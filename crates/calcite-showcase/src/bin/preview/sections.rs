@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Static gallery sections: the backdrop, the glass styles, icons, tokens, and motion.
+//! Static preview sections: the backdrop, the glass styles, icons, tokens, and motion.
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use calcite::{
 	glass::{Elevation, GlassExt},
@@ -12,16 +12,17 @@ use calcite::{
 };
 use calcite_showcase::artwork::SLASH_ASSET;
 use gpui::{
-	App, Bounds, Context, FontWeight, IntoElement, ParentElement, PathBuilder, Pixels, Render, RenderOnce,
-	Rgba, SharedString, Styled, Window, canvas, div, linear_color_stop, linear_gradient, point,
-	prelude::FluentBuilder, px,
+	AnyElement, App, Bounds, ClipboardItem, Context, FontWeight, Image, ImageFormat, ImageSource,
+	IntoElement, ParentElement, PathBuilder, Pixels, Render, RenderOnce, Rgba, SharedString, Styled, Window,
+	canvas, div, img, linear_color_stop, linear_gradient, point, prelude::FluentBuilder, px,
 };
 
-use super::WIDTH;
+use super::{WIDTH, coverage::rows, section_view::Kind};
 
 pub fn section(
 	title: &'static str,
 	note: impl Into<SharedString>,
+	sources: impl IntoElement,
 	content: impl IntoElement,
 ) -> impl IntoElement {
 	let note = label(note);
@@ -43,7 +44,95 @@ pub fn section(
 				)
 				.child(note),
 		)
+		.child(sources)
 		.child(content)
+}
+
+/// The Rust call that builds a component, as plain monospace text.
+#[derive(IntoElement)]
+pub struct SourceLine(SharedString);
+
+pub fn source_line(text: impl Into<SharedString>) -> SourceLine {
+	SourceLine(text.into())
+}
+
+impl RenderOnce for SourceLine {
+	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+		let theme = cx.theme();
+		div()
+			.font_family(theme.mono())
+			.text_size(px(10.))
+			.text_color(theme.palette.secondary_text)
+			.child(self.0)
+	}
+}
+
+/// A section's `Source` block: one monospace line per component in its [`COVERAGE`] rows.
+pub fn source_block(kind: Kind) -> impl IntoElement {
+	div().flex().flex_col().gap(px(1.)).children(
+		rows(kind)
+			.filter(|(_, _, source)| !source.is_empty())
+			.map(|(component, _, source)| source_line(format!("Source · {component}: {source}"))),
+	)
+}
+
+/// Renders an expression and shows the source it was built from, under it. `stringify!` reads
+/// the tokens that build the element, so the snippet cannot go stale:
+/// `demo!(button(id, "Save").tone(Tone::Accent))`.
+macro_rules! demo {
+	($expr:expr) => {
+		crate::sections::shown(stringify!($expr), $expr)
+	};
+}
+pub(crate) use demo;
+
+/// An element and the source text it was built from, shown with a copy button.
+#[derive(IntoElement)]
+pub struct Shown {
+	source: &'static str,
+	content: AnyElement,
+}
+
+/// The element of a [`demo!`]: use the macro, which supplies `source`.
+pub fn shown(source: &'static str, content: impl IntoElement) -> Shown {
+	Shown {
+		source,
+		content: content.into_any_element(),
+	}
+}
+
+impl RenderOnce for Shown {
+	fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+		// `stringify!` keeps the line breaks of multi-line calls; the snippet is one line.
+		let source: SharedString = self
+			.source
+			.split_whitespace()
+			.collect::<Vec<_>>()
+			.join(" ")
+			.into();
+		let copied = source.clone();
+		div()
+			.flex()
+			.flex_col()
+			.items_start()
+			.gap(px(6.))
+			.child(self.content)
+			.child(
+				div()
+					.flex()
+					.flex_row()
+					.items_center()
+					.gap(px(8.))
+					.child(source_line(source.clone()))
+					.child(
+						button(SharedString::from(format!("copy-{source}")), "Copy")
+							.compact()
+							.on_click(move |_, _, cx| {
+								cx.write_to_clipboard(ClipboardItem::new_string(copied.to_string()));
+							}),
+					),
+			)
+	}
 }
 
 /// A caption in the theme's secondary text color.
@@ -77,6 +166,16 @@ impl Render for BackdropView {
 /// to refract.
 pub fn backdrop(theme: &Theme) -> impl IntoElement {
 	let accent = theme.accent;
+	// A light palette gets a pale gradient and dark rules.
+	let light = theme.palette.is_light();
+	// Rules read as faint lines on pale artwork, so they are far lighter than on dark.
+	let ink = |alpha: f32| {
+		if light {
+			tokens::black(alpha * 0.3)
+		} else {
+			white(alpha)
+		}
+	};
 	let blob = |left: f32, top: f32, size: f32, color: Rgba, blur: f32| {
 		div()
 			.absolute()
@@ -93,7 +192,14 @@ pub fn backdrop(theme: &Theme) -> impl IntoElement {
 		.overflow_hidden()
 		.bg(linear_gradient(
 			170.,
-			linear_color_stop(rgba(0.07, 0.10, 0.16, 1.), 0.),
+			linear_color_stop(
+				if light {
+					rgba(0.80, 0.86, 0.95, 1.)
+				} else {
+					rgba(0.07, 0.10, 0.16, 1.)
+				},
+				0.,
+			),
 			linear_color_stop(theme.palette.backdrop, 1.),
 		))
 		.child(blob(900., -160., 700., scale_alpha(accent, 0.6), 130.))
@@ -108,7 +214,7 @@ pub fn backdrop(theme: &Theme) -> impl IntoElement {
 				.top_0()
 				.w(px(if index % 4 == 0 { 6. } else { 2. }))
 				.h_full()
-				.bg(white(if index % 4 == 0 { 0.22 } else { 0.10 }))
+				.bg(ink(if index % 4 == 0 { 0.22 } else { 0.10 }))
 		}))
 		// More rules than any page needs; the backdrop clips them to the content height.
 		.children((0..120).map(|index| {
@@ -118,7 +224,7 @@ pub fn backdrop(theme: &Theme) -> impl IntoElement {
 				.left_0()
 				.w_full()
 				.h(px(1.))
-				.bg(white(0.16))
+				.bg(ink(0.16))
 		}))
 		.child(
 			div()
@@ -142,6 +248,48 @@ pub fn backdrop(theme: &Theme) -> impl IntoElement {
 
 /// One card per glass style, each with a HUD pill and an accent action in that style.
 pub fn glass_styles(theme: Theme) -> impl IntoElement {
+	// The surface at each elevation, in the current glass style.
+	let elevations = div()
+		.flex()
+		.flex_col()
+		.gap(px(8.))
+		.child(label(format!(
+			"Elevation, in {}: None sits inside another surface, Resting floats, Raised is an open HUD panel",
+			theme.style.glass.label()
+		)))
+		.child(
+			div().flex().flex_row().gap(px(16.)).children(
+				[
+					(Elevation::None, "None"),
+					(Elevation::Resting, "Resting"),
+					(Elevation::Raised, "Raised"),
+				]
+				.map(|(elevation, name)| {
+					div()
+						.w(px(212.))
+						.h(px(72.))
+						.p(px(12.))
+						.rounded(radius::HUD_PILL)
+						.rounded_smoothing_ios()
+						.glass(theme.hud_surface().elevation(elevation))
+						.child(
+							div()
+								.text_size(px(12.))
+								.font_weight(FontWeight::SEMIBOLD)
+								.child(name),
+						)
+				}),
+			),
+		);
+	div()
+		.flex()
+		.flex_col()
+		.gap(px(22.))
+		.child(glass_style_cards(theme))
+		.child(elevations)
+}
+
+fn glass_style_cards(theme: Theme) -> impl IntoElement {
 	div()
 		.flex()
 		.flex_row()
@@ -412,6 +560,29 @@ pub(super) fn plot(bounds: Bounds<Pixels>, spring: Option<(f32, f32)>, accent: R
 }
 
 /// The title bar of each platform over a strip of backdrop. Only the native one moves the window.
+/// The app icon's PNG, as the Dock, the window and the bundle use it.
+static ICON_PNG: &[u8] = include_bytes!("../../../assets/icon.png");
+
+/// `calcite::app_icon!` keeps the PNG and decodes it once for the window icon; here it is drawn
+/// at two sizes from the same bytes.
+fn app_icon_column() -> impl IntoElement {
+	let source = ImageSource::Image(Arc::new(Image::from_bytes(ImageFormat::Png, ICON_PNG.to_vec())));
+	div()
+		.flex()
+		.flex_col()
+		.gap(px(8.))
+		.child(label("app_icon! · the PNG the Dock and the window show"))
+		.child(
+			div()
+				.flex()
+				.flex_row()
+				.items_end()
+				.gap(px(16.))
+				.child(img(source.clone()).size(px(128.)))
+				.child(img(source).size(px(48.))),
+		)
+}
+
 pub fn chrome_section() -> impl IntoElement {
 	let strip = |style: ChromeStyle, name: &'static str| {
 		div().flex().flex_col().gap(px(8.)).child(label(name)).child(
@@ -456,7 +627,9 @@ pub fn chrome_section() -> impl IntoElement {
 	div()
 		.flex()
 		.flex_row()
+		.flex_wrap()
 		.gap(px(24.))
+		.child(app_icon_column())
 		.child(strip(ChromeStyle::MacOs, "macOS: system traffic lights"))
 		.child(strip(ChromeStyle::Windows, "Windows: round captions, red close"))
 		.child(strip(

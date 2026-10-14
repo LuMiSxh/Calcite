@@ -16,14 +16,14 @@ bootstrap:
 patch-regen:
     ./scripts/patch-regen.sh
 
-# Run the gallery (default) or the home screen; extra arguments go to the binary, e.g. an artwork image for home.
+# Run the developer preview (default) or the home screen; extra arguments go to the binary, e.g. an artwork image for home.
 [group('Development')]
-run bin='gallery' *args='':
+run bin='preview' *args='':
     cargo run --release --bin {{ quote(bin) }} -- {{ args }}
 
-# Run the gallery (default) or the home screen with frame timings printed once a second.
+# Run the developer preview (default) or the home screen with frame timings printed once a second.
 [group('Development')]
-stats bin='gallery':
+stats bin='preview':
     CALCITE_FRAME_STATS=1 cargo run --release --features frame-stats --bin {{ quote(bin) }}
 
 # Format, lint, and test the Calcite crates.
@@ -50,7 +50,7 @@ format:
         cargo fmt -p "$crate"
     done
 
-# Package the gallery as app, dmg, nsis, msi, deb, or appimage (default: the host's native format).
+# Package the developer preview ("Calcite - preview") as app, dmg, nsis, msi, deb, or appimage (default: the host's native format).
 [group('Packaging')]
 bundle format='' *args='':
-    cargo run -p calcite-bundle -- calcite bundle -p calcite-showcase --bin gallery {{ if format != '' { '--format ' + quote(format) } else { '' } }} {{ args }}
+    cargo run -p calcite-bundle -- calcite bundle -p calcite-showcase --bin preview {{ if format != '' { '--format ' + quote(format) } else { '' } }} {{ args }}

@@ -11,7 +11,10 @@
 //! label, icons) through a paint transform, like SwiftUI's `scaleEffect`. GPUI re-renders
 //! while a spring moves and stops when it settles.
 
-use std::{rc::Rc, time::Instant};
+use std::{
+	rc::Rc,
+	time::{Duration, Instant},
+};
 
 use gpui::{
 	Animated, AnyElement, AnyWindowHandle, App, Bounds, BoxShadow, Div, Element, ElementId, Entity, Filter,
@@ -27,8 +30,8 @@ use crate::{
 		tokens::{JELLY, PRESS},
 		value::{SpringState, advance},
 	},
-	theme::Theme,
-	tokens::{self, control, over, white, with_alpha},
+	theme::{ActiveTheme, Theme},
+	tokens::{self, control, over, with_alpha},
 };
 
 /// Press and hover feedback (`ActionPressStyle.Intensity`).
@@ -262,10 +265,29 @@ impl Element for ScaleEffect {
 	}
 }
 
+/// Whether decorative motion should hold still: the system's Reduce Motion setting or the
+/// theme flag. Every animation that only dresses a change reads it before asking for frames.
+pub fn reduce_motion(cx: &App) -> bool {
+	cx.reduce_motion() || cx.theme().reduce_motion
+}
+
+/// How far past its laid-out bounds the pointer still counts as over a control: a hovered control
+/// scales up a little, and its edge must not flicker.
+///
+/// Limitation: the bounds are recorded when the control paints. A view that is cached and then
+/// scrolled moves the control without rendering it, so the bounds (and this check) lag until
+/// the view renders again; hover edges themselves still come from the live hit test.
+const HOVER_SLOP: Pixels = px(4.);
+
+/// How long a Space or Return activation holds the press feedback.
+const KEY_PRESS_PULSE: Duration = Duration::from_millis(120);
+
 /// The state a control keeps across frames.
 pub struct ControlState {
 	hovered: bool,
 	pressed: bool,
+	/// When a keyboard activation last started; the press feedback lasts [`KEY_PRESS_PULSE`].
+	key_pulse: Option<Instant>,
 	bounds: Option<Bounds<Pixels>>,
 	pointer: Option<Point<Pixels>>,
 	/// Scale and its velocity: retargeting (press during a hover lift, release mid-press) keeps
@@ -281,6 +303,7 @@ impl ControlState {
 		Self {
 			hovered: false,
 			pressed: false,
+			key_pulse: None,
 			bounds: None,
 			pointer: None,
 			scale: SpringState::at_rest(1.),
@@ -288,6 +311,20 @@ impl ControlState {
 			scale_at: Instant::now(),
 			light: Animated::new(0., Curve::Hover.transition(false)),
 		}
+	}
+
+	/// Drops a hover or press the pointer's exit event never cleared. Returns whether anything
+	/// changed.
+	pub(crate) fn clear_hover(&mut self) -> bool {
+		let changed = self.hovered || self.pressed;
+		self.hovered = false;
+		self.pressed = false;
+		changed
+	}
+
+	/// Starts the press feedback of a keyboard activation.
+	fn pulse(&mut self) {
+		self.key_pulse = Some(Instant::now());
 	}
 
 	/// The state of the control `id`, kept for as long as the control renders.
@@ -305,10 +342,29 @@ impl ControlState {
 		cx: &mut App,
 	) -> ControlFrame {
 		let now = Instant::now();
+		let reduce_motion = reduce_motion || self::reduce_motion(cx);
 		let (frame, is_moving) = state.update(cx, |state, _| {
 			let (hover_scale, press_scale) = feedback.scales();
+			// A pointer that left without an exit event (a fast flick, the window losing the
+			// pointer) must not leave the hover lit or the press held: check the live pointer
+			// against the bounds. A control that appeared under a still pointer never got a hover
+			// edge, so this runs for a press too.
+			if (state.hovered || state.pressed)
+				&& (!window.is_window_active()
+					|| state
+						.bounds
+						.is_some_and(|bounds| !bounds.dilate(HOVER_SLOP).contains(&window.mouse_position())))
+			{
+				state.clear_hover();
+			}
+			let pulsing = state
+				.key_pulse
+				.is_some_and(|start| now.saturating_duration_since(start) < KEY_PRESS_PULSE);
+			if !pulsing {
+				state.key_pulse = None;
+			}
 			let hovered = enabled && state.hovered;
-			let pressed = enabled && state.pressed;
+			let pressed = enabled && (state.pressed || pulsing);
 			// Reduce Motion keeps only the opacity dip of a press.
 			let scale_target = if reduce_motion {
 				1.
@@ -321,6 +377,10 @@ impl ControlState {
 			};
 			let dt = now.saturating_duration_since(state.scale_at).as_secs_f32();
 			state.scale_at = now;
+			if reduce_motion {
+				// No spring under Reduce Motion: a scale left over from before snaps to rest.
+				state.scale = SpringState::at_rest(scale_target);
+			}
 			// A spring that was idle has no meaningful elapsed time: its first frame is the retarget.
 			let (next, scale_active) = advance(
 				state.scale,
@@ -360,7 +420,9 @@ impl ControlState {
 				pointer,
 				pointer_radius,
 			};
-			(frame, scale_active || light.is_active)
+			let decorative = (scale_active || light.is_active) && !reduce_motion;
+			// The pulse must end with a frame even under Reduce Motion: the opacity dip is kept.
+			(frame, decorative || pulsing)
 		});
 		if is_moving {
 			window.request_animation_frame();
@@ -372,16 +434,16 @@ impl ControlState {
 /// The fill of a row: the accent selection fill at `selected` (0..=1) with the shared hover
 /// overlay on top, which gives way to the selection. The resting fill is transparent white,
 /// not clear black, so a fill transition never passes through dark colors.
-pub(crate) fn row_fill(accent: Rgba, selected: f32, light: f32) -> Rgba {
+pub(crate) fn row_fill(ink: Rgba, accent: Rgba, selected: f32, light: f32) -> Rgba {
 	let selected = selected.clamp(0., 1.);
 	let selection = with_alpha(accent, control::SELECTED_ROW_FILL_OPACITY * selected);
 	let hover = with_alpha(
-		white(1.),
+		with_alpha(ink, 1.),
 		control::HOVER_OPACITY * light.clamp(0., 1.) * (1. - selected),
 	);
 	let fill = over(hover, selection);
 	if fill.alpha <= f32::EPSILON {
-		with_alpha(white(1.), 0.)
+		with_alpha(ink, 0.)
 	} else {
 		fill
 	}
@@ -404,9 +466,21 @@ impl ClickableRow {
 		Self { state, focus, frame }
 	}
 
+	/// Whether the row is a tab stop (the default). A roving group (a rail, a radio group) flags
+	/// only its current entry, so Tab visits the group once and the arrow keys move inside it.
+	pub(crate) fn tab_stop(mut self, tab_stop: bool) -> Self {
+		self.focus = self.focus.tab_stop(tab_stop);
+		self
+	}
+
+	/// The row's focus handle, for the group that routes the arrow keys.
+	pub(crate) fn focus(&self) -> &FocusHandle {
+		&self.focus
+	}
+
 	/// The row's background for a selection amount of `selected` (0..=1).
 	pub(crate) fn fill(&self, theme: &Theme, selected: f32) -> Rgba {
-		row_fill(theme.accent, selected, self.frame.light)
+		row_fill(theme.palette.ink, theme.accent, selected, self.frame.light)
 	}
 
 	/// Makes `row` respond: hover tracking and the focus ring of `shape`.
@@ -448,12 +522,30 @@ pub fn glow_layer(frame: &ControlFrame, tint: Rgba) -> Option<gpui::Div> {
 
 /// Wires a control's hover, press, pointer, and bounds into its [`ControlState`].
 pub trait ControlInteraction: StatefulInteractiveElement + ParentElement + Sized {
+	/// When the pointer leaves this whole element, drops the hover and press of every state in
+	/// `states`. A fast exit can skip a child's own hover-out event, which would leave it lit.
+	fn clear_hover_on_leave(self, states: Vec<Entity<ControlState>>) -> Self {
+		self.on_hover(move |hovered, _, cx| {
+			if !*hovered {
+				for state in &states {
+					state.update(cx, |state, cx| {
+						if state.clear_hover() {
+							cx.notify();
+						}
+					});
+				}
+			}
+		})
+	}
+
 	fn control_state(self, state: &Entity<ControlState>, tracks_pointer: bool) -> Self {
 		let hover = state.clone();
 		let press = state.clone();
 		let release = state.clone();
+		let release_out = state.clone();
 		let pointer = state.clone();
 		let probe = state.clone();
+		let key = state.clone();
 		let this = self
 			.on_hover(move |hovered, _, cx| {
 				hover.update(cx, |state, cx| {
@@ -473,6 +565,30 @@ pub trait ControlInteraction: StatefulInteractiveElement + ParentElement + Sized
 			.on_mouse_up(MouseButton::Left, move |_, _, cx| {
 				release.update(cx, |state, cx| {
 					state.pressed = false;
+					cx.notify();
+				});
+			})
+			// Released outside after a drag off a control that never saw a hover edge.
+			.on_mouse_up_out(MouseButton::Left, move |_, _, cx| {
+				release_out.update(cx, |state, cx| {
+					if state.pressed {
+						state.pressed = false;
+						cx.notify();
+					}
+				});
+			})
+			// Space and Return activate a focused control without the mouse: show the press.
+			.on_key_down(move |event, window, cx| {
+				let stroke = &event.keystroke;
+				if event.is_held
+					|| stroke.modifiers.modified()
+					|| !matches!(stroke.key.as_str(), "space" | "enter")
+					|| text_input_focused(window)
+				{
+					return;
+				}
+				key.update(cx, |state, cx| {
+					state.pulse();
 					cx.notify();
 				});
 			});
@@ -513,6 +629,7 @@ pub fn spring_value(
 	window: &mut Window,
 	cx: &mut App,
 ) -> f32 {
+	let reduce_motion = reduce_motion || self::reduce_motion(cx);
 	if let Some(spring) = curve.spring() {
 		return motion::spring(id, target, spring, reduce_motion, window, cx).value;
 	}
@@ -526,7 +643,7 @@ pub fn spring_value(
 		}
 		value.sample(now)
 	});
-	if sample.is_active {
+	if sample.is_active && !reduce_motion {
 		window.request_animation_frame();
 	}
 	sample.value
@@ -544,6 +661,7 @@ pub fn presence(
 	cx: &mut App,
 ) -> Option<f32> {
 	let target = if shown { 1. } else { 0. };
+	let reduce_motion = reduce_motion || self::reduce_motion(cx);
 	let curve = if shown { Curve::Present } else { Curve::Dismiss };
 	let spring = curve.spring().unwrap_or(motion::tokens::SMOOTH);
 	let sample = motion::spring_from(id, 0., target, spring, reduce_motion, window, cx);
@@ -568,8 +686,17 @@ pub enum FocusShape {
 	Rounded(Pixels),
 }
 
-/// How far the ring sits outside the control (`padding(-3)` in the launcher).
-const FOCUS_OUTSET: f32 = 3.;
+/// The ring's stroke width.
+const FOCUS_RING_WIDTH: f32 = 2.;
+
+/// The gap between the control's edge and the ring.
+const FOCUS_RING_OFFSET: f32 = 2.;
+
+/// How far the ring's box sits outside the control.
+const FOCUS_OUTSET: f32 = FOCUS_RING_WIDTH + FOCUS_RING_OFFSET;
+
+/// The opacity of the focus ring: soft enough to read as a halo, strong enough to find.
+pub const FOCUS_RING_ALPHA: f32 = 0.6;
 
 /// The focus handle of the control `id`, a tab stop kept for as long as the control renders.
 pub fn focus_handle(id: &ElementId, window: &mut Window, cx: &mut App) -> FocusHandle {
@@ -588,7 +715,8 @@ pub fn focus_visible(handle: &FocusHandle, window: &Window) -> bool {
 	handle.is_focused(window) && window.last_input_was_keyboard() && window.is_window_active()
 }
 
-/// The 2 pt accent ring around a focused control. Its parent must be `relative`.
+/// The soft accent ring around a focused control: 2 pt wide, 2 pt off the edge, at
+/// [`FOCUS_RING_ALPHA`]. Its parent must be `relative`.
 pub fn focus_ring(shape: FocusShape, theme: &Theme) -> gpui::Div {
 	let outset = px(-FOCUS_OUTSET);
 	let ring = div()
@@ -598,7 +726,7 @@ pub fn focus_ring(shape: FocusShape, theme: &Theme) -> gpui::Div {
 		.left(outset)
 		.right(outset)
 		.border_2()
-		.border_color(tokens::contrast_tint(theme.accent));
+		.border_color(with_alpha(tokens::contrast_tint(theme.accent), FOCUS_RING_ALPHA));
 	match shape {
 		FocusShape::Capsule => ring.rounded_full(),
 		FocusShape::Rounded(corner) => ring.rounded(corner + px(FOCUS_OUTSET)),
@@ -630,6 +758,20 @@ pub(crate) enum KeyRole {
 	/// A focusable surface that passes Return on to the default action, like a modal
 	/// container or a single-line text field.
 	PassReturn,
+	/// A modal's focus scope: Tab and Shift-Tab cycle inside it.
+	TabScope,
+}
+
+impl KeyRole {
+	/// The keyed-state name of a slot with this role.
+	fn slot_key(self) -> &'static str {
+		match self {
+			KeyRole::DefaultAction => "calcite-default-action",
+			KeyRole::Dismiss => "calcite-dismiss",
+			KeyRole::PassReturn => "calcite-pass-return",
+			KeyRole::TabScope => "calcite-tab-scope",
+		}
+	}
 }
 
 pub(crate) type KeyHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
@@ -659,12 +801,7 @@ pub(crate) fn register_key_target(
 	window: &mut Window,
 	cx: &mut App,
 ) {
-	let key = match role {
-		KeyRole::DefaultAction => "calcite-default-action",
-		KeyRole::Dismiss => "calcite-dismiss",
-		KeyRole::PassReturn => "calcite-pass-return",
-	};
-	let slot = window.use_keyed_state((id.clone(), key), cx, |_, _| KeySlot {
+	let slot = window.use_keyed_state((id.clone(), role.slot_key()), cx, |_, _| KeySlot {
 		handler: None,
 		focus: None,
 	});
@@ -677,6 +814,21 @@ pub(crate) fn register_key_target(
 	let targets = &mut cx.default_global::<KeyTargets>().0;
 	targets.retain(|(_, _, slot)| slot.entity_id() != weak.entity_id() && slot.upgrade().is_some());
 	targets.push((window_handle, role, weak));
+}
+
+/// Removes the key target of the control `id` for `role`, so a surface that is leaving (or gone)
+/// stops answering keys.
+pub(crate) fn unregister_key_target(id: &ElementId, role: KeyRole, window: &mut Window, cx: &mut App) {
+	let slot = window.use_keyed_state((id.clone(), role.slot_key()), cx, |_, _| KeySlot {
+		handler: None,
+		focus: None,
+	});
+	let gone = slot.entity_id();
+	if cx.has_global::<KeyTargets>() {
+		cx.global_mut::<KeyTargets>()
+			.0
+			.retain(|(_, _, slot)| slot.entity_id() != gone);
+	}
 }
 
 fn live_slots(role: KeyRole, window: &Window, cx: &App) -> Vec<Entity<KeySlot>> {
@@ -728,6 +880,40 @@ actions!(
 	]
 );
 
+/// How many tab stops [`focus_within`] steps through before it gives up.
+const TAB_SCAN_LIMIT: usize = 256;
+
+/// Moves focus one tab stop forward or back inside `scope`, wrapping at its ends: Tab from the
+/// last control lands on the first rather than on the page behind a modal.
+pub(crate) fn focus_within(scope: &FocusHandle, forward: bool, window: &mut Window, cx: &mut App) {
+	for _ in 0..TAB_SCAN_LIMIT {
+		if forward {
+			window.focus_next(cx);
+		} else {
+			window.focus_prev(cx);
+		}
+		if scope.contains_focused(window, cx) {
+			return;
+		}
+	}
+	// Nothing inside takes focus: park it on the scope itself.
+	window.focus(scope, cx);
+}
+
+/// Tab or Shift-Tab: one tab stop on, confined to the topmost modal when one is up. Text
+/// fields that handle Tab themselves should call this instead of `Window::focus_next`.
+pub fn tab_step(forward: bool, window: &mut Window, cx: &mut App) {
+	let scope = live_slots(KeyRole::TabScope, window, cx)
+		.into_iter()
+		.rev()
+		.find_map(|slot| slot.read(cx).focus.clone());
+	match scope {
+		Some(scope) => focus_within(&scope, forward, window, cx),
+		None if forward => window.focus_next(cx),
+		None => window.focus_prev(cx),
+	}
+}
+
 /// Binds Tab and Shift-Tab to move focus, and routes Return to the default action and
 /// Escape to the topmost menu or modal. Call it once; later calls do nothing.
 pub fn init_keyboard(cx: &mut App) {
@@ -744,22 +930,28 @@ pub fn init_keyboard(cx: &mut App) {
 	cx.on_action(|_: &FocusNext, cx| {
 		if let Some(window) = cx.active_window() {
 			cx.defer(move |cx| {
-				window.update(cx, |_, window, cx| window.focus_next(cx)).ok();
+				window.update(cx, |_, window, cx| tab_step(true, window, cx)).ok();
 			});
 		}
 	});
 	cx.on_action(|_: &FocusPrevious, cx| {
 		if let Some(window) = cx.active_window() {
 			cx.defer(move |cx| {
-				window.update(cx, |_, window, cx| window.focus_prev(cx)).ok();
+				window
+					.update(cx, |_, window, cx| tab_step(false, window, cx))
+					.ok();
 			});
 		}
 	});
 	// An interceptor sees the window and runs before key bindings, so Return and Escape
-	// work even when no control has focus.
+	// work even when no control has focus. Escape in a text input is the input's own: it
+	// ends a composition and blurs the field before it can dismiss anything.
 	cx.intercept_keystrokes(|event, window, cx| {
 		let stroke = &event.keystroke;
 		if stroke.modifiers.modified() {
+			return;
+		}
+		if stroke.key == "escape" && text_input_focused(window) {
 			return;
 		}
 		if let Some(handler) = key_handler(&stroke.key, window, cx) {
@@ -768,6 +960,15 @@ pub fn init_keyboard(cx: &mut App) {
 		}
 	})
 	.detach();
+}
+
+/// Whether a text input has focus. It owns Escape (ending a composition, then blurring) and
+/// Space, so neither dismisses a surface nor presses a control.
+pub(crate) fn text_input_focused(window: &Window) -> bool {
+	window
+		.context_stack()
+		.iter()
+		.any(|context| context.contains(crate::keymap::INPUT_CONTEXT))
 }
 
 /// The step that arrow keys move a value: `step`, or 5 % of the range.
@@ -791,6 +992,8 @@ pub(crate) fn arrow_direction(event: &KeyDownEvent) -> Option<i32> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use gpui::{Context, Entity, IntoElement, Render, TestAppContext, VisualTestContext};
+	use std::cell::{Cell, RefCell};
 
 	fn frame(pressed: bool) -> ControlFrame {
 		ControlFrame {
@@ -802,6 +1005,17 @@ mod tests {
 			pointer: None,
 			pointer_radius: px(10.),
 		}
+	}
+
+	#[test]
+	fn clear_hover_drops_hover_and_press() {
+		let mut state = ControlState::new();
+		assert!(!state.clear_hover());
+		state.hovered = true;
+		state.pressed = true;
+		assert!(state.clear_hover());
+		assert!(!state.hovered && !state.pressed);
+		assert!(!state.clear_hover());
 	}
 
 	#[test]
@@ -861,19 +1075,20 @@ mod tests {
 
 	#[test]
 	fn hover_fill_scales_the_shared_hover_token_with_the_light() {
-		let fill = frame(false).hover_fill(white(1.));
+		let fill = frame(false).hover_fill(tokens::white(1.));
 		assert!((fill.alpha - control::HOVER_OPACITY * 0.5).abs() < 1e-6);
 	}
 
 	#[test]
 	fn row_fill_rests_transparent_and_hovers_at_the_shared_strength() {
 		let accent = tokens::rgba(0.2, 0.4, 0.9, 1.);
-		assert_eq!(row_fill(accent, 0., 0.).alpha, 0.);
-		assert!((row_fill(accent, 0., 1.).alpha - control::HOVER_OPACITY).abs() < 1e-6);
+		let ink = tokens::white(1.);
+		assert_eq!(row_fill(ink, accent, 0., 0.).alpha, 0.);
+		assert!((row_fill(ink, accent, 0., 1.).alpha - control::HOVER_OPACITY).abs() < 1e-6);
 		// A selected row shows the selection fill and ignores hover.
-		let selected = row_fill(accent, 1., 1.);
+		let selected = row_fill(ink, accent, 1., 1.);
 		assert!((selected.alpha - control::SELECTED_ROW_FILL_OPACITY).abs() < 1e-6);
-		assert_eq!(selected, row_fill(accent, 1., 0.));
+		assert_eq!(selected, row_fill(ink, accent, 1., 0.));
 	}
 
 	#[test]
@@ -924,5 +1139,191 @@ mod tests {
 	fn key_step_defaults_to_five_percent_of_the_range() {
 		assert!((key_step(&(0.0..=200.0), None) - 10.).abs() < 1e-6);
 		assert_eq!(key_step(&(0.0..=1.0), Some(0.25)), 0.25);
+	}
+
+	#[test]
+	fn the_focus_ring_is_a_soft_two_point_halo() {
+		assert_eq!(FOCUS_RING_WIDTH, 2.);
+		assert_eq!(FOCUS_RING_OFFSET, 2.);
+		assert_eq!(FOCUS_OUTSET, FOCUS_RING_WIDTH + FOCUS_RING_OFFSET);
+		assert!((0.4..=0.8).contains(&FOCUS_RING_ALPHA));
+	}
+
+	/// A control at (50, 50), 100 square, that records the frame it was given. Its pointer
+	/// events go through [`ControlInteraction::control_state`], the path every control uses.
+	struct Probe {
+		shown: bool,
+		/// `(hovered, pressed)` of the last frame.
+		seen: Rc<Cell<(bool, bool)>>,
+		state: Rc<RefCell<Option<Entity<ControlState>>>>,
+		focus: Rc<RefCell<Option<FocusHandle>>>,
+	}
+
+	impl Render for Probe {
+		fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+			let root = div().size_full();
+			if !self.shown {
+				return root;
+			}
+			let id: ElementId = "probe".into();
+			let state = ControlState::of(&id, window, cx);
+			let focus = focus_handle(&id, window, cx);
+			let frame = ControlState::frame(&state, Feedback::Standard, true, false, window, cx);
+			self.seen.set((frame.hovered, frame.pressed));
+			*self.state.borrow_mut() = Some(state.clone());
+			*self.focus.borrow_mut() = Some(focus.clone());
+			root.child(
+				div()
+					.id(id)
+					.track_focus(&focus)
+					.absolute()
+					.left(px(50.))
+					.top(px(50.))
+					.size(px(100.))
+					.control_state(&state, false),
+			)
+		}
+	}
+
+	struct Rig {
+		view: Entity<Probe>,
+		seen: Rc<Cell<(bool, bool)>>,
+		state: Rc<RefCell<Option<Entity<ControlState>>>>,
+		focus: Rc<RefCell<Option<FocusHandle>>>,
+	}
+
+	const INSIDE: Point<Pixels> = point(px(100.), px(100.));
+	const OUTSIDE: Point<Pixels> = point(px(400.), px(400.));
+
+	fn rig(shown: bool, cx: &mut TestAppContext) -> (Rig, &mut VisualTestContext) {
+		cx.update(crate::init);
+		let seen = Rc::new(Cell::new((false, false)));
+		let state = Rc::new(RefCell::new(None));
+		let focus = Rc::new(RefCell::new(None));
+		let (view, vcx) = cx.add_window_view({
+			let (seen, state, focus) = (seen.clone(), state.clone(), focus.clone());
+			move |_, _| Probe {
+				shown,
+				seen,
+				state,
+				focus,
+			}
+		});
+		vcx.update(|window, _| window.activate());
+		let rig = Rig {
+			view,
+			seen,
+			state,
+			focus,
+		};
+		rig.render(vcx);
+		(rig, vcx)
+	}
+
+	impl Rig {
+		/// Renders the probe again, as a state notification does.
+		fn render(&self, cx: &mut VisualTestContext) {
+			self.view.update(cx, |_, cx| cx.notify());
+			cx.update(|window, cx| window.draw(cx).clear(cx));
+		}
+
+		fn show(&self, cx: &mut VisualTestContext) {
+			self.view.update(cx, |probe, _| probe.shown = true);
+			self.render(cx);
+		}
+
+		fn state(&self) -> Entity<ControlState> {
+			self.state.borrow().clone().expect("the probe rendered")
+		}
+	}
+
+	fn mouse(cx: &mut VisualTestContext, at: Point<Pixels>, action: &str) {
+		let none = gpui::Modifiers::none();
+		match action {
+			"move" => cx.simulate_mouse_move(at, None, none),
+			"down" => cx.simulate_mouse_down(at, MouseButton::Left, none),
+			_ => cx.simulate_mouse_up(at, MouseButton::Left, none),
+		}
+	}
+
+	#[gpui::test]
+	fn a_pointer_that_left_without_an_exit_event_drops_hover_and_press(cx: &mut TestAppContext) {
+		let (rig, cx) = rig(true, cx);
+		// The pointer is at the origin, outside the control; no exit event will ever arrive.
+		rig.state().update(cx, |state, _| {
+			state.hovered = true;
+			state.pressed = true;
+		});
+		rig.render(cx);
+		assert_eq!(rig.seen.get(), (false, false));
+	}
+
+	#[gpui::test]
+	fn a_press_does_not_survive_the_window_losing_activation(cx: &mut TestAppContext) {
+		let (rig, cx) = rig(true, cx);
+		mouse(cx, INSIDE, "move");
+		mouse(cx, INSIDE, "down");
+		rig.render(cx);
+		assert_eq!(rig.seen.get(), (true, true));
+		cx.deactivate_window();
+		rig.render(cx);
+		assert_eq!(rig.seen.get(), (false, false));
+	}
+
+	#[gpui::test]
+	fn pressing_then_leaving_releases_the_press(cx: &mut TestAppContext) {
+		let (rig, cx) = rig(true, cx);
+		mouse(cx, INSIDE, "move");
+		mouse(cx, INSIDE, "down");
+		mouse(cx, OUTSIDE, "move");
+		mouse(cx, OUTSIDE, "up");
+		rig.render(cx);
+		assert_eq!(rig.seen.get(), (false, false));
+	}
+
+	#[gpui::test]
+	fn a_control_that_appears_under_a_still_pointer_releases_after_a_drag_off(cx: &mut TestAppContext) {
+		let (rig, cx) = rig(false, cx);
+		// The pointer rests where the control is about to appear and never moves into it.
+		mouse(cx, INSIDE, "move");
+		rig.show(cx);
+		mouse(cx, INSIDE, "down");
+		rig.render(cx);
+		assert!(
+			rig.seen.get().1,
+			"the press should show while the pointer is on the control"
+		);
+		mouse(cx, OUTSIDE, "move");
+		mouse(cx, OUTSIDE, "up");
+		rig.render(cx);
+		assert_eq!(rig.seen.get(), (false, false));
+	}
+
+	#[gpui::test]
+	fn space_shows_the_press_for_a_moment(cx: &mut TestAppContext) {
+		let (rig, cx) = rig(true, cx);
+		let focus = rig.focus.borrow().clone().expect("the probe rendered");
+		cx.update(|window, cx| window.focus(&focus, cx));
+		// The pointer is elsewhere: only the keyboard presses.
+		cx.simulate_keystrokes("space");
+		rig.render(cx);
+		assert_eq!(rig.seen.get(), (false, true), "Space should dip the control");
+		std::thread::sleep(KEY_PRESS_PULSE + Duration::from_millis(30));
+		rig.render(cx);
+		assert_eq!(rig.seen.get(), (false, false), "the dip should end by itself");
+	}
+
+	#[test]
+	fn the_reduce_motion_helper_follows_the_system_and_the_theme() {
+		let cx = gpui::TestAppContext::single();
+		cx.update(|cx| {
+			crate::init(cx);
+			assert!(!reduce_motion(cx));
+			cx.set_reduce_motion(true);
+			assert!(reduce_motion(cx));
+			cx.set_reduce_motion(false);
+			crate::Theme::update(cx, |theme| theme.reduce_motion = true);
+			assert!(reduce_motion(cx));
+		});
 	}
 }

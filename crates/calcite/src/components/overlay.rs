@@ -5,7 +5,8 @@
 //! which dims the window and centers the modal.
 //!
 //! Escape calls the layer's `on_dismiss`, and Return clicks the `done_button`, once
-//! [`init_keyboard`](crate::interaction::init_keyboard) runs.
+//! [`init_keyboard`](crate::interaction::init_keyboard) runs. While a layer is up, Tab and
+//! Shift-Tab cycle inside it, and focus returns to the control that had it when the layer leaves.
 //!
 //! ```ignore
 //! modal_layer("update", modal("update-sheet", "Update available")
@@ -16,9 +17,9 @@
 //! ```
 
 use gpui::{
-	Animation, AnimationExt, AnyElement, App, ClickEvent, Div, ElementId, FontWeight, IntoElement,
-	MouseButton, ParentElement, Pixels, Role, SharedString, Styled, Window, div, linear_color_stop,
-	linear_gradient, prelude::*, px, size,
+	Animation, AnimationExt, AnyElement, AnyWindowHandle, App, AsyncApp, ClickEvent, Div, ElementId,
+	FontWeight, IntoElement, MouseButton, ParentElement, Pixels, Role, SharedString, Styled, Window, div,
+	linear_color_stop, linear_gradient, prelude::*, px, size,
 };
 use smallvec::SmallVec;
 use std::rc::Rc;
@@ -27,23 +28,63 @@ use crate::{
 	controls::{Button, SharedClickHandler, button, theme_override},
 	glass::{Elevation, GlassExt},
 	icons::Icon,
-	interaction::{KeyHandler, KeyRole, presence, register_key_target},
+	interaction::{KeyHandler, KeyRole, presence, register_key_target, unregister_key_target},
 	motion::Curve,
 	theme::{ActiveTheme, Theme},
-	tokens::{self, control, scale_alpha, stack},
+	tokens::{self, scale_alpha, stack},
 };
 
-/// The floating glass container of modal and onboarding actions. A single row stays a
-/// capsule; `.expanded()` uses the panel radius for wrapped action groups.
-pub fn floating_action_bar(theme: &Theme) -> Div {
-	div()
-		.flex()
-		.flex_row()
-		.items_center()
-		.gap(px(12.))
-		.p(px(10.))
-		.rounded_full()
-		.glass_hud_at(theme, Elevation::Resting)
+/// The floating glass container of modal and onboarding actions: a capsule row. It reads the
+/// theme when it renders; style it like any GPUI element.
+pub fn floating_action_bar() -> FloatingActionBar {
+	FloatingActionBar {
+		base: div(),
+		children: SmallVec::new(),
+		theme: None,
+	}
+}
+
+/// The bar of [`floating_action_bar`].
+#[derive(IntoElement)]
+pub struct FloatingActionBar {
+	base: Div,
+	children: SmallVec<[AnyElement; 3]>,
+	theme: Option<Theme>,
+}
+
+impl FloatingActionBar {
+	/// Uses `theme` instead of the app's.
+	pub fn theme(mut self, theme: Theme) -> Self {
+		self.theme = Some(theme);
+		self
+	}
+}
+
+impl Styled for FloatingActionBar {
+	fn style(&mut self) -> &mut gpui::StyleRefinement {
+		self.base.style()
+	}
+}
+
+impl ParentElement for FloatingActionBar {
+	fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+		self.children.extend(elements);
+	}
+}
+
+impl RenderOnce for FloatingActionBar {
+	fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+		let theme = self.theme.unwrap_or_else(|| cx.theme());
+		self.base
+			.flex()
+			.flex_row()
+			.items_center()
+			.gap(px(12.))
+			.p(px(10.))
+			.rounded_full()
+			.glass_hud_at(&theme, Elevation::Resting)
+			.children(self.children)
+	}
 }
 
 /// The standard confirmation action of a floating footer. Return clicks it.
@@ -81,8 +122,17 @@ pub fn modal(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Modal 
 }
 
 impl Modal {
-	pub fn size(mut self, width: Pixels, height: Pixels) -> Self {
+	/// The preferred size, clamped to the window when it renders.
+	pub fn dimensions(self, width: Pixels, height: Pixels) -> Self {
+		self.width(width).height(height)
+	}
+
+	pub fn width(mut self, width: Pixels) -> Self {
 		self.width = width;
+		self
+	}
+
+	pub fn height(mut self, height: Pixels) -> Self {
 		self.height = height;
 		self
 	}
@@ -140,7 +190,8 @@ impl RenderOnce for Modal {
 					.child(div().flex_1().h(px(1.)).bg(theme.palette.hairline)),
 			)
 			.with_animation((self.id.clone(), "header"), entrance.clone(), |header, t| {
-				header.opacity(t).mt(px(6. * (1. - t)))
+				// A paint-time shift, not a margin: layout does not rerun while it plays.
+				header.opacity(t).relative().top(px(6. * (1. - t)))
 			});
 		let content = div()
 			.id((self.id.clone(), "content"))
@@ -158,7 +209,7 @@ impl RenderOnce for Modal {
 					.text_size(tokens::text::BODY)
 					.children(self.children)
 					.with_animation((self.id.clone(), "body"), entrance, |body, t| {
-						body.opacity(t).mt(px(14. * (1. - t)))
+						body.opacity(t).relative().top(px(14. * (1. - t)))
 					}),
 			);
 		let footer = div()
@@ -172,17 +223,22 @@ impl RenderOnce for Modal {
 			.flex()
 			.flex_row()
 			.justify_end()
+			// overflow_hidden clips to the rectangle, not the rounded corners, so the footer's own
+			// fill follows the card's bottom corners.
+			.rounded_bl(theme.style.radii.modal)
+			.rounded_br(theme.style.radii.modal)
+			.rounded_smoothing_ios()
 			.bg(if theme.reduce_transparency() {
-				tokens::black(0.72).into()
+				tokens::with_alpha(theme.palette.panel_background, 0.9).into()
 			} else {
 				linear_gradient(
 					180.,
-					linear_color_stop(tokens::CLEAR, 0.),
-					linear_color_stop(tokens::black(0.45), 1.),
+					linear_color_stop(tokens::with_alpha(theme.palette.panel_background, 0.), 0.),
+					linear_color_stop(tokens::with_alpha(theme.palette.panel_background, 0.85), 1.),
 				)
 			})
 			.when(!self.actions.is_empty(), |footer| {
-				footer.child(floating_action_bar(&theme).children(self.actions))
+				footer.child(floating_action_bar().theme(theme).children(self.actions))
 			});
 		div()
 			.id(self.id)
@@ -195,11 +251,19 @@ impl RenderOnce for Modal {
 			.overflow_hidden()
 			.rounded(theme.style.radii.modal)
 			.rounded_smoothing_ios()
-			.bg(background)
-			.border_1()
-			.border_color(theme.palette.hairline)
+			// Glass when transparency is allowed; an opaque panel under Reduce Transparency.
+			.map(|modal| {
+				if theme.reduce_transparency() {
+					modal
+						.bg(background)
+						.border_1()
+						.border_color(theme.palette.hairline)
+				} else {
+					modal.glass_hud_at(&theme, Elevation::Raised)
+				}
+			})
 			.shadow(vec![
-				gpui::BoxShadow::new(px(0.), px(10.), tokens::black(0.45)).blur_radius(px(48.)),
+				gpui::BoxShadow::new(px(0.), px(10.), theme.shadow(0.45)).blur_radius(px(48.)),
 			])
 			.text_color(theme.palette.primary_text)
 			.role(Role::Dialog)
@@ -210,9 +274,10 @@ impl RenderOnce for Modal {
 	}
 }
 
-/// Dims the window (black 0.55) and centers `child`. A click on the dimmed area or Escape
+/// Dims the window ([`Theme::scrim`]) and centers `child`. A click on the dimmed area or Escape
 /// calls `on_dismiss`; clicks inside the child stay inside it. The layer takes keyboard
-/// focus when it appears, so Return and Tab stop reaching the page below.
+/// focus when it appears, so Return and Tab stop reaching the page below; Tab cycles inside
+/// the layer, and focus goes back to where it was when the layer is hidden or no longer rendered.
 #[derive(IntoElement)]
 pub struct ModalLayer {
 	id: ElementId,
@@ -246,11 +311,55 @@ impl ModalLayer {
 	}
 }
 
+/// Where focus goes back to when the layer leaves. Dropping it while the layer is still up (the
+/// app stopped rendering the layer instead of hiding it) restores focus on the next turn of the
+/// event loop, the same way hiding does.
+struct Opener {
+	previous: Option<gpui::FocusHandle>,
+	layer: gpui::FocusHandle,
+	window: AnyWindowHandle,
+	app: AsyncApp,
+}
+
+impl Drop for Opener {
+	fn drop(&mut self) {
+		let Some(previous) = self.previous.take() else {
+			return;
+		};
+		let (layer, window) = (self.layer.clone(), self.window);
+		self.app
+			.spawn(async move |cx| {
+				cx.update(|cx| {
+					window
+						.update(cx, |_, window, cx| {
+							if layer.contains_focused(window, cx) || window.focused(cx).is_none() {
+								window.focus(&previous, cx);
+							}
+						})
+						.ok();
+				});
+			})
+			.detach();
+	}
+}
+
 impl RenderOnce for ModalLayer {
 	fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let reduce_motion = theme.reduce_motion;
 		let presented = window.use_keyed_state((self.id.clone(), "calcite-presented"), cx, |_, _| false);
+		let focus = window
+			.use_keyed_state((self.id.clone(), "calcite-layer-focus"), cx, |_, cx| {
+				cx.focus_handle()
+			})
+			.read(cx)
+			.clone();
+		let opener = window.use_keyed_state((self.id.clone(), "calcite-opener"), cx, |window, cx| Opener {
+			previous: None,
+			layer: focus.clone(),
+			window: window.window_handle(),
+			app: cx.to_async(),
+		});
 		let Some(t) = presence(
 			(self.id.clone(), "calcite-layer"),
 			self.shown,
@@ -259,18 +368,16 @@ impl RenderOnce for ModalLayer {
 			cx,
 		) else {
 			presented.update(cx, |presented, _| *presented = false);
+			unregister_key_target(&self.id, KeyRole::Dismiss, window, cx);
+			unregister_key_target(&self.id, KeyRole::TabScope, window, cx);
 			return div().into_any_element();
 		};
-		// Focusable but not a tab stop: Tab from the layer moves into the modal.
-		let focus = window
-			.use_keyed_state((self.id.clone(), "calcite-layer-focus"), cx, |_, cx| {
-				cx.focus_handle()
-			})
-			.read(cx)
-			.clone();
+		// `focus` is focusable but not a tab stop: Tab from the layer moves into the modal.
 		if self.shown {
 			if !*presented.read(cx) {
 				presented.update(cx, |presented, _| *presented = true);
+				let previous = window.focused(cx);
+				opener.update(cx, |opener, _| opener.previous = previous);
 				let focus = focus.clone();
 				// Focus moves after this frame, once the layer is in the dispatch tree.
 				window.defer(cx, move |window, cx| window.focus(&focus, cx));
@@ -288,6 +395,20 @@ impl RenderOnce for ModalLayer {
 				window,
 				cx,
 			);
+			register_key_target(&self.id, KeyRole::TabScope, None, Some(focus.clone()), window, cx);
+		} else {
+			// Leaving: Escape and Tab no longer belong to the layer, and focus goes back.
+			unregister_key_target(&self.id, KeyRole::Dismiss, window, cx);
+			unregister_key_target(&self.id, KeyRole::TabScope, window, cx);
+			if let Some(previous) = opener.update(cx, |opener, _| opener.previous.take()) {
+				let layer = focus.clone();
+				window.defer(cx, move |window, cx| {
+					// Only if focus is still ours: a click elsewhere has moved it on.
+					if layer.contains_focused(window, cx) || window.focused(cx).is_none() {
+						window.focus(&previous, cx);
+					}
+				});
+			}
 		}
 		let rise = if reduce_motion { 0. } else { SHEET_RISE * (1. - t) };
 		div()
@@ -300,7 +421,7 @@ impl RenderOnce for ModalLayer {
 			.flex()
 			.items_center()
 			.justify_center()
-			.bg(tokens::black(control::OVERLAY_DIM))
+			.bg(theme.scrim())
 			.opacity(t.clamp(0., 1.))
 			.occlude()
 			// A leaving layer still blocks the window, but a click no longer dismisses again.
@@ -313,7 +434,8 @@ impl RenderOnce for ModalLayer {
 					// Keep clicks inside the modal from reaching the dismiss handler.
 					.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 					.on_click(|_, _, cx| cx.stop_propagation())
-					.mt(px(rise))
+					.relative()
+					.top(px(rise))
 					.child(self.child),
 			)
 			.into_any_element()

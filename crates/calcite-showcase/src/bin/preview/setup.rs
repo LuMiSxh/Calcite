@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Gallery sections for the setup assistant (step rail, choice cards) and for notices.
+//! Preview sections for the setup assistant (step rail, choice cards) and for notices.
 
 use calcite::prelude::*;
 use gpui::{Context, IntoElement, ParentElement, Styled, div, px};
 
-use super::{Gallery, sections::label};
+use super::{
+	Preview,
+	sections::{demo, label},
+};
 
 const ARTWORK: [(&str, &str, Icon); 3] = [
 	(
@@ -35,7 +38,7 @@ const EXTRAS: [(&str, &str); 2] = [
 	("Game version", "Shows the installed game version."),
 ];
 
-impl Gallery {
+impl Preview {
 	pub fn setup_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
 		let rail = step_rail("SETUP ASSISTANT")
 			.child(step("System Check", Icon::Info, StepState::Done))
@@ -111,26 +114,29 @@ impl Gallery {
 	}
 
 	pub fn notices_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+		let theme = cx.theme();
 		let banners = div()
 			.flex()
 			.flex_col()
 			.gap(px(10.))
-			.child(
+			.child(demo!(
 				banner("banner-info", "Arknights Client 0.8.0 is ready")
-					.detail("It installs when you quit the launcher."),
-			)
-			.child(banner("banner-success", "Game files verified").tone(BannerTone::Success))
-			.child(
+					.detail("It installs when you quit the launcher.")
+			))
+			.child(demo!(
+				banner("banner-success", "Game files verified").tone(Tone::Success)
+			))
+			.child(demo!(
 				banner("banner-warning", "Low disk space")
-					.tone(BannerTone::Warning)
+					.tone(Tone::Warning)
 					.detail("3.4 GB free; the update needs 4.1 GB.")
-					.action(button("banner-storage", "Open Storage").compact()),
-			)
-			.child(
+					.action(button("banner-storage", "Open Storage").compact())
+			))
+			.child(demo!(
 				banner("banner-danger", "Download failed")
-					.tone(BannerTone::Danger)
-					.on_dismiss(cx.listener(|_, _, _, cx| cx.notify())),
-			);
+					.tone(Tone::Danger)
+					.on_dismiss(cx.listener(|_, _, _, cx| cx.notify()))
+			));
 
 		let progress = div()
 			.flex()
@@ -144,13 +150,58 @@ impl Gallery {
 					.gap(px(16.))
 					.items_center()
 					.child(spinner())
-					.child(spinner().id("spinner-large").size(px(28.))),
+					.child(spinner().id("spinner-large").diameter(px(28.)))
+					.child(
+						spinner()
+							.id("spinner-accent")
+							.diameter(px(28.))
+							.color(theme.accent),
+					),
 			)
 			.child(
-				progress_bar("gallery-progress", Some(self.volume))
+				progress_bar("preview-progress", Some(self.volume))
 					.label(format!("{:.0} %", self.volume * 100.)),
 			)
-			.child(progress_bar("gallery-indeterminate", None));
+			.child(progress_bar("preview-indeterminate", None))
+			.child(label("progress_bar · 0 % · 100 % · height 8"))
+			.child(
+				div()
+					.flex()
+					.flex_col()
+					.gap(px(8.))
+					.child(progress_bar("preview-empty", Some(0.)).label("0 %"))
+					.child(progress_bar("preview-full", Some(1.)).label("100 %"))
+					.child(
+						progress_bar("preview-tall", Some(0.6))
+							.height(px(8.))
+							.label("60 %"),
+					),
+			)
+			// The outline is drawn around a capsule the parent sizes; the capsule's layout never changes.
+			.child(
+				div()
+					.flex()
+					.flex_col()
+					.gap(px(8.))
+					.child(label("progress_outline · determinate, following the volume"))
+					.child(
+						div()
+							.relative()
+							.w(px(240.))
+							.h(px(30.))
+							.rounded_full()
+							.child(progress_outline(OutlineMode::Determinate(self.volume)).glint(true)),
+					)
+					.child(label("progress_outline · indeterminate"))
+					.child(
+						div()
+							.relative()
+							.w(px(240.))
+							.h(px(30.))
+							.rounded_full()
+							.child(progress_outline(OutlineMode::Indeterminate).glint(true)),
+					),
+			);
 
 		let chips = div()
 			.flex()
@@ -194,13 +245,29 @@ impl Gallery {
 				})),
 			);
 
-		let confirm = button("open-confirm", "Uninstall Game…")
-			.danger()
-			.icon(Icon::XMark)
-			.on_click(cx.listener(|this, _, _, cx| {
-				this.confirm_open = true;
-				cx.notify();
-			}));
+		let confirm = div()
+			.flex()
+			.flex_col()
+			.gap(px(8.))
+			.child(
+				button("open-confirm", "Uninstall Game…")
+					.danger()
+					.icon(Icon::XMark)
+					.on_click(cx.listener(|this, _, _, cx| {
+						this.confirm_role = ConfirmRole::Destructive;
+						this.confirm_open = true;
+						cx.notify();
+					})),
+			)
+			.child(
+				button("open-confirm-default", "Reset Layout…")
+					.icon(Icon::ArrowClockwise)
+					.on_click(cx.listener(|this, _, _, cx| {
+						this.confirm_role = ConfirmRole::Default;
+						this.confirm_open = true;
+						cx.notify();
+					})),
+			);
 
 		div()
 			.flex()
@@ -224,10 +291,15 @@ impl Gallery {
 							.child(div().w(px(380.)).child(empty))
 							.child(
 								div()
+									.w(px(220.))
+									.child(empty_state(Icon::Folder, "Nothing here yet")),
+							)
+							.child(
+								div()
 									.flex()
 									.flex_col()
 									.gap(px(8.))
-									.child(label("Confirmation dialog"))
+									.child(label("confirm_dialog: Destructive and Default roles"))
 									.child(confirm),
 							),
 					),

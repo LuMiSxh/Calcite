@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The gallery caches each section as a view. These tests pin down what that relies on:
+//! The preview caches each section as a view. These tests pin down what that relies on:
 //! keyed element state survives the frames in which the cache is reused, a notification
 //! re-renders only the notified section, a window refresh (a theme change) re-renders every
 //! section, and a looping animation redraws only the section that shows it.
+//! The window frame relies on the same: a keyed state's notification repaints its own view
+//! without a window refresh.
 
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{
+	cell::{Cell, RefCell},
+	rc::Rc,
+	time::Duration,
+};
 
 use calcite::{continuous::ContinuousMotion, prelude::*};
 use gpui::{
@@ -17,6 +23,8 @@ use gpui::{
 struct Counts {
 	renders: Rc<Cell<usize>>,
 	inits: Rc<Cell<usize>>,
+	/// The section's keyed state, handed out so a test can notify it.
+	state: Rc<RefCell<Option<Entity<()>>>>,
 }
 
 struct Section {
@@ -28,7 +36,8 @@ impl Render for Section {
 	fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
 		self.counts.renders.set(self.counts.renders.get() + 1);
 		let inits = self.counts.inits.clone();
-		window.use_keyed_state("state", cx, move |_, _| inits.set(inits.get() + 1));
+		let state = window.use_keyed_state("state", cx, move |_, _| inits.set(inits.get() + 1));
+		*self.counts.state.borrow_mut() = Some(state);
 		if self.looping {
 			ContinuousMotion::phase("test-loop", 1., &cx.theme(), window, cx);
 		}
@@ -137,4 +146,19 @@ fn a_loop_redraws_only_the_section_that_shows_it(cx: &mut TestAppContext) {
 		s0,
 		"a loop redrew a section that does not show it"
 	);
+}
+
+#[gpui::test]
+fn a_keyed_state_notification_renders_only_its_section_without_a_refresh(cx: &mut TestAppContext) {
+	let (window, _, [a, b]) = host([false, false], cx);
+	let (a0, b0) = (a.renders.get(), b.renders.get());
+	// What the window frame does when the hovered resize edge changes: update its keyed state.
+	let state = a.state.borrow().clone().expect("the section rendered");
+	state.update(cx, |_, cx| cx.notify());
+	draw(window, cx);
+	assert!(
+		a.renders.get() > a0,
+		"the notified state did not repaint its view"
+	);
+	assert_eq!(b.renders.get(), b0, "a sibling section rendered too");
 }

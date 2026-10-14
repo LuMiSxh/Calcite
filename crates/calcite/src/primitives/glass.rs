@@ -215,6 +215,11 @@ pub struct Glass {
 	pub overlay: Option<Rgba>,
 	/// The neutral edge the macOS 27 border falls back to: the palette's quiet control tint.
 	pub quiet_edge: Rgba,
+	/// The neutral of fills and edges (the palette's ink) and of the backplate behind the glass.
+	pub ink: Rgba,
+	pub shade: Rgba,
+	/// Scales the drop shadow: 1 on a dark palette, less on a light one.
+	pub shadow_scale: f32,
 }
 
 impl Glass {
@@ -230,6 +235,9 @@ impl Glass {
 			pointer_radius: None,
 			overlay: None,
 			quiet_edge: crate::palette::Palette::ARKNIGHTS.quiet_control,
+			ink: white(1.),
+			shade: black(1.),
+			shadow_scale: 1.,
 		}
 	}
 
@@ -273,7 +281,7 @@ impl Glass {
 		let strength = self.strength;
 		let scaled = |color: Rgba| scale_alpha(color, strength);
 		let mut fill = match self.style {
-			GlassStyle::ReducedTransparency => black(0.92),
+			GlassStyle::ReducedTransparency => with_alpha(self.shade, 0.92),
 			// macOS 26 tints the glass itself, also with the near-black HUD tint.
 			GlassStyle::MacOS26 => match self.tint {
 				Some(tint) if is_chromatic(tint) => stack(&[
@@ -287,11 +295,11 @@ impl Glass {
 			GlassStyle::MacOS27(_) => match self.chromatic_tint(minimum) {
 				Some(tint) => stack(&[
 					lift,
-					scaled(black(chromatic)),
+					scaled(with_alpha(self.shade, chromatic)),
 					scaled(tint),
 					scaled(tinted_glass(tint)),
 				]),
-				None => stack(&[lift, scaled(black(neutral))]),
+				None => stack(&[lift, scaled(with_alpha(self.shade, neutral))]),
 			},
 		};
 		if let Some(overlay) = self.overlay {
@@ -350,10 +358,10 @@ impl Glass {
 		match self.elevation {
 			Elevation::None => Vec::new(),
 			Elevation::Resting => {
-				vec![BoxShadow::new(px(0.), px(4.), black(0.20)).blur_radius(px(16.))]
+				vec![BoxShadow::new(px(0.), px(4.), black(0.20 * self.shadow_scale)).blur_radius(px(16.))]
 			}
 			Elevation::Raised => {
-				vec![BoxShadow::new(px(0.), px(8.), black(0.34)).blur_radius(px(28.))]
+				vec![BoxShadow::new(px(0.), px(8.), black(0.34 * self.shadow_scale)).blur_radius(px(28.))]
 			}
 		}
 	}
@@ -368,7 +376,7 @@ impl Glass {
 	/// The edge the glass draws itself: always under Reduce Transparency, and on macOS 27
 	/// when the user asks for borders. Other edges belong to the caller.
 	pub fn border(&self) -> Option<Rgba> {
-		let edge = self.tint.unwrap_or(white(1.));
+		let edge = self.tint.unwrap_or(self.ink);
 		match self.style {
 			GlassStyle::ReducedTransparency => {
 				Some(with_alpha(edge, if self.shows_border { 0.68 } else { 0.42 }))

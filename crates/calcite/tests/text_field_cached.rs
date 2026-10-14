@@ -8,8 +8,8 @@ use std::{cell::Cell, rc::Rc};
 
 use calcite::{EditableTextState, prelude::*};
 use gpui::{
-	AnyWindowHandle, AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement, Render,
-	StyleRefinement, Styled, TestAppContext, Window, WindowHandle, div, px,
+	AnyWindowHandle, AppContext as _, Context, Entity, EntityInputHandler as _, Focusable as _, IntoElement,
+	ParentElement, Render, StyleRefinement, Styled, TestAppContext, Window, WindowHandle, div, px,
 };
 
 struct Section {
@@ -137,4 +137,48 @@ fn assert_redraws(
 		renders.get() > before,
 		"{what} did not re-render the cached view, so the field still paints the old text"
 	);
+}
+
+/// An input method composes text before it commits it: the underlined preedit has to show
+/// while it changes, so each step repaints the cached view too. The test drives the same
+/// `EntityInputHandler` calls the platform's input handler makes.
+#[gpui::test]
+fn ime_composition_repaints_a_text_field_in_a_cached_view(cx: &mut TestAppContext) {
+	cx.update(calcite::init);
+	let state = cx.update(|cx| text_state("", cx));
+	let renders = Rc::new(Cell::new(0));
+	let section = cx.new({
+		let (state, renders) = (state.clone(), renders.clone());
+		move |_| Section { state, renders }
+	});
+	let window = cx.add_window(move |_, _| Host(section));
+	let any: AnyWindowHandle = window.into();
+	let focus = cx.update(|cx| state.read(cx).focus_handle(cx));
+	cx.update_window(any, |_, window, cx| {
+		window.activate();
+		window.focus(&focus, cx);
+	})
+	.unwrap();
+	cx.run_until_parked();
+	draw(window, cx);
+
+	let compose = |text: &'static str, commit: bool| {
+		let state = state.clone();
+		move |cx: &mut TestAppContext| {
+			cx.update_window(any, |_, window, cx| {
+				state.update(cx, |state, cx| {
+					if commit {
+						state.replace_text_in_range(None, text, window, cx);
+					} else {
+						state.replace_and_mark_text_in_range(None, text, None, window, cx);
+					}
+				})
+			})
+			.unwrap();
+		}
+	};
+	assert_redraws(cx, window, &renders, "composing n", compose("n", false));
+	assert_redraws(cx, window, &renders, "composing ni", compose("ni", false));
+	assert_redraws(cx, window, &renders, "committing", compose("你", true));
+	assert_eq!(cx.update(|cx| state.read(cx).as_str().to_string()), "你");
 }

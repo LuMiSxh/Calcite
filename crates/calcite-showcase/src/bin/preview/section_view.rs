@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Each gallery section is its own view, so an animation inside one section re-renders and
+//! Each preview section is its own view, so an animation inside one section re-renders and
 //! re-lays-out only that section. The page re-lays-out the others only when it changes.
 //!
 //! A cached view is laid out from a definite style instead of measured from its content, so a
@@ -9,7 +9,7 @@
 //! more rows) or in the window width (text wraps differently) drops the section back to
 //! uncached for a frame, until it has been measured again.
 //!
-//! What the cache cannot see, it is told about: a section observes the [`Gallery`] state and
+//! What the cache cannot see, it is told about: a section observes the [`Preview`] state and
 //! re-renders when it changes; controls and animations inside it notify the section itself;
 //! and a theme change, Reduce Motion, or a window resize refreshes the whole window, which
 //! ignores every cache.
@@ -22,16 +22,56 @@ use gpui::{
 	SharedString, Styled, WeakEntity, Window, canvas, div, px,
 };
 
-use super::{Gallery, sections};
+use super::{Preview, sections};
 
 /// A section is re-measured when its height moves by more than this.
 const TOLERANCE: Pixels = px(0.5);
 
-#[derive(Clone, Copy)]
+/// The sidebar groups, in the order the sidebar lists them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Group {
+	Foundations,
+	Controls,
+	Forms,
+	MenusOverlays,
+	Feedback,
+	Layout,
+	Hud,
+	Playground,
+}
+
+impl Group {
+	pub const ALL: [Self; 8] = [
+		Self::Foundations,
+		Self::Controls,
+		Self::Forms,
+		Self::MenusOverlays,
+		Self::Feedback,
+		Self::Layout,
+		Self::Hud,
+		Self::Playground,
+	];
+
+	pub fn title(self) -> &'static str {
+		match self {
+			Self::Foundations => "Foundations",
+			Self::Controls => "Controls",
+			Self::Forms => "Forms",
+			Self::MenusOverlays => "Menus & overlays",
+			Self::Feedback => "Feedback & status",
+			Self::Layout => "Layout & navigation",
+			Self::Hud => "HUD",
+			Self::Playground => "Playground",
+		}
+	}
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
 	Glass,
 	Style,
 	Actions,
+	Choices,
 	Glow,
 	Forms,
 	Menus,
@@ -51,10 +91,11 @@ pub enum Kind {
 }
 
 impl Kind {
-	pub const ALL: [Self; 19] = [
+	pub const ALL: [Self; 20] = [
 		Self::Glass,
 		Self::Style,
 		Self::Actions,
+		Self::Choices,
 		Self::Glow,
 		Self::Forms,
 		Self::Menus,
@@ -73,15 +114,62 @@ impl Kind {
 		Self::MotionLab,
 	];
 
-	fn title(self) -> &'static str {
+	/// The sidebar group this section is listed under.
+	pub fn group(self) -> Group {
+		match self {
+			Self::Glass
+			| Self::Glow
+			| Self::Tokens
+			| Self::Typography
+			| Self::Icons
+			| Self::Motion
+			| Self::MotionLab => Group::Foundations,
+			Self::Actions | Self::Choices => Group::Controls,
+			Self::Forms | Self::Setup => Group::Forms,
+			Self::Menus | Self::Overlay => Group::MenusOverlays,
+			Self::Notices => Group::Feedback,
+			Self::Settings | Self::Selection | Self::Chrome => Group::Layout,
+			Self::Hud | Self::Morph => Group::Hud,
+			Self::Style => Group::Playground,
+		}
+	}
+
+	/// The sidebar icon.
+	pub fn icon(self) -> Lucide {
+		match self {
+			Self::Glass => Lucide::Layers,
+			Self::Style => Lucide::SlidersHorizontal,
+			Self::Actions => Lucide::MousePointer2,
+			Self::Choices => Lucide::Check,
+			Self::Glow => Lucide::Sparkles,
+			Self::Forms => Lucide::ToggleRight,
+			Self::Menus => Lucide::ChevronDown,
+			Self::Selection => Lucide::ListFilter,
+			Self::Settings => Lucide::Settings,
+			Self::Hud => Lucide::Gauge,
+			Self::Morph => Lucide::Layers,
+			Self::Overlay => Lucide::PanelTop,
+			Self::Setup => Lucide::Sparkles,
+			Self::Notices => Lucide::Bell,
+			Self::Chrome => Lucide::AppWindow,
+			Self::Icons => Lucide::Shapes,
+			Self::Tokens => Lucide::Droplet,
+			Self::Typography => Lucide::Type,
+			Self::Motion => Lucide::Activity,
+			Self::MotionLab => Lucide::FlaskConical,
+		}
+	}
+
+	pub fn title(self) -> &'static str {
 		match self {
 			Self::Glass => "Glass styles",
 			Self::Style => "Style",
-			Self::Actions => "Actions",
+			Self::Actions => "Buttons and actions",
+			Self::Choices => "Choices and chips",
 			Self::Glow => "Cursor glow",
 			Self::Forms => "Forms",
 			Self::Menus => "Menu morph",
-			Self::Selection => "Selection and navigation",
+			Self::Selection => "Selection and nav",
 			Self::Settings => "Settings",
 			Self::Hud => "HUD",
 			Self::Morph => "Pill morph",
@@ -108,19 +196,23 @@ impl Kind {
 			Self::Actions => {
 				"button · icon_button · halo · done_button · glass_tooltip, by tone, size and state".into()
 			}
+			Self::Choices => "choice_card · chip · badge · tag, by kind, selection and enabled state".into(),
 			Self::Glow => "move the cursor over it: glow(true) next to glow(false)".into(),
 			Self::Forms => "toggle · slider · segmented · text_field, by state".into(),
 			Self::Menus => "menu_picker · action_menu: the menu morphs out of its trigger".into(),
 			Self::Selection => {
-				"choice_card · chip · nav_item · list_row · link · document_link · step · badge · tag".into()
+				"nav_item · nav_rail · list_row · link · document_link · step_rail · step".into()
 			}
 			Self::Settings => "nav_rail · page_header · settings_panel · action_row · danger_zone".into(),
 			Self::Hud => "pill · control_bar · status · list_row".into(),
 			Self::Morph => "pill · glass_group · O toggles the pill".into(),
 			Self::Overlay => "modal · floating_action_bar · link · badge · skeleton".into(),
 			Self::Setup => "step_rail · step · choice_group · choice_card · tag".into(),
-			Self::Notices => "banner · spinner · progress_bar · chip · empty_state · confirm_dialog".into(),
-			Self::Chrome => "window_frame · title_bar · ChromeStyle".into(),
+			Self::Notices => {
+				"banner · spinner · progress_bar · progress_outline · chip · empty_state · confirm_dialog"
+					.into()
+			}
+			Self::Chrome => "window_frame · title_bar · app_icon · ChromeStyle".into(),
 			Self::Icons => "icons! macro · built-in Icon set · every Lucide icon, searchable".into(),
 			Self::Tokens => "colors · radii · typography".into(),
 			Self::Typography => "Fonts · sans · mono · ticker".into(),
@@ -131,44 +223,49 @@ impl Kind {
 		}
 	}
 
-	/// A fingerprint of the [`Gallery`] fields this section shows. A field the section reads but
+	/// A fingerprint of the [`Preview`] fields this section shows. A field the section reads but
 	/// this leaves out would leave the section stale, so it lists every field the section
 	/// builders (`*_section`, `*_page`) read.
-	fn state(self, gallery: &Gallery) -> u64 {
+	fn state(self, preview: &Preview) -> u64 {
 		let mut hasher = DefaultHasher::new();
 		match self {
-			Self::Forms => {
-				(gallery.toggles, gallery.volume.to_bits(), gallery.display as u8).hash(&mut hasher)
-			}
-			Self::Menus => (gallery.rendering as u8, gallery.locale).hash(&mut hasher),
-			Self::Icons => (&gallery.icon_text, gallery.icon_page).hash(&mut hasher),
+			Self::Forms => (
+				preview.toggles,
+				preview.segments,
+				preview.volume.to_bits(),
+				preview.display as u8,
+			)
+				.hash(&mut hasher),
+			Self::Menus => (preview.rendering as u8, preview.locale).hash(&mut hasher),
+			Self::Icons => (&preview.icon_text, preview.icon_page).hash(&mut hasher),
 			Self::Settings => (
-				gallery.page as u8,
-				gallery.display as u8,
-				gallery.rendering as u8,
-				gallery.game_mode,
-				gallery.auto_update,
-				gallery.panel_open,
-				gallery.accent_index,
-				gallery.volume.to_bits(),
+				preview.page as u8,
+				preview.display as u8,
+				preview.rendering as u8,
+				preview.game_mode,
+				preview.auto_update,
+				preview.panel_open,
+				preview.accent_index,
+				preview.volume.to_bits(),
 			)
 				.hash(&mut hasher),
-			Self::Hud => gallery.region.hash(&mut hasher),
-			Self::Typography => (gallery.ticker_percent.to_bits(), gallery.ticker_count).hash(&mut hasher),
+			Self::Hud => preview.region.hash(&mut hasher),
+			Self::Typography => (preview.ticker_percent.to_bits(), preview.ticker_count).hash(&mut hasher),
 			Self::Morph => (
-				gallery.morph_open,
-				gallery.fuse_slid,
-				gallery.fuse_spacing.to_bits(),
+				preview.morph_open,
+				preview.fuse_slid,
+				preview.fuse_spacing.to_bits(),
 			)
 				.hash(&mut hasher),
-			Self::Setup => (gallery.colors_choice, gallery.extras).hash(&mut hasher),
+			Self::Setup => (preview.colors_choice, preview.extras).hash(&mut hasher),
 			Self::Notices => {
-				(gallery.volume.to_bits(), gallery.chip_selected, &gallery.tags).hash(&mut hasher)
+				(preview.volume.to_bits(), preview.chip_selected, &preview.tags).hash(&mut hasher)
 			}
 			Self::Glass
 			| Self::Style
 			| Self::Actions
 			| Self::Glow
+			| Self::Choices
 			| Self::Selection
 			| Self::Overlay
 			| Self::Chrome
@@ -181,31 +278,32 @@ impl Kind {
 
 	fn body(
 		self,
-		gallery: &Gallery,
+		preview: &Preview,
 		theme: Theme,
 		window: &mut Window,
-		cx: &mut Context<Gallery>,
+		cx: &mut Context<Preview>,
 	) -> AnyElement {
 		match self {
 			Self::Glass => sections::glass_styles(theme).into_any_element(),
-			Self::Style => gallery.style_section(cx).into_any_element(),
-			Self::Actions => gallery.actions_section(&theme).into_any_element(),
-			Self::Glow => gallery.glow_section().into_any_element(),
-			Self::Forms => gallery.forms_section(cx).into_any_element(),
-			Self::Menus => gallery.menus_section(cx).into_any_element(),
-			Self::Selection => gallery.selection_section(&theme).into_any_element(),
-			Self::Settings => gallery.settings_section(cx).into_any_element(),
-			Self::Hud => gallery.hud_section(cx).into_any_element(),
-			Self::Morph => gallery.morph_section(window, cx).into_any_element(),
-			Self::Overlay => gallery.overlay_section(cx).into_any_element(),
-			Self::Setup => gallery.setup_section(cx).into_any_element(),
-			Self::Notices => gallery.notices_section(cx).into_any_element(),
+			Self::Style => preview.style_section(cx).into_any_element(),
+			Self::Actions => preview.actions_section(&theme).into_any_element(),
+			Self::Choices => preview.choices_section(&theme).into_any_element(),
+			Self::Glow => preview.glow_section().into_any_element(),
+			Self::Forms => preview.forms_section(cx).into_any_element(),
+			Self::Menus => preview.menus_section(cx).into_any_element(),
+			Self::Selection => preview.selection_section().into_any_element(),
+			Self::Settings => preview.settings_section(cx).into_any_element(),
+			Self::Hud => preview.hud_section(cx).into_any_element(),
+			Self::Morph => preview.morph_section(window, cx).into_any_element(),
+			Self::Overlay => preview.overlay_section(cx).into_any_element(),
+			Self::Setup => preview.setup_section(cx).into_any_element(),
+			Self::Notices => preview.notices_section(cx).into_any_element(),
 			Self::Chrome => sections::chrome_section().into_any_element(),
-			Self::Icons => gallery.icons_section(&theme, cx).into_any_element(),
+			Self::Icons => preview.icons_section(&theme, cx).into_any_element(),
 			Self::Tokens => sections::tokens_section(theme).into_any_element(),
-			Self::Typography => gallery.typography_section(cx).into_any_element(),
+			Self::Typography => preview.typography_section(cx).into_any_element(),
 			Self::Motion => sections::motion_section(theme.accent).into_any_element(),
-			Self::MotionLab => gallery.motion_lab.clone().into_any_element(),
+			Self::MotionLab => preview.motion_lab.clone().into_any_element(),
 		}
 	}
 }
@@ -218,21 +316,34 @@ struct Measured {
 	window_width: Pixels,
 }
 
-/// The page: the sections in a column. It re-renders when a section is measured anew, which
-/// is the only time it has to pick a new cached height.
+/// The page: the section the sidebar shows, in a column. It re-renders when the selection
+/// changes or a section is measured anew; those are the only times it has to pick a new height.
 pub struct PageView {
 	sections: Vec<Entity<SectionView>>,
+	/// The section on show, as of the last change.
+	shown: Kind,
 }
 
 impl PageView {
-	pub fn new(gallery: &Entity<Gallery>, cx: &mut Context<Gallery>) -> Entity<Self> {
+	/// The page showing `shown`. `preview` is still being built, so the caller passes its section.
+	pub fn new(preview: &Entity<Preview>, shown: Kind, cx: &mut Context<Preview>) -> Entity<Self> {
 		cx.new(|cx| {
 			let page = cx.entity_id();
+			// The sidebar changes the section; the other sections stay as they were.
+			cx.observe(preview, |this: &mut PageView, observed: Entity<Preview>, cx| {
+				let shown = observed.read(cx).section;
+				if shown != this.shown {
+					this.shown = shown;
+					cx.notify();
+				}
+			})
+			.detach();
 			Self {
 				sections: Kind::ALL
 					.into_iter()
-					.map(|kind| SectionView::new(gallery, page, kind, cx))
+					.map(|kind| SectionView::new(preview, page, kind, cx))
 					.collect(),
+				shown,
 			}
 		})
 	}
@@ -240,7 +351,7 @@ impl PageView {
 
 impl Render for PageView {
 	fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-		div()
+		let mut column = div()
 			.relative()
 			.w_full()
 			.pt(px(44.))
@@ -248,43 +359,46 @@ impl Render for PageView {
 			.px(px(36.))
 			.flex()
 			.flex_col()
-			.gap(px(30.))
-			.children(
-				self.sections
-					.iter()
-					.map(|section| SectionView::element(section, window, cx)),
-			)
+			.gap(px(30.));
+		for section in self
+			.sections
+			.iter()
+			.filter(|section| section.read(cx).kind == self.shown)
+		{
+			column = column.child(SectionView::element(section, window, cx));
+		}
+		column
 	}
 }
 
 pub struct SectionView {
-	gallery: WeakEntity<Gallery>,
+	preview: WeakEntity<Preview>,
 	page: EntityId,
 	kind: Kind,
-	/// The part of the gallery state this section showed at its last render.
+	/// The part of the preview state this section showed at its last render.
 	state: u64,
 	measured: Option<Measured>,
 }
 
 impl SectionView {
-	/// A section that re-renders when `gallery` changes.
+	/// A section that re-renders when `preview` changes.
 	fn new(
-		gallery: &Entity<Gallery>,
+		preview: &Entity<Preview>,
 		page: EntityId,
 		kind: Kind,
 		cx: &mut Context<PageView>,
 	) -> Entity<Self> {
-		let weak = gallery.downgrade();
+		let weak = preview.downgrade();
 		cx.new(|cx: &mut Context<Self>| {
-			// Gallery state changes on every slider tick; a section follows only its own part.
-			cx.observe(gallery, |this, gallery, cx| {
-				if this.kind.state(gallery.read(cx)) != this.state {
+			// Preview state changes on every slider tick; a section follows only its own part.
+			cx.observe(preview, |this, preview, cx| {
+				if this.kind.state(preview.read(cx)) != this.state {
 					cx.notify();
 				}
 			})
 			.detach();
 			Self {
-				gallery: weak,
+				preview: weak,
 				page,
 				kind,
 				state: 0,
@@ -309,14 +423,14 @@ impl SectionView {
 
 impl Render for SectionView {
 	fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-		let Some(gallery) = self.gallery.upgrade() else {
+		let Some(preview) = self.preview.upgrade() else {
 			return div().into_any_element();
 		};
 		let theme = cx.theme();
 		let kind = self.kind;
-		let body = gallery.update(cx, |gallery, cx| {
-			self.state = kind.state(gallery);
-			kind.body(gallery, theme, window, cx)
+		let body = preview.update(cx, |preview, cx| {
+			self.state = kind.state(preview);
+			kind.body(preview, theme, window, cx)
 		});
 		let page = self.page;
 		let this = cx.entity();
@@ -348,7 +462,12 @@ impl Render for SectionView {
 		div()
 			.relative()
 			.w_full()
-			.child(sections::section(kind.title(), kind.note(&theme), body))
+			.child(sections::section(
+				kind.title(),
+				kind.note(&theme),
+				sections::source_block(kind),
+				body,
+			))
 			.child(measure)
 			.into_any_element()
 	}

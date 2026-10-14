@@ -241,7 +241,12 @@ fn generate_icons(source: &Path, directory: &Path, pad_for_macos: bool) -> Resul
 		.iter()
 		.filter(|&&size| size <= image.width())
 		.map(|&size| {
-			let path = directory.join(format!("{size}x{size}.png"));
+			// The `.icns` writer has no 1x type for 64 and 1024 px: they are the 32 and 512 px icons at 2x.
+			let path = directory.join(match size {
+				64 => "32x32@2x.png".to_string(),
+				1024 => "512x512@2x.png".to_string(),
+				_ => format!("{size}x{size}.png"),
+			});
 			image
 				.resize_exact(size, size, image::imageops::FilterType::Lanczos3)
 				.save(&path)
@@ -376,7 +381,7 @@ mod tests {
 	#[test]
 	fn the_settings_map_onto_a_valid_packager_config() {
 		let package = json!({
-			"name": "gallery-app",
+			"name": "preview-app",
 			"version": "0.1.0",
 			"description": "A demo",
 			"authors": ["Example"],
@@ -384,8 +389,8 @@ mod tests {
 			"license_file": null,
 		});
 		let settings = json!({
-			"identifier": "dev.example.gallery",
-			"name": "Calcite Gallery",
+			"identifier": "dev.example.preview",
+			"name": "Calcite Developer Preview",
 			"resources": ["assets/*.svg"],
 			"category": "DeveloperTool",
 			"minimum-macos": "13.0",
@@ -393,7 +398,7 @@ mod tests {
 		let config = packager_config(PackagerInput {
 			package: &package,
 			settings: settings.as_object().unwrap(),
-			bin: "gallery",
+			bin: "preview",
 			binaries_dir: Path::new("/target/release"),
 			out_dir: Path::new("/target/calcite-bundle/release"),
 			manifest_dir: Path::new("/app"),
@@ -402,8 +407,8 @@ mod tests {
 		})
 		.unwrap();
 		let config: cargo_packager::Config = serde_json::from_value(config).unwrap();
-		assert_eq!(config.product_name, "Calcite Gallery");
-		assert_eq!(config.identifier.as_deref(), Some("dev.example.gallery"));
+		assert_eq!(config.product_name, "Calcite Developer Preview");
+		assert_eq!(config.identifier.as_deref(), Some("dev.example.preview"));
 	}
 
 	#[test]
