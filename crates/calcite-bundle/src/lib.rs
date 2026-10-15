@@ -34,6 +34,9 @@
 //!
 //! `exe` copies the executable alone, without an installer. It needs a Windows host and no
 //! `resources`; the icon is in the executable when `build.rs` calls [`build::windows_icon`].
+//!
+//! `standalone` names the host's single-file format: `exe` on Windows, `dmg` on macOS, and
+//! `appimage` on Linux.
 
 pub mod build;
 #[cfg(feature = "packager")]

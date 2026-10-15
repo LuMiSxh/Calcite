@@ -14,7 +14,8 @@ Usage: cargo calcite bundle [OPTIONS]
 Options:
   -p, --package NAME   The package to bundle (default: the one in this directory)
       --bin NAME       The binary to bundle (default: the package's main binary)
-  -f, --format LIST    Comma-separated formats: app, dmg, nsis, wix, exe, deb, appimage, pacman
+  -f, --format LIST    Comma-separated formats: app, dmg, nsis, wix, exe, deb, appimage, pacman,
+                       or standalone (exe, dmg, or appimage for the host)
       --debug          Build and package the debug profile
       --no-build       Package an existing build
   -h, --help           Show this help

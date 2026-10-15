@@ -50,7 +50,7 @@ format:
         cargo fmt -p "$crate"
     done
 
-# Package the developer preview ("Calcite - preview") as app, dmg, nsis, wix (MSI), exe (standalone), deb, or appimage (default: the host's native format).
+# Package the developer preview ("Calcite - preview") as app, dmg, nsis, wix (MSI), exe, deb, appimage, or standalone (the host's single file); default: the host's native formats.
 [group('Packaging')]
 bundle format='' *args='':
     cargo run -p calcite-bundle -- calcite bundle -p calcite-showcase --bin preview {{ if format != '' { '--format ' + quote(format) } else { '' } }} {{ args }}
