@@ -14,6 +14,9 @@ use serde_json::{Map, Value, json};
 /// macOS, `.ico` on Windows, and hicolor PNGs on Linux.
 const ICON_SIZES: [u32; 6] = [32, 64, 128, 256, 512, 1024];
 
+/// The format that copies the bare Windows executable instead of running the packager.
+const STANDALONE_EXE: &str = "exe";
+
 /// What to package and how.
 #[derive(Clone, Debug, Default)]
 pub struct Options {
@@ -76,8 +79,25 @@ pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 	// The icon set is shared by every format in one packager run, so the formats that need
 	// the `.icns` margin run separately from the rest.
 	let icon = settings.get("icon").and_then(Value::as_str);
+	let mut requested = requested_formats(options.formats.clone(), &settings);
 	let mut outputs = Vec::new();
-	for (pad_for_macos, formats) in format_groups(options.formats.clone(), &settings) {
+	if let Some(formats) = requested.as_mut()
+		&& formats.iter().any(|format| format == STANDALONE_EXE)
+	{
+		formats.retain(|format| format != STANDALONE_EXE);
+		outputs.push(standalone_exe(StandaloneInput {
+			product_name: &product_name(package, &settings),
+			version: package["version"].as_str().unwrap_or_default(),
+			settings: &settings,
+			bin: &bin,
+			binaries_dir: &target_dir.join(profile),
+			out_dir: &out_dir,
+		})?);
+		if formats.is_empty() {
+			return Ok(outputs);
+		}
+	}
+	for (pad_for_macos, formats) in format_groups(requested) {
 		let icons = match icon {
 			Some(icon) => generate_icons(
 				&manifest_dir.join(icon),
@@ -256,19 +276,66 @@ fn generate_icons(source: &Path, directory: &Path, pad_for_macos: bool) -> Resul
 		.collect()
 }
 
+struct StandaloneInput<'a> {
+	product_name: &'a str,
+	version: &'a str,
+	settings: &'a Map<String, Value>,
+	bin: &'a str,
+	binaries_dir: &'a Path,
+	out_dir: &'a Path,
+}
+
+/// Copies the executable alone, named like the NSIS installer without `-setup`:
+/// `<name>_<version>_<arch>.exe`. Its icon comes from [`crate::build::windows_icon`].
+fn standalone_exe(input: StandaloneInput) -> Result<Output> {
+	if !cfg!(windows) {
+		return Err(format!(
+			"the `{STANDALONE_EXE}` format needs a Windows host: it copies the Windows build"
+		));
+	}
+	if input.settings.contains_key("resources") {
+		return Err(format!(
+			"the `{STANDALONE_EXE}` format is a single file and cannot carry `resources`; use `nsis` or `wix`"
+		));
+	}
+	let source = input.binaries_dir.join(format!("{}.exe", input.bin));
+	let path = input.out_dir.join(standalone_exe_name(
+		input.product_name,
+		input.version,
+		std::env::consts::ARCH,
+	));
+	fs::copy(&source, &path).map_err(|error| format!("{}: {error}", source.display()))?;
+	Ok(Output {
+		format: STANDALONE_EXE.to_string(),
+		paths: vec![path],
+	})
+}
+
+fn standalone_exe_name(product_name: &str, version: &str, arch: &str) -> String {
+	// The architecture names of the NSIS and MSI outputs.
+	let arch = match arch {
+		"x86_64" => "x64",
+		"aarch64" => "arm64",
+		other => other,
+	};
+	format!("{product_name}_{version}_{arch}.exe")
+}
+
+fn product_name(package: &Value, settings: &Map<String, Value>) -> String {
+	settings
+		.get("name")
+		.and_then(Value::as_str)
+		.unwrap_or_else(|| package["name"].as_str().unwrap_or_default())
+		.to_string()
+}
+
 fn is_macos_format(format: &str) -> bool {
 	matches!(format, "app" | "dmg")
 }
 
-/// Splits the requested formats (the CLI's, else the manifest's `formats`) into packager runs,
-/// each as `(pad_for_macos, formats)`. `app` and `dmg` read the `.icns` and get the margin;
-/// the others get the full-bleed artwork. With no formats named, the packager uses the host
-/// platform's defaults, which are the macOS ones only on a Mac.
-fn format_groups(
-	requested: Option<Vec<String>>,
-	settings: &Map<String, Value>,
-) -> Vec<(bool, Option<Vec<String>>)> {
-	let requested = requested.or_else(|| {
+/// The CLI's formats, else the manifest's `formats`; `None` leaves the choice to the packager.
+fn requested_formats(cli: Option<Vec<String>>, settings: &Map<String, Value>) -> Option<Vec<String>> {
+	cli.or_else(|| {
 		settings.get("formats").and_then(Value::as_array).map(|formats| {
 			formats
 				.iter()
@@ -276,7 +343,14 @@ fn format_groups(
 				.map(str::to_string)
 				.collect()
 		})
-	});
+	})
+}
+
+/// Splits the requested formats into packager runs, each as `(pad_for_macos, formats)`.
+/// `app` and `dmg` read the `.icns` and get the margin; the others get the full-bleed artwork.
+/// With no formats named, the packager uses the host platform's defaults, which are the macOS
+/// ones only on a Mac.
+fn format_groups(requested: Option<Vec<String>>) -> Vec<(bool, Option<Vec<String>>)> {
 	let Some(formats) = requested else {
 		return vec![(cfg!(target_os = "macos"), None)];
 	};
@@ -318,8 +392,7 @@ fn packager_config(input: PackagerInput) -> Result<Value> {
 	let text = |key: &str| settings.get(key).and_then(Value::as_str).map(str::to_string);
 	let identifier =
 		text("identifier").ok_or("[package.metadata.calcite.bundle]: `identifier` is required")?;
-	let product_name =
-		text("name").unwrap_or_else(|| package["name"].as_str().unwrap_or_default().to_string());
+	let product_name = product_name(package, settings);
 
 	let mut config = json!({
 		"productName": product_name,
@@ -363,11 +436,7 @@ fn packager_config(input: PackagerInput) -> Result<Value> {
 			.collect();
 		set("resources", json!(resources));
 	}
-	let formats = formats
-		.map(|formats| json!(formats))
-		.or_else(|| settings.get("formats").cloned())
-		.unwrap_or(Value::Null);
-	set("formats", formats);
+	set("formats", formats.map_or(Value::Null, |formats| json!(formats)));
 	if let Some(version) = text("minimum-macos") {
 		set("macos", json!({ "minimumSystemVersion": version }));
 	}
@@ -412,6 +481,27 @@ mod tests {
 	}
 
 	#[test]
+	fn the_standalone_exe_is_named_like_the_installer() {
+		assert_eq!(
+			standalone_exe_name("Calcite - preview", "0.2.1", "x86_64"),
+			"Calcite - preview_0.2.1_x64.exe"
+		);
+		assert_eq!(
+			standalone_exe_name("app", "1.0.0", "aarch64"),
+			"app_1.0.0_arm64.exe"
+		);
+	}
+
+	#[test]
+	fn the_standalone_exe_is_split_from_the_packager_formats() {
+		let settings = json!({ "formats": ["exe", "nsis"] });
+		let requested = requested_formats(None, settings.as_object().unwrap());
+		assert_eq!(requested, Some(vec!["exe".to_string(), "nsis".to_string()]));
+		let cli = requested_formats(Some(vec!["deb".to_string()]), settings.as_object().unwrap());
+		assert_eq!(cli, Some(vec!["deb".to_string()]));
+	}
+
+	#[test]
 	fn macos_icons_keep_the_size_and_get_a_transparent_margin() {
 		let icon = image::RgbaImage::from_pixel(512, 512, image::Rgba([200, 30, 30, 255]));
 		let padded = add_macos_margin(&icon);
@@ -427,7 +517,7 @@ mod tests {
 			.save(&source)
 			.unwrap();
 		for format in ["nsis", "deb", "appimage", "dmg", "app"] {
-			let (pad_for_macos, _) = format_groups(Some(vec![format.to_string()]), &Map::new()).remove(0);
+			let (pad_for_macos, _) = format_groups(Some(vec![format.to_string()])).remove(0);
 			let directory =
 				std::env::temp_dir().join(format!("calcite-icons-{}-{format}", std::process::id()));
 			generate_icons(&source, &directory, pad_for_macos).unwrap();

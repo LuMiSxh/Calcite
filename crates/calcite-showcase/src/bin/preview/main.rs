@@ -4,6 +4,9 @@
 //!
 //! Keys: see [`SHORTCUTS`]; the panel at the top right lists them (`?` folds it). Tab moves focus.
 
+// Release builds open no console window next to the app on Windows.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod cli;
 mod coverage;
 mod icon_search;

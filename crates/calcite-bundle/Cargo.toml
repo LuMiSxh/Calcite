@@ -1,6 +1,6 @@
 [package]
 name = "calcite-bundle"
-description = "Packages a Calcite app: macOS .app and DMG, Windows NSIS and MSI, Linux deb, AppImage, and pacman. A thin wrapper around cargo-packager"
+description = "Packages a Calcite app: macOS .app and DMG, Windows NSIS, MSI, and standalone exe, Linux deb, AppImage, and pacman. A thin wrapper around cargo-packager"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
