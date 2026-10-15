@@ -5,6 +5,15 @@ All notable changes to Calcite are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Release workflow (`.github/workflows/release.yml`), started by hand with a version tag: it builds the developer preview as a standalone Windows executable, creates the tag, and publishes a GitHub release with the changelog section as notes.
+- `calcite-bundle`: the `exe` format copies the Windows executable alone, without an installer, as `<name>_<version>_<arch>.exe`. It needs a Windows host and no `resources`.
+
+### Fixed
+
+- Release builds of `preview` and `home` no longer open a console window next to the app on Windows.
+
 ## [0.2.1] - 2026-10-14
 
 ### Added
