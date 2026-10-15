@@ -86,3 +86,6 @@ jobs:
 
       - name: Build
         run: cargo build --workspace --all-targets
+
+      - name: Package the developer preview as a standalone exe
+        run: cargo run -p calcite-bundle -- calcite bundle -p calcite-showcase --bin preview --format exe --debug --no-build
