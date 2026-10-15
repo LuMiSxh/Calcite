@@ -5,6 +5,9 @@
 //!
 //! Run: `cargo run --release --bin home` (optionally `-- /path/to/artwork.jpg`).
 
+// Release builds open no console window next to the app on Windows.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::{
 	path::PathBuf,
 	time::{Duration, SystemTime, UNIX_EPOCH},
