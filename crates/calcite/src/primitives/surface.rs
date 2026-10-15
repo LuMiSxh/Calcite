@@ -107,18 +107,14 @@ impl Surface {
 					None => styled.bg(glass.fill()),
 				}
 			}
-			Paint::Flat(fill) => {
-				let (point, tint) = match pointer {
-					Some((point, tint)) => (Some(point), tint),
-					None => (None, tokens::CLEAR),
-				};
-				styled.backdrop_filter(vec![Filter::Glass(flat_surface(
-					over(overlay, fill),
-					point,
-					tint,
-					frame.pointer_radius,
-				))])
-			}
+			// Without the pointer light the flat glass is `fill` over the backdrop, which a plain
+			// fill draws the same; it skips the blur passes of a backdrop filter.
+			Paint::Flat(fill) => match pointer {
+				Some((point, tint)) if frame.light > 0. => styled.backdrop_filter(vec![Filter::Glass(
+					flat_surface(over(overlay, fill), Some(point), tint, frame.pointer_radius),
+				)]),
+				_ => styled.bg(over(overlay, fill)),
+			},
 			Paint::Plain(fill) => styled.bg(over(overlay, fill)),
 		}
 	}
