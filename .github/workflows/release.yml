@@ -4,9 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.2.1); must match the workspace version in Cargo.toml"
+        description: "Release tag (e.g. v0.3.0); must match the workspace version in Cargo.toml"
         required: true
         type: string
+      dry_run:
+        description: "Build the standalone files only: no tag, no release"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -47,7 +52,7 @@ jobs:
           fi
 
   windows:
-    name: Build the developer preview (Windows)
+    name: Developer preview (Windows exe)
     needs: validate
     runs-on: windows-2025
     timeout-minutes: 90
@@ -70,25 +75,113 @@ jobs:
       - name: Package the standalone executable
         shell: pwsh
         run: |
-          $out = cargo run --release --locked -p calcite-bundle -- calcite bundle -p calcite-showcase --bin preview --format exe --no-build
+          $out = cargo run --release --locked -p calcite-bundle -- calcite bundle -p calcite-showcase --bin preview --format standalone --no-build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $exe = ($out | Select-String '^\s*exe\s+(.+)$').Matches[0].Groups[1].Value
+          $file = ($out | Select-String '^\s*exe\s+(.+)$').Matches[0].Groups[1].Value
           $name = "calcite-preview-x86_64-pc-windows-msvc.exe"
-          Copy-Item $exe $name
+          Copy-Item $file $name
           (Get-FileHash $name -Algorithm SHA256).Hash.ToLower() + "  $name" | Out-File -Encoding ascii "$name.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: calcite-preview-x86_64-pc-windows-msvc
-          path: |
-            calcite-preview-x86_64-pc-windows-msvc.exe
-            calcite-preview-x86_64-pc-windows-msvc.exe.sha256
+          name: calcite-preview-windows
+          path: calcite-preview-x86_64-pc-windows-msvc.exe*
+          if-no-files-found: error
+
+  linux:
+    name: Developer preview (Linux AppImage)
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      # The AppImage tools run without FUSE on the runner.
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb-shape0-dev libxcb-xfixes0-dev libfontconfig-dev
+
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Fetch and patch gpui-ce
+        run: ./scripts/bootstrap.sh
+
+      - name: Build the developer preview
+        run: cargo build --release --locked -p calcite-showcase --bin preview
+
+      - name: Package the AppImage
+        run: |
+          out="$(cargo run --release --locked -p calcite-bundle -- calcite bundle -p calcite-showcase --bin preview --format standalone --no-build)"
+          echo "$out"
+          file="$(printf '%s\n' "$out" | sed -n 's/^ *appimage  //p' | head -1)"
+          name="calcite-preview-x86_64-unknown-linux-gnu.AppImage"
+          cp "$file" "$name"
+          chmod +x "$name"
+          sha256sum "$name" > "$name.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: calcite-preview-linux
+          path: calcite-preview-x86_64-unknown-linux-gnu.AppImage*
+          if-no-files-found: error
+
+  macos:
+    name: Developer preview (macOS universal dmg)
+    needs: validate
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Fetch and patch gpui-ce
+        run: ./scripts/bootstrap.sh
+
+      - name: Build the developer preview for Apple silicon and Intel
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked -p calcite-showcase --bin preview --target "$target"
+          done
+          # The bundler packages target/release; one universal binary serves both kinds of Mac.
+          mkdir -p target/release
+          lipo -create -output target/release/preview \
+            target/aarch64-apple-darwin/release/preview \
+            target/x86_64-apple-darwin/release/preview
+
+      - name: Package the dmg
+        run: |
+          out="$(cargo run --release --locked -p calcite-bundle -- calcite bundle -p calcite-showcase --bin preview --format standalone --no-build)"
+          echo "$out"
+          file="$(printf '%s\n' "$out" | sed -n 's/^ *dmg  //p' | head -1)"
+          name="calcite-preview-universal-apple-darwin.dmg"
+          cp "$file" "$name"
+          shasum -a 256 "$name" > "$name.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: calcite-preview-macos
+          path: calcite-preview-universal-apple-darwin.dmg*
           if-no-files-found: error
 
   release:
     name: Tag and publish the release
-    needs: windows
+    if: ${{ !inputs.dry_run }}
+    needs: [windows, linux, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -107,16 +200,26 @@ jobs:
           git tag "$TAG" "$GITHUB_SHA"
           git push origin "refs/tags/$TAG"
 
-      - name: Extract the changelog section of this version
+      - name: Write the release notes
         run: |
           awk -v version="${TAG#v}" '
             index($0, "## [" version "]") == 1 { found = 1; next }
             /^## \[/ { if (found) exit }
             found { print }
-          ' CHANGELOG.md > release_notes.md
-          if ! grep -q '[^[:space:]]' release_notes.md; then
-            echo "Release $TAG" > release_notes.md
-          fi
+          ' CHANGELOG.md > changelog_section.md
+          {
+            echo "## Developer preview"
+            echo
+            echo "One file per system, nothing to install:"
+            echo
+            echo "- Windows: \`calcite-preview-x86_64-pc-windows-msvc.exe\`"
+            echo "- macOS (Apple silicon and Intel): \`calcite-preview-universal-apple-darwin.dmg\`. It is not notarized: open it with right-click, Open."
+            echo "- Linux: \`calcite-preview-x86_64-unknown-linux-gnu.AppImage\`. Mark it executable first: \`chmod +x\`."
+            echo
+            if grep -q '[^[:space:]]' changelog_section.md; then
+              cat changelog_section.md
+            fi
+          } > release_notes.md
 
       - name: Create the GitHub release
         env:

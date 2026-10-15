@@ -17,6 +17,21 @@ const ICON_SIZES: [u32; 6] = [32, 64, 128, 256, 512, 1024];
 /// The format that copies the bare Windows executable instead of running the packager.
 const STANDALONE_EXE: &str = "exe";
 
+/// Names the host platform's single-file format: `exe` on Windows, `dmg` on macOS, and
+/// `appimage` on Linux.
+const STANDALONE: &str = "standalone";
+
+/// The single file the app ships as on the host platform, without an installer.
+fn standalone_format() -> &'static str {
+	if cfg!(windows) {
+		STANDALONE_EXE
+	} else if cfg!(target_os = "macos") {
+		"dmg"
+	} else {
+		"appimage"
+	}
+}
+
 /// What to package and how.
 #[derive(Clone, Debug, Default)]
 pub struct Options {
@@ -333,9 +348,10 @@ fn is_macos_format(format: &str) -> bool {
 	matches!(format, "app" | "dmg")
 }
 
-/// The CLI's formats, else the manifest's `formats`; `None` leaves the choice to the packager.
+/// The CLI's formats, else the manifest's `formats`, with `standalone` resolved for the host;
+/// `None` leaves the choice to the packager.
 fn requested_formats(cli: Option<Vec<String>>, settings: &Map<String, Value>) -> Option<Vec<String>> {
-	cli.or_else(|| {
+	let formats = cli.or_else(|| {
 		settings.get("formats").and_then(Value::as_array).map(|formats| {
 			formats
 				.iter()
@@ -343,7 +359,19 @@ fn requested_formats(cli: Option<Vec<String>>, settings: &Map<String, Value>) ->
 				.map(str::to_string)
 				.collect()
 		})
-	})
+	})?;
+	let mut resolved: Vec<String> = Vec::with_capacity(formats.len());
+	for format in formats {
+		let format = if format == STANDALONE {
+			standalone_format().to_string()
+		} else {
+			format
+		};
+		if !resolved.contains(&format) {
+			resolved.push(format);
+		}
+	}
+	Some(resolved)
 }
 
 /// Splits the requested formats into packager runs, each as `(pad_for_macos, formats)`.
@@ -499,6 +527,11 @@ mod tests {
 		assert_eq!(requested, Some(vec!["exe".to_string(), "nsis".to_string()]));
 		let cli = requested_formats(Some(vec!["deb".to_string()]), settings.as_object().unwrap());
 		assert_eq!(cli, Some(vec!["deb".to_string()]));
+		let standalone = requested_formats(
+			Some(vec!["standalone".to_string(), standalone_format().to_string()]),
+			&Map::new(),
+		);
+		assert_eq!(standalone, Some(vec![standalone_format().to_string()]));
 	}
 
 	#[test]
