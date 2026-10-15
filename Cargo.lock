@@ -802,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "calcite-bundle"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "cargo-packager",
  "embed-resource",
@@ -812,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "calcite-exec"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "futures",
  "gpui-ce",
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "calcite-showcase"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "calcite",
  "calcite-bundle",
@@ -832,11 +832,11 @@ dependencies = [
 
 [[package]]
 name = "calcite-tint"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "calcite-update"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "calcite-update",
  "ed25519-dalek",

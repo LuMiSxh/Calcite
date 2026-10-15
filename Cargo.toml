@@ -5,7 +5,7 @@ default-members = ["crates/calcite-showcase"]
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 license = "MPL-2.0"
 publish = false

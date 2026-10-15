@@ -5,10 +5,20 @@ All notable changes to Calcite are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-15
+
 ### Added
 
-- Release workflow (`.github/workflows/release.yml`), started by hand with a version tag: it builds the developer preview as a standalone Windows executable, creates the tag, and publishes a GitHub release with the changelog section as notes.
+- Release workflow (`.github/workflows/release.yml`), started by hand with a version tag: it builds the developer preview as one standalone file per system (Windows `.exe`, Linux `.AppImage`, and a universal macOS `.dmg` for Apple silicon and Intel), creates the tag, and publishes a GitHub release. `dry_run` builds the files without a tag or release.
 - `calcite-bundle`: the `exe` format copies the Windows executable alone, without an installer, as `<name>_<version>_<arch>.exe`. It needs a Windows host and no `resources`.
+- `calcite-bundle`: the `standalone` format names the host's single file: `exe` on Windows, `dmg` on macOS, `appimage` on Linux.
+
+### Performance
+
+- Windows (Direct3D): backdrop blur and glass run under a scissor around each filter, like Metal and Vulkan. Each glass control used to blur the whole window three times per frame.
+- All backends: a backdrop filter blurs only the part of its bounds its content mask shows, so glass half scrolled out of a list blurs half.
+- All backends: the gaussian blur fetches two neighbouring taps with one bilinear sample, which halves the texture reads of the blur passes for radii up to about 21 px. The result is the same.
+- Neutral flat controls at rest paint a plain fill instead of a one-pixel glass pass; only the pointer light on hover still uses glass.
 
 ### Fixed
 
