@@ -8,5 +8,5 @@ pub use wgpu_context::*;
 #[cfg(all(feature = "test-support", not(target_family = "wasm")))]
 pub use wgpu_renderer::WgpuHeadlessRenderer;
 pub use wgpu_renderer::{
-	FontRasterizationSettings, GpuContext, SubpixelOrder, WgpuRenderer, WgpuSurfaceConfig,
+    FontRasterizationSettings, GpuContext, SubpixelOrder, WgpuRenderer, WgpuSurfaceConfig,
 };

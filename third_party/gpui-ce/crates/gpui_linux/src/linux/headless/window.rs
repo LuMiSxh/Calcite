@@ -15,218 +15,224 @@ use parking_lot::Mutex;
 use uuid::Uuid;
 
 use gpui::{
-	AtlasKey, AtlasTextureId, AtlasTile, Bounds, Capslock, DevicePixels, DispatchEventResult, DisplayId,
-	GlyphAtlasCache, GlyphAtlasEntry, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
-	PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RenderGlyphParams,
-	RequestFrameOptions, Scene, Size, TileId, ValidatedRasterizedGlyph, WindowAppearance,
-	WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, px,
+    AtlasKey, AtlasTextureId, AtlasTile, Bounds, Capslock, DevicePixels, DispatchEventResult,
+    DisplayId, GlyphAtlasCache, GlyphAtlasEntry, GpuSpecs, Modifiers, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
+    PromptLevel, RenderGlyphParams, RequestFrameOptions, Scene, Size, TileId,
+    ValidatedRasterizedGlyph, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowParams, px,
 };
 
 #[derive(Debug)]
 pub(crate) struct HeadlessDisplay {
-	bounds: Bounds<Pixels>,
+    bounds: Bounds<Pixels>,
 }
 
 impl HeadlessDisplay {
-	pub(crate) fn new() -> Self {
-		Self {
-			bounds: Bounds::from_corners(Point::default(), Point::new(px(1920.), px(1080.))),
-		}
-	}
+    pub(crate) fn new() -> Self {
+        Self {
+            bounds: Bounds::from_corners(Point::default(), Point::new(px(1920.), px(1080.))),
+        }
+    }
 }
 
 impl PlatformDisplay for HeadlessDisplay {
-	fn id(&self) -> DisplayId {
-		DisplayId::new(0)
-	}
+    fn id(&self) -> DisplayId {
+        DisplayId::new(0)
+    }
 
-	fn uuid(&self) -> anyhow::Result<Uuid> {
-		// Stable identity: there is exactly one headless display.
-		Ok(Uuid::nil())
-	}
+    fn uuid(&self) -> anyhow::Result<Uuid> {
+        // Stable identity: there is exactly one headless display.
+        Ok(Uuid::nil())
+    }
 
-	fn bounds(&self) -> Bounds<Pixels> {
-		self.bounds
-	}
+    fn bounds(&self) -> Bounds<Pixels> {
+        self.bounds
+    }
 }
 
 struct HeadlessWindowState {
-	bounds: Bounds<Pixels>,
-	display: Rc<dyn PlatformDisplay>,
-	input_handler: Option<PlatformInputHandler>,
-	title: Option<String>,
-	is_fullscreen: bool,
+    bounds: Bounds<Pixels>,
+    display: Rc<dyn PlatformDisplay>,
+    input_handler: Option<PlatformInputHandler>,
+    title: Option<String>,
+    is_fullscreen: bool,
 }
 
 pub(crate) struct HeadlessWindow(Rc<RefCell<HeadlessWindowState>>);
 
 impl raw_window_handle::HasWindowHandle for HeadlessWindow {
-	fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
-		// Headless windows are not backed by a native window.
-		Err(raw_window_handle::HandleError::NotSupported)
-	}
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        // Headless windows are not backed by a native window.
+        Err(raw_window_handle::HandleError::NotSupported)
+    }
 }
 
 impl raw_window_handle::HasDisplayHandle for HeadlessWindow {
-	fn display_handle(&self) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
-		Err(raw_window_handle::HandleError::NotSupported)
-	}
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        Err(raw_window_handle::HandleError::NotSupported)
+    }
 }
 
 impl HeadlessWindow {
-	pub(crate) fn new(params: WindowParams, display: Rc<dyn PlatformDisplay>) -> Self {
-		Self(Rc::new(RefCell::new(HeadlessWindowState {
-			bounds: params.bounds,
-			display,
-			input_handler: None,
-			title: None,
-			is_fullscreen: false,
-		})))
-	}
+    pub(crate) fn new(params: WindowParams, display: Rc<dyn PlatformDisplay>) -> Self {
+        Self(Rc::new(RefCell::new(HeadlessWindowState {
+            bounds: params.bounds,
+            display,
+            input_handler: None,
+            title: None,
+            is_fullscreen: false,
+        })))
+    }
 }
 
 impl PlatformWindow for HeadlessWindow {
-	fn bounds(&self) -> Bounds<Pixels> {
-		self.0.borrow().bounds
-	}
+    fn bounds(&self) -> Bounds<Pixels> {
+        self.0.borrow().bounds
+    }
 
-	fn is_maximized(&self) -> bool {
-		false
-	}
+    fn is_maximized(&self) -> bool {
+        false
+    }
 
-	fn window_bounds(&self) -> WindowBounds {
-		WindowBounds::Windowed(self.bounds())
-	}
+    fn window_bounds(&self) -> WindowBounds {
+        WindowBounds::Windowed(self.bounds())
+    }
 
-	fn content_size(&self) -> Size<Pixels> {
-		self.bounds().size
-	}
+    fn content_size(&self) -> Size<Pixels> {
+        self.bounds().size
+    }
 
-	fn resize(&mut self, size: Size<Pixels>) {
-		self.0.borrow_mut().bounds.size = size;
-	}
+    fn resize(&mut self, size: Size<Pixels>) {
+        self.0.borrow_mut().bounds.size = size;
+    }
 
-	fn scale_factor(&self) -> f32 {
-		1.0
-	}
+    fn scale_factor(&self) -> f32 {
+        1.0
+    }
 
-	fn appearance(&self) -> WindowAppearance {
-		WindowAppearance::Dark
-	}
+    fn appearance(&self) -> WindowAppearance {
+        WindowAppearance::Dark
+    }
 
-	fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-		Some(self.0.borrow().display.clone())
-	}
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(self.0.borrow().display.clone())
+    }
 
-	fn mouse_position(&self) -> Point<Pixels> {
-		Point::default()
-	}
+    fn mouse_position(&self) -> Point<Pixels> {
+        Point::default()
+    }
 
-	fn modifiers(&self) -> Modifiers {
-		Modifiers::default()
-	}
+    fn modifiers(&self) -> Modifiers {
+        Modifiers::default()
+    }
 
-	fn capslock(&self) -> Capslock {
-		Capslock::default()
-	}
+    fn capslock(&self) -> Capslock {
+        Capslock::default()
+    }
 
-	fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-		self.0.borrow_mut().input_handler = Some(input_handler);
-	}
+    fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
+        self.0.borrow_mut().input_handler = Some(input_handler);
+    }
 
-	fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-		self.0.borrow_mut().input_handler.take()
-	}
+    fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
+        self.0.borrow_mut().input_handler.take()
+    }
 
-	fn prompt(
-		&self,
-		_level: PromptLevel,
-		_msg: &str,
-		_detail: Option<&str>,
-		_answers: &[PromptButton],
-	) -> Option<futures::channel::oneshot::Receiver<usize>> {
-		// Fall back to GPUI's rendered prompts.
-		None
-	}
+    fn prompt(
+        &self,
+        _level: PromptLevel,
+        _msg: &str,
+        _detail: Option<&str>,
+        _answers: &[PromptButton],
+    ) -> Option<futures::channel::oneshot::Receiver<usize>> {
+        // Fall back to GPUI's rendered prompts.
+        None
+    }
 
-	fn activate(&self, _token: Option<&str>) -> bool {
-		false
-	}
+    fn activate(&self, _token: Option<&str>) -> bool {
+        false
+    }
 
-	fn is_active(&self) -> bool {
-		false
-	}
+    fn is_active(&self) -> bool {
+        false
+    }
 
-	fn is_hovered(&self) -> bool {
-		false
-	}
+    fn is_hovered(&self) -> bool {
+        false
+    }
 
-	fn background_appearance(&self) -> WindowBackgroundAppearance {
-		WindowBackgroundAppearance::Opaque
-	}
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        WindowBackgroundAppearance::Opaque
+    }
 
-	fn set_title(&mut self, title: &str) {
-		self.0.borrow_mut().title = Some(title.to_owned());
-	}
+    fn set_title(&mut self, title: &str) {
+        self.0.borrow_mut().title = Some(title.to_owned());
+    }
 
-	fn get_title(&self) -> String {
-		self.0.borrow().title.clone().unwrap_or_default()
-	}
+    fn get_title(&self) -> String {
+        self.0.borrow().title.clone().unwrap_or_default()
+    }
 
-	fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}
+    fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}
 
-	fn set_visible(&self, _visible: bool) {}
+    fn set_visible(&self, _visible: bool) {}
 
-	fn minimize(&self) {}
+    fn minimize(&self) {}
 
-	fn zoom(&self) {}
+    fn zoom(&self) {}
 
-	fn toggle_fullscreen(&self) {
-		let mut state = self.0.borrow_mut();
-		state.is_fullscreen = !state.is_fullscreen;
-	}
+    fn toggle_fullscreen(&self) {
+        let mut state = self.0.borrow_mut();
+        state.is_fullscreen = !state.is_fullscreen;
+    }
 
-	fn is_fullscreen(&self) -> bool {
-		self.0.borrow().is_fullscreen
-	}
+    fn is_fullscreen(&self) -> bool {
+        self.0.borrow().is_fullscreen
+    }
 
-	// No compositor drives a frame loop, so frame and status callbacks are
-	// dropped: anything that awaits a frame will never resolve headlessly.
-	fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
+    // No compositor drives a frame loop, so frame and status callbacks are
+    // dropped: anything that awaits a frame will never resolve headlessly.
+    fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
 
-	fn on_input(&self, _callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {}
+    fn on_input(&self, _callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {}
 
-	fn on_active_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
+    fn on_active_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
 
-	fn on_hover_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
+    fn on_hover_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
 
-	fn on_resize(&self, _callback: Box<dyn FnMut(Size<Pixels>, f32)>) {}
+    fn on_resize(&self, _callback: Box<dyn FnMut(Size<Pixels>, f32)>) {}
 
-	fn on_moved(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_moved(&self, _callback: Box<dyn FnMut()>) {}
 
-	fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {}
+    fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {}
 
-	fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
+    fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
 
-	fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {}
+    fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+    }
 
-	fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
-	fn draw(&self, _scene: &Scene) {}
+    fn draw(&self, _scene: &Scene) {}
 
-	fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-		Arc::new(HeadlessAtlas::default())
-	}
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+        Arc::new(HeadlessAtlas::default())
+    }
 
-	fn is_subpixel_rendering_supported(&self) -> bool {
-		false
-	}
+    fn is_subpixel_rendering_supported(&self) -> bool {
+        false
+    }
 
-	fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
 
-	fn gpu_specs(&self) -> Option<GpuSpecs> {
-		None
-	}
+    fn gpu_specs(&self) -> Option<GpuSpecs> {
+        None
+    }
 }
 
 /// Allocates atlas tiles without uploading pixels, so glyph and sprite
@@ -236,85 +242,87 @@ struct HeadlessAtlas(Mutex<HeadlessAtlasState>);
 
 #[derive(Default)]
 struct HeadlessAtlasState {
-	next_id: u32,
-	tiles: HashMap<AtlasKey, AtlasTile>,
-	glyph_cache: GlyphAtlasCache,
+    next_id: u32,
+    tiles: HashMap<AtlasKey, AtlasTile>,
+    glyph_cache: GlyphAtlasCache,
 }
 
 impl HeadlessAtlasState {
-	fn insert_tile(&mut self, key: AtlasKey, size: Size<DevicePixels>) -> AtlasTile {
-		self.next_id += 1;
-		let texture_id = self.next_id;
-		self.next_id += 1;
-		let tile_id = self.next_id;
-		let tile = AtlasTile {
-			texture_id: AtlasTextureId {
-				index: texture_id,
-				kind: key.texture_kind(),
-			},
-			tile_id: TileId(tile_id),
-			padding: 0,
-			bounds: Bounds {
-				origin: Point::default(),
-				size,
-			},
-		};
+    fn insert_tile(&mut self, key: AtlasKey, size: Size<DevicePixels>) -> AtlasTile {
+        self.next_id += 1;
+        let texture_id = self.next_id;
+        self.next_id += 1;
+        let tile_id = self.next_id;
+        let tile = AtlasTile {
+            texture_id: AtlasTextureId {
+                index: texture_id,
+                kind: key.texture_kind(),
+            },
+            tile_id: TileId(tile_id),
+            padding: 0,
+            bounds: Bounds {
+                origin: Point::default(),
+                size,
+            },
+        };
 
-		self.tiles.insert(key, tile);
+        self.tiles.insert(key, tile);
 
-		tile
-	}
+        tile
+    }
 }
 
 impl PlatformAtlas for HeadlessAtlas {
-	fn get_or_insert_with<'a>(
-		&self,
-		key: &AtlasKey,
-		build: &mut dyn FnMut() -> anyhow::Result<Option<(Size<DevicePixels>, std::borrow::Cow<'a, [u8]>)>>,
-	) -> anyhow::Result<Option<AtlasTile>> {
-		{
-			let state = self.0.lock();
-			if let Some(&tile) = state.tiles.get(key) {
-				return Ok(Some(tile));
-			}
-		}
+    fn get_or_insert_with<'a>(
+        &self,
+        key: &AtlasKey,
+        build: &mut dyn FnMut() -> anyhow::Result<
+            Option<(Size<DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
+        >,
+    ) -> anyhow::Result<Option<AtlasTile>> {
+        {
+            let state = self.0.lock();
+            if let Some(&tile) = state.tiles.get(key) {
+                return Ok(Some(tile));
+            }
+        }
 
-		let Some((size, _)) = build()? else {
-			return Ok(None);
-		};
+        let Some((size, _)) = build()? else {
+            return Ok(None);
+        };
 
-		let mut state = self.0.lock();
-		let tile = state.insert_tile(key.clone(), size);
+        let mut state = self.0.lock();
+        let tile = state.insert_tile(key.clone(), size);
 
-		Ok(Some(tile))
-	}
+        Ok(Some(tile))
+    }
 
-	fn get_or_insert_glyph_with(
-		&self,
-		params: &RenderGlyphParams,
-		build: &mut dyn FnMut() -> anyhow::Result<ValidatedRasterizedGlyph>,
-	) -> anyhow::Result<GlyphAtlasEntry> {
-		if let Some(entry) = self.0.lock().glyph_cache.get(params) {
-			return Ok(entry);
-		}
+    fn get_or_insert_glyph_with(
+        &self,
+        params: &RenderGlyphParams,
+        build: &mut dyn FnMut() -> anyhow::Result<ValidatedRasterizedGlyph>,
+    ) -> anyhow::Result<GlyphAtlasEntry> {
+        if let Some(entry) = self.0.lock().glyph_cache.get(params) {
+            return Ok(entry);
+        }
 
-		let glyph = build()?;
+        let glyph = build()?;
 
-		let mut state = self.0.lock();
-		let tile = if glyph.size == Size::default() {
-			None
-		} else {
-			let key = (params.clone(), glyph.format).into();
+        let mut state = self.0.lock();
+        let tile = if glyph.size == Size::default() {
+            None
+        } else {
+            let key = (params.clone(), glyph.format).into();
 
-			Some(state.insert_tile(key, glyph.size))
-		};
+            Some(state.insert_tile(key, glyph.size))
+        };
 
-		Ok(state.glyph_cache.insert(params, &glyph, tile))
-	}
+        Ok(state.glyph_cache.insert(params, &glyph, tile))
+    }
 
-	fn remove(&self, key: &AtlasKey) {
-		let mut state = self.0.lock();
-		state.glyph_cache.remove(key);
-		state.tiles.remove(key);
-	}
+    fn remove(&self, key: &AtlasKey) {
+        let mut state = self.0.lock();
+        state.glyph_cache.remove(key);
+        state.tiles.remove(key);
+    }
 }

@@ -19,7 +19,7 @@ use syn::{DeriveInput, Ident};
 /// `Action` derive macro - see the trait documentation for details.
 #[proc_macro_derive(Action, attributes(action))]
 pub fn derive_action(input: TokenStream) -> TokenStream {
-	derive_action::derive_action(input)
+    derive_action::derive_action(input)
 }
 
 /// This can be used to register an action with the GPUI runtime when you want to manually implement
@@ -27,44 +27,44 @@ pub fn derive_action(input: TokenStream) -> TokenStream {
 /// instead.
 #[proc_macro]
 pub fn register_action(ident: TokenStream) -> TokenStream {
-	register_action::register_action(ident)
+    register_action::register_action(ident)
 }
 
 /// #[derive(IntoElement)] generates an `IntoElement` impl for any `RenderOnce`
 /// type, wrapping it in a `ViewElement` so it can be used as a child.
 #[proc_macro_derive(IntoElement)]
 pub fn derive_into_element(input: TokenStream) -> TokenStream {
-	derive_into_element::derive_into_element(input)
+    derive_into_element::derive_into_element(input)
 }
 
 /// Implements `Styled` using the field marked `#[style]`.
 #[proc_macro_derive(Styled, attributes(style))]
 pub fn derive_styled(input: TokenStream) -> TokenStream {
-	derive_element_traits::derive_styled(input)
+    derive_element_traits::derive_styled(input)
 }
 
 /// Implements `ParentElement` using the field marked `#[children]`.
 #[proc_macro_derive(ParentElement, attributes(children))]
 pub fn derive_parent_element(input: TokenStream) -> TokenStream {
-	derive_element_traits::derive_parent_element(input)
+    derive_element_traits::derive_parent_element(input)
 }
 
 /// Implements `InteractiveElement` using the field marked `#[interactivity]`.
 #[proc_macro_derive(InteractiveElement, attributes(interactivity))]
 pub fn derive_interactive_element(input: TokenStream) -> TokenStream {
-	derive_element_traits::derive_interactive_element(input)
+    derive_element_traits::derive_interactive_element(input)
 }
 
 /// Implements the marker trait `StatefulInteractiveElement`.
 #[proc_macro_derive(StatefulInteractiveElement)]
 pub fn derive_stateful_interactive_element(input: TokenStream) -> TokenStream {
-	derive_element_traits::derive_stateful_interactive_element(input)
+    derive_element_traits::derive_stateful_interactive_element(input)
 }
 
 #[proc_macro_derive(Render)]
 #[doc(hidden)]
 pub fn derive_render(input: TokenStream) -> TokenStream {
-	derive_render::derive_render(input)
+    derive_render::derive_render(input)
 }
 
 /// #[derive(AppContext)] is used to create a context out of anything that holds a `&mut App`
@@ -82,7 +82,7 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_derive(AppContext, attributes(app))]
 pub fn derive_app_context(input: TokenStream) -> TokenStream {
-	derive_app_context::derive_app_context(input)
+    derive_app_context::derive_app_context(input)
 }
 
 /// #[derive(VisualContext)] is used to create a visual context out of anything that holds a `&mut Window` and
@@ -115,69 +115,69 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_derive(VisualContext, attributes(window, app))]
 pub fn derive_visual_context(input: TokenStream) -> TokenStream {
-	derive_visual_context::derive_visual_context(input)
+    derive_visual_context::derive_visual_context(input)
 }
 
 /// Used by GPUI to generate the style helpers.
 #[proc_macro]
 #[doc(hidden)]
 pub fn style_helpers(input: TokenStream) -> TokenStream {
-	styles::style_helpers(input)
+    styles::style_helpers(input)
 }
 
 /// Generates the style transition builder and application code.
 #[proc_macro]
 #[doc(hidden)]
 pub fn style_transitions(input: TokenStream) -> TokenStream {
-	styles::style_transitions(input)
+    styles::style_transitions(input)
 }
 
 /// Generates methods for visibility styles.
 #[proc_macro]
 pub fn visibility_style_methods(input: TokenStream) -> TokenStream {
-	styles::visibility_style_methods(input)
+    styles::visibility_style_methods(input)
 }
 
 /// Generates methods for margin styles.
 #[proc_macro]
 pub fn margin_style_methods(input: TokenStream) -> TokenStream {
-	styles::margin_style_methods(input)
+    styles::margin_style_methods(input)
 }
 
 /// Generates methods for padding styles.
 #[proc_macro]
 pub fn padding_style_methods(input: TokenStream) -> TokenStream {
-	styles::padding_style_methods(input)
+    styles::padding_style_methods(input)
 }
 
 /// Generates methods for position styles.
 #[proc_macro]
 pub fn position_style_methods(input: TokenStream) -> TokenStream {
-	styles::position_style_methods(input)
+    styles::position_style_methods(input)
 }
 
 /// Generates methods for overflow styles.
 #[proc_macro]
 pub fn overflow_style_methods(input: TokenStream) -> TokenStream {
-	styles::overflow_style_methods(input)
+    styles::overflow_style_methods(input)
 }
 
 /// Generates methods for cursor styles.
 #[proc_macro]
 pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
-	styles::cursor_style_methods(input)
+    styles::cursor_style_methods(input)
 }
 
 /// Generates methods for border styles.
 #[proc_macro]
 pub fn border_style_methods(input: TokenStream) -> TokenStream {
-	styles::border_style_methods(input)
+    styles::border_style_methods(input)
 }
 
 /// Generates methods for box shadow styles.
 #[proc_macro]
 pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
-	styles::box_shadow_style_methods(input)
+    styles::box_shadow_style_methods(input)
 }
 
 /// `#[gpui::test]` can be used to annotate test functions that run with GPUI support.
@@ -219,7 +219,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 /// - `ITERATIONS`: forces the value of the `iterations` argument
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
-	test::test(args, function)
+    test::test(args, function)
 }
 
 /// `#[gpui::bench]` annotates a Criterion benchmark that runs with GPUI support.
@@ -234,7 +234,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 /// feature, since the generated code references all three.
 #[proc_macro_attribute]
 pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
-	bench::bench(args, function)
+    bench::bench(args, function)
 }
 
 /// A variant of `#[gpui::test]` that supports property-based testing.
@@ -307,7 +307,7 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
 /// [`Strategy`]: https://docs.rs/proptest/latest/proptest/strategy/trait.Strategy.html
 #[proc_macro_attribute]
 pub fn property_test(args: TokenStream, function: TokenStream) -> TokenStream {
-	property_test::test(args.into(), function.into()).into()
+    property_test::test(args.into(), function.into()).into()
 }
 
 /// When added to a trait, `#[derive_inspector_reflection]` generates a module which provides
@@ -329,17 +329,17 @@ pub fn property_test(args: TokenStream, function: TokenStream) -> TokenStream {
 #[cfg(any(feature = "inspector", debug_assertions))]
 #[proc_macro_attribute]
 pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> TokenStream {
-	derive_inspector_reflection::derive_inspector_reflection(_args, input)
+    derive_inspector_reflection::derive_inspector_reflection(_args, input)
 }
 
 pub(crate) fn get_simple_attribute_field(ast: &DeriveInput, name: &'static str) -> Option<Ident> {
-	match &ast.data {
-		syn::Data::Struct(data_struct) => data_struct
-			.fields
-			.iter()
-			.find(|field| field.attrs.iter().any(|attr| attr.path().is_ident(name)))
-			.map(|field| field.ident.clone().unwrap()),
-		syn::Data::Enum(_) => None,
-		syn::Data::Union(_) => None,
-	}
+    match &ast.data {
+        syn::Data::Struct(data_struct) => data_struct
+            .fields
+            .iter()
+            .find(|field| field.attrs.iter().any(|attr| attr.path().is_ident(name)))
+            .map(|field| field.ident.clone().unwrap()),
+        syn::Data::Enum(_) => None,
+        syn::Data::Union(_) => None,
+    }
 }
