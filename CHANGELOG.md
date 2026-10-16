@@ -33,6 +33,7 @@ All notable changes to Calcite are recorded here. The format follows
 ### Added
 
 - The gpui-ce patch adds `0004-radial-gradient` (`gpui::radial_gradient`, a `Background`) and `0005-drop-shadow` (`Filter::DropShadow`, a shadow that follows the alpha of the content). Both work on Metal, wgpu, and Direct3D. `patches/NEW_API.md` lists the API.
+- `calcite::prelude` re-exports `Context`, `Div`, `FontWeight`, `MouseButton`, and `Stateful` from gpui.
 - `calcite::prelude`: `radial_gradient`, `DropShadowExt::drop_shadow` for an element, and `text_shadow` for a blurred text shadow. The preview has an Effects section.
 - `calcite-exec`: `Job::background`, `Job::tokio` (feature `tokio`, returns `JobResult` and fails with `Stale` when the runtime shuts down), `Job::on_cancel`, `Job::hold`, `Job::sleep` and `Job::now` on the executor clock, `Job::progress` with `Progress` (latest value, trailing edge, final value always published), `Counter`, `try_bounded` with `TryBounded::fail_fast` and `cancel`, and `Spawner`.
 - `calcite`: `Assets::with` and `Assets::with_many` register app SVG and PNG files next to Calcite's icons. They take owned or static bytes. A later asset at the same path replaces the earlier one.

@@ -119,9 +119,9 @@ pub mod prelude {
 	// names win over the glob. The showcase coverage test reads the prelude above this line.
 	pub use gpui::prelude::*;
 	pub use gpui::{
-		AnyElement, App, Bounds, ClickEvent, Entity, FocusHandle, Focusable, Hsla, Pixels, Point, Rgba,
-		SharedString, Window, WindowBounds, WindowOptions, actions, div, hsla, point, px, rems, rgb, rgba,
-		size,
+		AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, FocusHandle, Focusable, FontWeight, Hsla,
+		MouseButton, Pixels, Point, Rgba, SharedString, Stateful, Window, WindowBounds, WindowOptions,
+		actions, div, hsla, point, px, rems, rgb, rgba, size,
 	};
 }
 
