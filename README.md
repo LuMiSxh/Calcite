@@ -119,16 +119,34 @@ when a `calcite::prelude` builder has no section.
 
 `calcite-update` follows Sparkle's model on macOS, Windows, and Linux:
 
-1. The app downloads `update.json`: the feed and its Ed25519 signature. It checks the
-   signature before it reads the feed, then the product, the channel, and the version.
+1. The app downloads `update.json`: the feed, its Ed25519 signature, and the ID of the
+   signing key. It checks the signature against its trusted keys before it reads the feed,
+   then the product, the channel, the version, and the age and sequence of the feed.
 2. The feed lists the complete new file tree with a SHA-256 per file, a full package, and
    deltas from older releases. A delta holds only new and changed files, as zstd patches
    against the installed files. Unchanged files, such as a bundled runtime, cost nothing.
 3. The new tree is staged next to the app. Every file is checked against the signed tree.
    If the installed copy does not match, the update falls back to the full package.
-4. When the app quits and nothing runs, the staged tree replaces the installed one with a
-   rename. On Windows, each file moves aside first; `cleanup` removes the old files at the
-   next launch.
+4. When the app quits and nothing runs, the staged tree is checked again and replaces the
+   installed one with a rename. In a folder that the app shares with other files (Windows,
+   Linux), the update moves only the files it owns, through a journal, and `cleanup` finishes
+   or undoes an interrupted install at the next launch.
+
+The [crate README](crates/calcite-update/README.md) states the security model: what an
+update defends against and what it does not.
+
+Create the updater with the builder:
+
+```rust
+let updater = Updater::builder([("2026".to_string(), verifying_key("<public key hex>")?)])
+	.feed_url("https://github.com/OWNER/APP/releases/latest/download/update.json")
+	.product("dev.example.app")
+	.channel("stable")
+	.current(env!("CARGO_PKG_VERSION").parse()?)
+	.root(root)
+	.state_dir(app_data_dir) // holds update-state.json
+	.build()?;
+```
 
 Publish a release:
 
@@ -136,13 +154,15 @@ Publish a release:
 cargo install --git https://github.com/LuMiSxh/Calcite calcite-update --features publish
 calcite-update keygen                                    # once; store the seed as a secret
 calcite-update extract --feed old/update.json --package old/App-1.0.0-macos-aarch64.full.zst --into prev/1.0.0
-calcite-update release --product dev.example.app --channel stable --version 1.1.0 \
+calcite-update release --product dev.example.app --channel stable --version 1.1.0 --sequence 7 \
 	--name App --bundle target/calcite-bundle/release/App.app --out dist --previous 1.0.0=prev/1.0.0
-calcite-update sign --feed dist/feed.json --out dist/update.json   # seed from CALCITE_UPDATE_KEY
+calcite-update sign --feed dist/feed.json --out dist/update.json --key-id 2026   # seed from CALCITE_UPDATE_KEY
 ```
 
-Run `release` once per target into the same `dist` folder, then `sign` once. Upload
-`dist/*` to the GitHub release; clients read `releases/latest/download/update.json`.
+Run `release` once per target into the same `dist` folder, then `sign` once. Raise
+`--sequence` with every release; clients reject a lower one. `sign` stamps the feed with the
+current time, so sign again before the maximum age (30 days) passes. Upload `dist/*` to the
+GitHub release; clients read `releases/latest/download/update.json`.
 
 ## Liquid Glass
 

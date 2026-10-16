@@ -8,17 +8,18 @@ use std::{
 	fs,
 	io::{self, Write},
 	path::{Path, PathBuf},
+	time::{SystemTime, UNIX_EPOCH},
 };
 
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 
 use crate::{
-	Asset, Entry, Envelope, Error, Feed, Kind, Result,
+	Asset, Delta, Entry, Envelope, Error, Feed, Kind, Result, Target,
+	fsutil::hash_file,
 	manifest::validate_entries,
 	pack::{self, DeltaIndex, DeltaItem, Source},
 	sign::{decode_hex, encode_hex},
-	stage::sha256_file,
 };
 
 /// The tree of a built app, in the order a stager writes it (parents first). A file root,
@@ -79,10 +80,11 @@ fn walk(directory: &Path, prefix: &str, entries: &mut Vec<Entry>) -> Result<()> 
 }
 
 fn file_entry(full: &Path, path: String) -> Result<Entry> {
-	let metadata = fs::metadata(full).map_err(|error| Error::io(full, error))?;
+	let (size, sha256) = hash_file(full).map_err(|error| Error::io(full, error))?;
 	#[cfg(unix)]
 	let executable = {
 		use std::os::unix::fs::PermissionsExt;
+		let metadata = fs::metadata(full).map_err(|error| Error::io(full, error))?;
 		metadata.permissions().mode() & 0o111 != 0
 	};
 	#[cfg(not(unix))]
@@ -90,8 +92,8 @@ fn file_entry(full: &Path, path: String) -> Result<Entry> {
 	Ok(Entry {
 		path,
 		kind: Kind::File {
-			size: metadata.len(),
-			sha256: sha256_file(full).map_err(|error| Error::io(full, error))?,
+			size,
+			sha256,
 			executable,
 		},
 	})
@@ -106,13 +108,14 @@ fn join(root: &Path, path: &str) -> PathBuf {
 }
 
 fn asset(path: &Path) -> Result<Asset> {
+	let (size, sha256) = hash_file(path).map_err(|error| Error::io(path, error))?;
 	Ok(Asset {
 		name: path
 			.file_name()
 			.map(|name| name.to_string_lossy().into_owned())
 			.unwrap_or_default(),
-		size: fs::metadata(path).map_err(|error| Error::io(path, error))?.len(),
-		sha256: sha256_file(path).map_err(|error| Error::io(path, error))?,
+		size,
+		sha256,
 	})
 }
 
@@ -241,12 +244,106 @@ pub fn signing_key(seed_hex: &str) -> Result<SigningKey> {
 	Ok(SigningKey::from_bytes(&seed))
 }
 
-/// Signs `feed` into the envelope clients download as `update.json`.
-pub fn sign(feed: &Feed, key: &SigningKey) -> Result<Envelope> {
+/// Signs `feed` into an envelope. `key_id` names the key for clients that trust several.
+pub fn sign(feed: &Feed, key_id: &str, key: &SigningKey) -> Result<Envelope> {
 	let text = serde_json::to_string_pretty(feed).map_err(|error| Error::Feed(error.to_string()))?;
 	let signature = key.sign(text.as_bytes());
 	Ok(Envelope {
+		key_id: key_id.to_string(),
 		feed: text,
 		signature: encode_hex(&signature.to_bytes()),
+	})
+}
+
+/// The bytes of `update.json`: `feed` signed with the key `key_id`.
+pub fn sign_feed(feed: &Feed, key_id: &str, key: &SigningKey) -> Result<Vec<u8>> {
+	serde_json::to_vec_pretty(&sign(feed, key_id, key)?).map_err(|error| Error::Feed(error.to_string()))
+}
+
+/// The current time in seconds since the Unix epoch, for [`FeedBuilder::new`].
+pub fn now() -> u64 {
+	SystemTime::now()
+		.duration_since(UNIX_EPOCH)
+		.map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Builds the feed of one release from the targets that [`build_target`] returns.
+#[derive(Debug)]
+pub struct FeedBuilder(Feed);
+
+impl FeedBuilder {
+	/// `sequence` must rise with every feed you sign. `issued_at` is Unix seconds; use [`now`].
+	pub fn new(
+		product: impl Into<String>,
+		channel: impl Into<String>,
+		version: impl Into<String>,
+		sequence: u64,
+		issued_at: u64,
+	) -> Self {
+		Self(Feed {
+			format: Feed::FORMAT,
+			product: product.into(),
+			channel: channel.into(),
+			version: version.into(),
+			issued_at,
+			sequence,
+			minimum_version: None,
+			notes: String::new(),
+			targets: BTreeMap::new(),
+		})
+	}
+
+	pub fn notes(mut self, notes: impl Into<String>) -> Self {
+		self.0.notes = notes.into();
+		self
+	}
+
+	pub fn minimum_version(mut self, version: impl Into<String>) -> Self {
+		self.0.minimum_version = Some(version.into());
+		self
+	}
+
+	pub fn target(mut self, id: impl Into<String>, target: Target) -> Self {
+		self.0.targets.insert(id.into(), target);
+		self
+	}
+
+	pub fn build(self) -> Feed {
+		self.0
+	}
+}
+
+/// Packages the app tree at `bundle` for one target: scans and hashes it, writes the full
+/// package and one delta per release in `previous` (version and tree) into `out`, and hashes
+/// every package.
+pub fn build_target(
+	bundle: &Path,
+	out: &Path,
+	name: &str,
+	version: &str,
+	target_id: &str,
+	previous: &[(String, PathBuf)],
+) -> Result<Target> {
+	fs::create_dir_all(out).map_err(|error| Error::io(out, error))?;
+	let entries = scan(bundle)?;
+	let full = write_full(
+		bundle,
+		&entries,
+		&out.join(format!("{name}-{version}-{target_id}.full.zst")),
+	)?;
+	let mut deltas = Vec::new();
+	for (from, root) in previous {
+		let old_entries = scan(root)?;
+		let path = out.join(format!("{name}-{from}-{version}-{target_id}.delta"));
+		let asset = write_delta(root, &old_entries, bundle, &entries, from, version, &path)?;
+		deltas.push(Delta {
+			from: from.clone(),
+			asset,
+		});
+	}
+	Ok(Target {
+		entries,
+		full,
+		deltas,
 	})
 }

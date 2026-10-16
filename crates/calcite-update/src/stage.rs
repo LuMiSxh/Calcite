@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
 	Entry, Error, Kind, Result,
+	fsutil::{hash_file, open_regular},
 	manifest::{validate_path, validate_sha},
 	pack::{self, DeltaIndex, Source},
 	sign::encode_hex,
@@ -37,21 +38,6 @@ impl<W: Write> Write for Hashing<W> {
 	fn flush(&mut self) -> io::Result<()> {
 		self.inner.flush()
 	}
-}
-
-#[cfg(feature = "publish")]
-pub(crate) fn sha256_file(path: &Path) -> io::Result<String> {
-	let mut hasher = Sha256::new();
-	let mut file = fs::File::open(path)?;
-	let mut buffer = vec![0; 1 << 16];
-	loop {
-		let count = file.read(&mut buffer)?;
-		if count == 0 {
-			break;
-		}
-		hasher.update(&buffer[..count]);
-	}
-	Ok(encode_hex(&hasher.finalize()))
 }
 
 /// Creates `staging` empty. An earlier attempt is removed first.
@@ -243,9 +229,8 @@ pub fn stage_delta(package: &Path, entries: &[Entry], installed: &Path, staging:
 					})?;
 				}
 				None => {
-					let source = installed_file(installed, &entry.path)?;
+					let mut input = installed_file(installed, &entry.path)?;
 					write_file(staging, entry, |out, size| {
-						let mut input = fs::File::open(&source)?;
 						let copied = io::copy(&mut (&mut input).take(size + 1), out)?;
 						if copied == size {
 							Ok(())
@@ -270,31 +255,97 @@ pub fn stage_delta(package: &Path, entries: &[Entry], installed: &Path, staging:
 	Ok(())
 }
 
-/// The installed regular file at `path`. A link or a missing file means the installed copy
-/// is not the release the delta starts from.
-fn installed_file(installed: &Path, path: &str) -> Result<PathBuf> {
-	let full = join(installed, path);
-	match fs::symlink_metadata(&full) {
-		Ok(metadata) if metadata.is_file() => Ok(full),
-		_ => Err(Error::Integrity(format!("the installed copy lacks `{path}`"))),
-	}
+/// The installed regular file at `path`, opened once. A link or a missing file means the
+/// installed copy is not the release the delta starts from.
+fn installed_file(installed: &Path, path: &str) -> Result<fs::File> {
+	open_regular(&join(installed, path))
+		.map_err(|_| Error::Integrity(format!("the installed copy lacks `{path}`")))
 }
 
 fn read_base(installed: &Path, path: &str, sha256: &str) -> Result<Vec<u8>> {
-	let full = installed_file(installed, path)?;
-	let size = fs::metadata(&full)
-		.map_err(|error| Error::io(&full, error))?
-		.len();
-	if size > pack::MAX_PATCH_BASE {
+	let file = installed_file(installed, path)?;
+	let mut data = Vec::new();
+	file.take(pack::MAX_PATCH_BASE + 1)
+		.read_to_end(&mut data)
+		.map_err(|error| Error::io(&join(installed, path), error))?;
+	if data.len() as u64 > pack::MAX_PATCH_BASE {
 		return Err(Error::Integrity(format!(
 			"the base `{path}` is too large to patch"
 		)));
 	}
-	let data = fs::read(&full).map_err(|error| Error::io(&full, error))?;
 	if encode_hex(&Sha256::digest(&data)) != sha256 {
 		return Err(Error::Integrity(format!(
 			"the installed `{path}` is not the base the delta expects"
 		)));
 	}
 	Ok(data)
+}
+
+/// Checks the staged tree again, right before an install: it holds exactly the signed
+/// entries, and each file still has its signed size and hash. Files are hashed from an
+/// opened handle.
+pub(crate) fn verify_tree(staging: &Path, entries: &[Entry]) -> Result<()> {
+	let mut found = BTreeMap::new();
+	collect(staging, "", &mut found)?;
+	for entry in entries {
+		let kind = found
+			.remove(entry.path.as_str())
+			.ok_or_else(|| Error::Integrity(format!("the staged tree lacks `{}`", entry.path)))?;
+		let path = join(staging, &entry.path);
+		let matches = match (&entry.kind, kind) {
+			(Kind::Directory, Found::Directory) => true,
+			(Kind::Symlink { target }, Found::Symlink) => {
+				fs::read_link(&path).is_ok_and(|actual| actual.to_string_lossy() == target.as_str())
+			}
+			(Kind::File { size, sha256, .. }, Found::File) => hash_file(&path)
+				.map_err(|error| Error::io(&path, error))
+				.map(|(actual_size, actual)| actual_size == *size && actual == *sha256)?,
+			_ => false,
+		};
+		if !matches {
+			return Err(Error::Integrity(format!(
+				"the staged `{}` changed after it was checked",
+				entry.path
+			)));
+		}
+	}
+	match found.keys().next() {
+		Some(extra) => Err(Error::Integrity(format!(
+			"the staged tree holds unsigned `{extra}`"
+		))),
+		None => Ok(()),
+	}
+}
+
+#[derive(Clone, Copy)]
+enum Found {
+	Directory,
+	File,
+	Symlink,
+}
+
+fn collect(directory: &Path, prefix: &str, found: &mut BTreeMap<String, Found>) -> Result<()> {
+	for item in fs::read_dir(directory).map_err(|error| Error::io(directory, error))? {
+		let item = item.map_err(|error| Error::io(directory, error))?;
+		let name = item.file_name().to_string_lossy().into_owned();
+		let path = if prefix.is_empty() {
+			name
+		} else {
+			format!("{prefix}/{name}")
+		};
+		let kind = item.file_type().map_err(|error| Error::io(&item.path(), error))?;
+		if kind.is_symlink() {
+			found.insert(path, Found::Symlink);
+		} else if kind.is_dir() {
+			found.insert(path.clone(), Found::Directory);
+			collect(&item.path(), &path, found)?;
+		} else if kind.is_file() {
+			found.insert(path, Found::File);
+		} else {
+			return Err(Error::Integrity(format!(
+				"the staged `{path}` is of an unknown kind"
+			)));
+		}
+	}
+	Ok(())
 }

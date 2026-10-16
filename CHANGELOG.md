@@ -5,6 +5,28 @@ All notable changes to Calcite are recorded here. The format follows
 
 ## [Unreleased]
 
+### Breaking
+
+- `calcite-update`: `Updater` is built with `Updater::builder(trusted_keys)`. Its fields are private. `feed_url`, `product`, `channel`, `current`, `root`, and `state_dir` are required.
+- `calcite-update`: the feed format is 2. A feed has the signed fields `issued_at`, `sequence`, and the optional `minimum_version`. The envelope has a `key_id`. Sign again with `calcite-update sign --key-id ID`; `release` needs `--sequence`.
+- `calcite-update`: `install::install` and `Staged::install` take the product and version, and `Staged::install` hashes the staged tree again first. `publish::sign` takes a `key_id`.
+- `calcite-update`: `Updater` rejects `file://` URLs. The `test-support` feature and `UpdaterBuilder::allow_file_urls` allow them for tests.
+
+### Added
+
+- `calcite-update`: a client rejects a replayed feed (a lower `sequence` than it has seen, kept in `update-state.json`), a feed older than `max_feed_age` (default 30 days), and a feed dated more than 5 minutes ahead. `Clock` and `SystemClock` make the time injectable. The new `Error::Stale` names these cases.
+- `calcite-update`: an app can trust several keys by `key_id`, for key rotation. An unknown `key_id` is an error before any parsing.
+- `calcite-update`: `Available::is_required` reports that the running version is below the feed's `minimum_version`.
+- `calcite-update`: `publish::sign_feed`, `publish::FeedBuilder`, and `publish::build_target`.
+- `calcite-update`: a crate README with the security model.
+
+### Security
+
+- `calcite-update`: an install in a shared folder writes `.calcite-install.json` (app ID, version, owned paths) and never deletes a file that the old marker and the new tree do not list. The whole folder is swapped only when it holds nothing else.
+- `calcite-update`: a per-file install keeps a journal. A failure restores every file, and `cleanup` restores or finishes an install that a crash interrupted. `cleanup` no longer walks the install folder.
+- `calcite-update`: downloads use `create_new` in a download folder that is not a link, installed files open without following links, and the staged tree is hashed again right before the install.
+- `calcite-update`: requests have a connect timeout of 10 s and response and body timeouts.
+
 ## [0.4.0] - 2026-10-16
 
 ### Added

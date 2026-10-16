@@ -17,6 +17,8 @@ default = ["client"]
 client = ["dep:ureq"]
 # Writing releases: manifests, full archives, deltas, and the signed feed.
 publish = ["dep:getrandom"]
+# Lets an `Updater` read `file://` feeds, for tests and release dry runs. Never enable it in an app.
+test-support = []
 
 [dependencies]
 ed25519-dalek = "3"
@@ -28,4 +30,4 @@ ureq = { version = "3", optional = true }
 getrandom = { version = "0.3", optional = true }
 
 [dev-dependencies]
-calcite-update = { path = ".", features = ["publish"] }
+calcite-update = { path = ".", features = ["publish", "test-support"] }

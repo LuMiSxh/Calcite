@@ -3,7 +3,10 @@
 //! The feed and the file tree it describes, and the checks every path passes before a
 //! single byte is written.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+	collections::{BTreeMap, BTreeSet},
+	time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +23,15 @@ pub struct Feed {
 	pub product: String,
 	pub channel: String,
 	pub version: String,
+	/// When the feed was signed, in seconds since the Unix epoch. A client rejects a feed that
+	/// is older than its maximum age, so an attacker cannot freeze a client on an old feed.
+	pub issued_at: u64,
+	/// Rises with every signed feed. A client rejects a lower number than it has seen, so an
+	/// attacker cannot replay an older feed.
+	pub sequence: u64,
+	/// The oldest version that may keep running. A client below it sees a required update.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub minimum_version: Option<String>,
 	/// Release notes in Markdown.
 	#[serde(default)]
 	pub notes: String,
@@ -85,7 +97,43 @@ pub fn target_id() -> String {
 }
 
 impl Feed {
-	pub const FORMAT: u32 = 1;
+	pub const FORMAT: u32 = 2;
+
+	/// How far in the future `issued_at` may lie before a client rejects the feed.
+	pub const CLOCK_SKEW: Duration = Duration::from_secs(5 * 60);
+
+	/// The parsed [`Feed::minimum_version`].
+	pub fn minimum(&self) -> Result<Option<Version>> {
+		let Some(text) = &self.minimum_version else {
+			return Ok(None);
+		};
+		let minimum: Version = text.parse().map_err(Error::Feed)?;
+		let version: Version = self.version.parse().map_err(Error::Feed)?;
+		if minimum > version {
+			return Err(Error::Feed(format!(
+				"the minimum version {minimum} is newer than the release {version}"
+			)));
+		}
+		Ok(Some(minimum))
+	}
+
+	/// Rejects a replayed feed (`sequence` below `highest_sequence`), a frozen one (older than
+	/// `max_age` at `now`, in Unix seconds), and one dated in the future.
+	pub fn check_fresh(&self, now: u64, max_age: Duration, highest_sequence: u64) -> Result<()> {
+		if self.sequence < highest_sequence {
+			return Err(Error::Stale(format!(
+				"the feed has sequence {}, but sequence {highest_sequence} was seen",
+				self.sequence
+			)));
+		}
+		if self.issued_at > now.saturating_add(Self::CLOCK_SKEW.as_secs()) {
+			return Err(Error::Stale("the feed is dated in the future".into()));
+		}
+		if now.saturating_sub(self.issued_at) > max_age.as_secs() {
+			return Err(Error::Stale("the feed is older than the maximum age".into()));
+		}
+		Ok(())
+	}
 
 	/// Checks that the feed is for `product` on `channel`, newer than `current`, and that the
 	/// current target's tree is safe to write.
@@ -105,6 +153,7 @@ impl Feed {
 				self.channel
 			)));
 		}
+		self.minimum()?;
 		let version: Version = self.version.parse().map_err(Error::Feed)?;
 		if version <= *current {
 			return Ok(None);
@@ -120,8 +169,16 @@ impl Feed {
 	}
 }
 
+/// The largest package a client downloads.
+pub(crate) const MAX_ASSET_SIZE: u64 = 8 << 30;
+
 fn validate_asset(asset: &Asset) -> Result<()> {
 	let name = &asset.name;
+	if asset.size > MAX_ASSET_SIZE {
+		return Err(Error::Feed(format!(
+			"asset `{name}` is larger than {MAX_ASSET_SIZE} bytes"
+		)));
+	}
 	let plain = !name.is_empty()
 		&& name
 			.chars()

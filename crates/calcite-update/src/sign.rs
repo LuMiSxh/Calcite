@@ -3,6 +3,8 @@
 //! The signed envelope around a feed. The signature covers the feed's exact bytes, so no
 //! JSON canonicalization can weaken it.
 
+use std::collections::BTreeMap;
+
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +13,8 @@ use crate::{Error, Feed, Result};
 /// `update.json`: the feed as text and its Ed25519 signature, both as published.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Envelope {
+	/// Names the key that signed the feed, so an app can trust several keys during a rotation.
+	pub key_id: String,
 	pub feed: String,
 	/// Lowercase hex of the 64-byte signature.
 	pub signature: String,
@@ -25,8 +29,12 @@ pub fn verifying_key(hex: &str) -> Result<VerifyingKey> {
 }
 
 impl Envelope {
-	/// Verifies the signature, then parses the feed. Nothing in the feed is read before.
-	pub fn open(&self, key: &VerifyingKey) -> Result<Feed> {
+	/// Looks up the key by `key_id`, verifies the signature, then parses the feed. Nothing in
+	/// the feed is read before.
+	pub fn open(&self, keys: &BTreeMap<String, VerifyingKey>) -> Result<Feed> {
+		let key = keys
+			.get(&self.key_id)
+			.ok_or_else(|| Error::Signature(format!("the key `{}` is not trusted", self.key_id)))?;
 		let bytes: [u8; 64] = decode_hex(&self.signature)?
 			.try_into()
 			.map_err(|_| Error::Signature("the signature is not 64 bytes".into()))?;
