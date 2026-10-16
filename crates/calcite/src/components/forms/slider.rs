@@ -166,7 +166,7 @@ impl RenderOnce for Slider {
 				.top(px((track_height - grown_height) / 2.))
 				.w(px(grown_width))
 				.h(px(grown_height))
-				.rounded_full(),
+				.rounded(theme.style.radii.capsule_radius(px(grown_height))),
 			lens,
 			grown_height,
 			alpha,
@@ -196,7 +196,7 @@ impl RenderOnce for Slider {
 					.right_0()
 					.top(px(THUMB_HEIGHT / 2.))
 					.h(px(4.))
-					.rounded_full()
+					.rounded(theme.style.radii.capsule_radius(px(4.)))
 					.bg(theme.ink(0.18 * alpha)),
 			)
 			.child(
@@ -206,7 +206,7 @@ impl RenderOnce for Slider {
 					.top(px(THUMB_HEIGHT / 2.))
 					.w(px(thumb_center(drawn, track_width, THUMB_WIDTH)))
 					.h(px(4.))
-					.rounded_full()
+					.rounded(theme.style.radii.capsule_radius(px(4.)))
 					.bg(scale_alpha(theme.accent, alpha)),
 			)
 			.child(knob)
@@ -220,7 +220,12 @@ impl RenderOnce for Slider {
 				.size_full(),
 			);
 		if self.enabled {
-			slider = slider.keyboard_focus(&focus, FocusShape::Capsule, &theme, window);
+			slider = slider.keyboard_focus(
+				&focus,
+				FocusShape::Rounded(theme.style.radii.capsule_radius(px(height))),
+				&theme,
+				window,
+			);
 		}
 		if let (true, Some(on_change)) = (self.enabled, self.on_change) {
 			let (range, step) = (self.range.clone(), self.step);

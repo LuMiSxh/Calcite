@@ -60,6 +60,8 @@ pub mod control {
 	/// Padding of a small label capsule: a badge or a tag.
 	pub const BADGE_HORIZONTAL_PADDING: f32 = 7.;
 	pub const BADGE_VERTICAL_PADDING: f32 = 2.;
+	/// Height of a badge or a tag: the caption line plus its vertical padding.
+	pub const BADGE_HEIGHT: Pixels = px(20.);
 	/// Gap between the parts of a compact capsule (chip, menu picker).
 	pub const CHIP_GAP: f32 = 6.;
 	pub const SEMANTIC_BORDER_OPACITY: f32 = 0.28;

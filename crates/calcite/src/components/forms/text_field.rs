@@ -133,7 +133,12 @@ impl RenderOnce for TextField {
 			.gap(theme.pt(7.))
 			.px(theme.pt(12.))
 			.h(theme.px(control::HEIGHT_REGULAR))
-			.rounded_full()
+			.rounded(
+				theme
+					.style
+					.radii
+					.capsule_radius(theme.px(control::HEIGHT_REGULAR)),
+			)
 			.border_1()
 			.border_color(border)
 			.text_size(theme.text_body())

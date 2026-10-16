@@ -85,7 +85,12 @@ impl RenderOnce for FloatingActionBar {
 			.max_w_full()
 			.gap(theme.pt(12.))
 			.p(theme.pt(10.))
-			.rounded_full()
+			.rounded(
+				theme
+					.style
+					.radii
+					.capsule_radius(theme.px(crate::tokens::control::HEIGHT_REGULAR) + theme.pt(10.) * 2.),
+			)
 			.glass_hud_at(&theme, Elevation::Resting)
 			.children(self.children)
 	}

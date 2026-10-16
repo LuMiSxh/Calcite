@@ -422,7 +422,7 @@ impl RenderOnce for Tag {
 			.flex_none()
 			.px(theme.pt(control::BADGE_HORIZONTAL_PADDING))
 			.py(theme.pt(control::BADGE_VERTICAL_PADDING))
-			.rounded_full()
+			.rounded(theme.style.radii.capsule_radius(theme.px(control::BADGE_HEIGHT)))
 			.border_1()
 			.font_family(theme.sans())
 			.border_color(scale_alpha(color, 0.5))
@@ -609,7 +609,7 @@ impl RenderOnce for Step {
 					.top(px(11.))
 					.w(px(3.))
 					.h(px(16.))
-					.rounded_full()
+					.rounded(theme.style.radii.capsule_radius(px(16.)))
 					.bg(theme.accent),
 			)
 		})

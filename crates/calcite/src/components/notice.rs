@@ -162,11 +162,16 @@ impl RenderOnce for ProgressBar {
 			.h(self.height)
 			.flex_none()
 			.overflow_hidden()
-			.rounded_full()
+			.rounded(theme.style.radii.capsule_radius(self.height))
 			.bg(theme.ink(TRACK_OPACITY))
 			.role(Role::ProgressIndicator)
 			.aria_label(self.label);
-		let fill = div().absolute().top_0().bottom_0().rounded_full().bg(accent);
+		let fill = div()
+			.absolute()
+			.top_0()
+			.bottom_0()
+			.rounded(theme.style.radii.capsule_radius(self.height))
+			.bg(accent);
 		match self.fraction {
 			Some(fraction) => {
 				let fraction = fraction.clamp(0., 1.);
@@ -380,6 +385,7 @@ impl RenderOnce for Banner {
 		) else {
 			return div().into_any_element();
 		};
+		let min_height = px(40.);
 		let tint = theme.legible(self.tone.text(&theme));
 		let detail_text = self.detail.clone();
 		let has_detail = self.detail.is_some();
@@ -411,7 +417,7 @@ impl RenderOnce for Banner {
 			.items_center()
 			.gap(px(10.))
 			.font_family(theme.sans())
-			.min_h(px(40.))
+			.min_h(min_height)
 			.max_w(px(480.))
 			.pl(px(14.))
 			.pr(px(if self.on_dismiss.is_some() { 4. } else { 14. }))
@@ -420,7 +426,7 @@ impl RenderOnce for Banner {
 				if has_detail {
 					banner.rounded(theme.style.radii.hud_pill).rounded_smoothing_ios()
 				} else {
-					banner.rounded_full()
+					banner.rounded(theme.style.radii.capsule_radius(min_height))
 				}
 			})
 			.glass_hud_at(&theme, Elevation::Raised)
@@ -698,14 +704,18 @@ impl RenderOnce for Chip {
 				theme.palette.secondary_text,
 			)
 		};
+		let chip_radius = theme
+			.style
+			.radii
+			.capsule_radius(theme.px(control::HEIGHT_COMPACT));
 		let hover = frame.hover_fill(theme.ink(1.));
 		let glows = enabled && glow_enabled(&theme, self.glow, false);
 		let glow = glows
 			.then(|| glow_layer(&frame, foreground))
 			.flatten()
-			.map(|glow| glow.rounded_full());
+			.map(|glow| glow.rounded(chip_radius));
 		let surface = layer()
-			.rounded_full()
+			.rounded(chip_radius)
 			.bg(over(hover, fill))
 			.border_1()
 			.border_color(border);
@@ -736,7 +746,7 @@ impl RenderOnce for Chip {
 			}
 		});
 		let on_click = self.on_click.or(self.on_remove);
-		chip_capsule(self.id)
+		chip_capsule(self.id, &theme)
 			.font_family(theme.sans())
 			.pr(theme.pt(if removable {
 				4.
@@ -753,8 +763,12 @@ impl RenderOnce for Chip {
 			.child(div().relative().child(self.text))
 			.children(remove)
 			.when(enabled, |chip| {
-				chip.control_state(&state, glows)
-					.keyboard_focus(&focus, FocusShape::Capsule, &theme, window)
+				chip.control_state(&state, glows).keyboard_focus(
+					&focus,
+					FocusShape::Rounded(chip_radius),
+					&theme,
+					window,
+				)
 			})
 			.when(!enabled, |chip| {
 				chip.aria_disabled(true)

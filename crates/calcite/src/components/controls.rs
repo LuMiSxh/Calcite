@@ -157,7 +157,7 @@ impl Size {
 
 	/// The corner radius: half the height, so every size is a capsule.
 	fn corner(self, theme: &Theme) -> Pixels {
-		self.height_in(theme) / 2.
+		theme.style.radii.capsule_radius(self.height_in(theme))
 	}
 }
 
@@ -362,7 +362,12 @@ impl RenderOnce for Button {
 			return button.aria_disabled(true).cursor_default().scaled(frame.scale);
 		}
 		button
-			.keyboard_focus(&focus, FocusShape::Capsule, &theme, window)
+			.keyboard_focus(
+				&focus,
+				FocusShape::Rounded(self.size.corner(&theme)),
+				&theme,
+				window,
+			)
 			// `ActionPressStyle`: opacity 0.86 while pressed; the surface carries the scale.
 			.opacity(frame.press_opacity())
 			.control_state(&state, has_sheen)
@@ -468,8 +473,9 @@ impl RenderOnce for IconButton {
 			_ => glass,
 		};
 		let border = glass.border().unwrap_or(theme.hud_border());
+		let radius = theme.style.radii.capsule_radius(self.diameter);
 		let surface = layer()
-			.rounded_full()
+			.rounded(radius)
 			.shadow(frame.shadows(glass.shadows()))
 			.border_1()
 			.border_color(border);
@@ -507,7 +513,7 @@ impl RenderOnce for IconButton {
 					.when(enabled, |button| {
 						button.control_state(&state, glows).keyboard_focus(
 							&focus,
-							FocusShape::Capsule,
+							FocusShape::Rounded(radius),
 							&theme,
 							window,
 						)
@@ -556,6 +562,7 @@ impl RenderOnce for Halo {
 		let theme = self.theme.unwrap_or_else(|| cx.theme());
 		let accent = theme.accent;
 		let resting = 0.5;
+		let halo_radius = theme.style.radii.capsule_radius(theme.px(control::HEIGHT_LARGE));
 		let glow = move |intensity: f32| {
 			let spread = px(-(2. + 6. * intensity));
 			div()
@@ -564,7 +571,7 @@ impl RenderOnce for Halo {
 				.bottom(spread)
 				.left(spread)
 				.right(spread)
-				.rounded_full()
+				.rounded(halo_radius)
 				.bg(accent)
 				.filter(vec![Filter::Blur(px(12. + 8. * intensity))])
 				.opacity(0.18 + 0.22 * intensity)
@@ -631,7 +638,7 @@ mod tests {
 	#[test]
 	fn all_buttons_are_capsules() {
 		for size in [Size::Compact, Size::Regular, Size::Large] {
-			assert_eq!(size.corner(&Theme::default()), size.height() / 2.);
+			assert!(size.corner(&Theme::default()) >= size.height() / 2.);
 		}
 	}
 

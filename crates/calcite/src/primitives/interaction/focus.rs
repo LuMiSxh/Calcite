@@ -12,7 +12,6 @@ use crate::{
 /// The outline a focus ring follows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FocusShape {
-	Capsule,
 	/// A rounded rectangle with the control's corner radius.
 	Rounded(Pixels),
 }
@@ -59,7 +58,6 @@ pub fn focus_ring(shape: FocusShape, theme: &Theme) -> gpui::Div {
 		.border_2()
 		.border_color(with_alpha(tokens::contrast_tint(theme.accent), FOCUS_RING_ALPHA));
 	match shape {
-		FocusShape::Capsule => ring.rounded_full(),
 		FocusShape::Rounded(corner) => ring.rounded(corner + px(FOCUS_OUTSET)),
 	}
 }
