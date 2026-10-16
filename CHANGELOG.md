@@ -23,6 +23,7 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-exec`: `Job::read` takes `&self` and reads without an update. `Job::token` returns a `CancellationToken`, not a `SlotToken`. `SlotToken` and `SlotSelector` are removed.
 - `calcite`: the default palette is `Palette::NEUTRAL`, graphite surfaces with a blue accent. `Palette::ARKNIGHTS` is a named preset, not the default. `Theme::default` and `Theme::follow_system` use the neutral palette. Pass `Palette::ARKNIGHTS` to keep the old look.
 - `calcite`: `artwork_layer` is replaced by `cover_image(Option<PathBuf>)`. It takes a `.fallback(...)` element that the app supplies, so Calcite no longer draws the "A" glyph or serves the accent slash. `readability_field` is removed; draw your own scrim behind the wordmark.
+- `calcite`: `Palette::hud_hue_tint` is a `HueTint` with the named fields `saturation`, `brightness`, and `opacity`, not a tuple. Build it with `HueTint::new`.
 - `calcite-bundle`: unknown keys in `[package.metadata.calcite.bundle]` are errors. Before, the bundler ignored them. The error names the key and the manifest.
 
 ### Changed
@@ -38,6 +39,7 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-exec`: `Job::background`, `Job::tokio` (feature `tokio`, returns `JobResult` and fails with `Stale` when the runtime shuts down), `Job::on_cancel`, `Job::hold`, `Job::sleep` and `Job::now` on the executor clock, `Job::progress` with `Progress` (latest value, trailing edge, final value always published), `Counter`, `try_bounded` with `TryBounded::fail_fast` and `cancel`, and `Spawner`.
 - `calcite`: `Assets::with` and `Assets::with_many` register app SVG and PNG files next to Calcite's icons. They take owned or static bytes. A later asset at the same path replaces the earlier one.
 - `calcite`: `Glass::palette` takes the neutral colors from a palette, for glass built outside a theme.
+- `calcite`: `Palette::from_seeds` builds a full palette from `Seeds`: an accent, a backdrop, and an `Appearance` of `Dark` or `Light`. `Seeds`, `Appearance`, and `HueTint` are in `calcite::palette`.
 - `calcite-tint`: `ImageView` accepts a row stride and BGRA pixels, so padded or BGRA buffers need no copy.
 - `calcite-update`: a client rejects a replayed feed (a lower `sequence` than it has seen, kept in `update-state.json`), a feed older than `max_feed_age` (default 30 days), and a feed dated more than 5 minutes ahead. `Clock` and `SystemClock` make the time injectable. The new `Error::Stale` names these cases.
 - `calcite-update`: an app can trust several keys by `key_id`, for key rotation. An unknown `key_id` is an error before any parsing.

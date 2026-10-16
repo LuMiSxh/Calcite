@@ -15,7 +15,7 @@
 
 use gpui::Rgba;
 
-use crate::tokens::{black, hsb, hue, is_chromatic, mix, rgba, white};
+use crate::tokens::{black, hsb, hue, is_chromatic, mix, rgba, white, with_alpha};
 
 /// The colors of one look. Build it with struct update syntax from [`Palette::NEUTRAL`].
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -48,13 +48,52 @@ pub struct Palette {
 	/// The HUD glass tint when the accent has no hue.
 	pub hud_tint: Rgba,
 	/// How the HUD tint picks up the accent hue: saturation, brightness, opacity.
-	pub hud_hue_tint: (f32, f32, f32),
+	pub hud_hue_tint: HueTint,
 	/// The neutral that fills, tracks, dividers and hover lights are drawn in: white on a dark
 	/// palette, black on a light one. Alpha is ignored; components set their own.
 	pub ink: Rgba,
 	/// The opposite neutral, laid behind glass as its backplate: black on a dark palette, white on a
 	/// light one. Shadows stay black and soften on a light palette.
 	pub shade: Rgba,
+}
+
+/// The look of a palette from [`Palette::from_seeds`]: light text on dark surfaces, or the reverse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Appearance {
+	/// Built on [`Palette::NEUTRAL`].
+	Dark,
+	/// Built on [`Palette::LIGHT`].
+	Light,
+}
+
+/// The few colors that [`Palette::from_seeds`] builds a whole palette from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Seeds {
+	/// The fallback accent, used as given.
+	pub accent: Rgba,
+	/// The backdrop behind everything. Panels, navigation, and the HUD lean toward it.
+	pub backdrop: Rgba,
+	/// Picks the base preset.
+	pub appearance: Appearance,
+}
+
+/// The HUD tint's hue: its saturation and brightness, and its opacity. Each value runs from 0 to 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HueTint {
+	pub saturation: f32,
+	pub brightness: f32,
+	pub opacity: f32,
+}
+
+impl HueTint {
+	/// A tint with the given saturation, brightness, and opacity.
+	pub const fn new(saturation: f32, brightness: f32, opacity: f32) -> Self {
+		Self {
+			saturation,
+			brightness,
+			opacity,
+		}
+	}
 }
 
 impl Palette {
@@ -79,7 +118,7 @@ impl Palette {
 		opaque_surface: rgba(0.17, 0.175, 0.19, 1.),
 		opaque_disabled_surface: rgba(0.12, 0.125, 0.135, 1.),
 		hud_tint: black(0.52),
-		hud_hue_tint: (0.1, 0.1, 0.52),
+		hud_hue_tint: HueTint::new(0.1, 0.1, 0.52),
 		ink: white(1.),
 		shade: black(1.),
 	};
@@ -104,7 +143,7 @@ impl Palette {
 		opaque_surface: rgba(0.13, 0.14, 0.16, 1.),
 		opaque_disabled_surface: rgba(0.094, 0.098, 0.114, 1.),
 		hud_tint: black(0.52),
-		hud_hue_tint: (0.1, 0.1, 0.52),
+		hud_hue_tint: HueTint::new(0.1, 0.1, 0.52),
 		ink: white(1.),
 		shade: black(1.),
 	};
@@ -131,7 +170,7 @@ impl Palette {
 		opaque_surface: rgba(0.90, 0.91, 0.93, 1.),
 		opaque_disabled_surface: rgba(0.85, 0.86, 0.88, 1.),
 		hud_tint: white(0.55),
-		hud_hue_tint: (0.12, 0.95, 0.55),
+		hud_hue_tint: HueTint::new(0.12, 0.95, 0.55),
 		ink: black(1.),
 		shade: white(1.),
 	};
@@ -150,8 +189,7 @@ impl Palette {
 	/// Each color mixed from `self` toward `to`, for animated palette changes.
 	pub fn mix(&self, to: &Self, t: f32) -> Self {
 		let m = |from: Rgba, to: Rgba| mix(from, to, t);
-		let (s0, b0, o0) = self.hud_hue_tint;
-		let (s1, b1, o1) = to.hud_hue_tint;
+		let (from_tint, to_tint) = (self.hud_hue_tint, to.hud_hue_tint);
 		let lerp = |a: f32, b: f32| a + (b - a) * t.clamp(0., 1.);
 		Self {
 			accent: m(self.accent, to.accent),
@@ -172,7 +210,11 @@ impl Palette {
 			opaque_surface: m(self.opaque_surface, to.opaque_surface),
 			opaque_disabled_surface: m(self.opaque_disabled_surface, to.opaque_disabled_surface),
 			hud_tint: m(self.hud_tint, to.hud_tint),
-			hud_hue_tint: (lerp(s0, s1), lerp(b0, b1), lerp(o0, o1)),
+			hud_hue_tint: HueTint::new(
+				lerp(from_tint.saturation, to_tint.saturation),
+				lerp(from_tint.brightness, to_tint.brightness),
+				lerp(from_tint.opacity, to_tint.opacity),
+			),
 			ink: m(self.ink, to.ink),
 			shade: m(self.shade, to.shade),
 		}
@@ -184,9 +226,45 @@ impl Palette {
 		if !is_chromatic(accent) {
 			return self.hud_tint;
 		}
-		let (saturation, brightness, opacity) = self.hud_hue_tint;
+		let HueTint {
+			saturation,
+			brightness,
+			opacity,
+		} = self.hud_hue_tint;
 		hsb(hue(accent), saturation, brightness, opacity)
 	}
+
+	/// A full palette from three seeds. The base is [`Palette::NEUTRAL`] for [`Appearance::Dark`]
+	/// and [`Palette::LIGHT`] for [`Appearance::Light`]. Then:
+	///
+	/// - `accent` and `backdrop` replace the base's values. The accent is used as given.
+	/// - The panel, the navigation rail and hover, and the HUD tint lean 20% toward the backdrop,
+	///   keeping their alpha, so they take its hue. Pick a backdrop that suits the appearance.
+	/// - Text, ink, shade, neutrals, hairlines, status colors, and `hud_hue_tint` come from the base.
+	pub fn from_seeds(seeds: Seeds) -> Self {
+		let base = match seeds.appearance {
+			Appearance::Dark => Self::NEUTRAL,
+			Appearance::Light => Self::LIGHT,
+		};
+		let lean = |color| lean_toward(color, seeds.backdrop);
+		Self {
+			accent: seeds.accent,
+			backdrop: seeds.backdrop,
+			panel_background: lean(base.panel_background),
+			navigation_rail: lean(base.navigation_rail),
+			navigation_hover: lean(base.navigation_hover),
+			hud_tint: lean(base.hud_tint),
+			..base
+		}
+	}
+}
+
+/// The share of the way a leaning surface moves toward the backdrop.
+const BACKDROP_SHARE: f32 = 0.2;
+
+/// `color` moved `BACKDROP_SHARE` of the way toward `backdrop`, keeping its own alpha.
+fn lean_toward(color: Rgba, backdrop: Rgba) -> Rgba {
+	with_alpha(mix(color, backdrop, BACKDROP_SHARE), color.alpha)
 }
 
 impl Default for Palette {
@@ -238,7 +316,10 @@ mod tests {
 			("dark", Palette::NEUTRAL),
 			("arknights", Palette::ARKNIGHTS),
 			("light", Palette::LIGHT),
-		] {
+		]
+		.into_iter()
+		.chain(seeded())
+		{
 			for (surface, base) in surfaces(palette) {
 				let base = with_alpha_one(base);
 				let primary = contrast_ratio(over(palette.primary_text, base), base);
@@ -265,7 +346,10 @@ mod tests {
 
 	#[test]
 	fn prominent_labels_read_on_the_accent_and_status_fills() {
-		for palette in [Palette::NEUTRAL, Palette::ARKNIGHTS, Palette::LIGHT] {
+		for palette in [Palette::NEUTRAL, Palette::ARKNIGHTS, Palette::LIGHT]
+			.into_iter()
+			.chain(seeded().map(|(_, palette)| palette))
+		{
 			for fill in [palette.accent, palette.danger, palette.warning, palette.success] {
 				let ratio = contrast_ratio(on_color(fill), fill);
 				assert!(ratio >= 3., "label on {fill:?}: {ratio:.2}");
@@ -297,5 +381,60 @@ mod tests {
 		assert!(glass.fill().red > dark_fill.red);
 		assert!(theme.shadow(0.4).alpha < 0.4);
 		assert_eq!(light.mix(&Palette::ARKNIGHTS, 1.).ink, white(1.));
+	}
+
+	/// Palettes from seeds: dark and light, each with a chromatic and a neutral accent.
+	fn seeded() -> [(&'static str, Palette); 4] {
+		let seed = |accent: Rgba, backdrop: Rgba, appearance| {
+			Palette::from_seeds(Seeds {
+				accent,
+				backdrop,
+				appearance,
+			})
+		};
+		let dark = rgba(0.05, 0.08, 0.12, 1.);
+		let light = rgba(0.93, 0.94, 0.96, 1.);
+		[
+			(
+				"dark chromatic",
+				seed(rgba(0.90, 0.35, 0.20, 1.), dark, Appearance::Dark),
+			),
+			(
+				"dark neutral",
+				seed(rgba(0.55, 0.55, 0.58, 1.), dark, Appearance::Dark),
+			),
+			(
+				"light chromatic",
+				seed(rgba(0.10, 0.42, 0.22, 1.), light, Appearance::Light),
+			),
+			(
+				"light neutral",
+				seed(rgba(0.40, 0.40, 0.42, 1.), light, Appearance::Light),
+			),
+		]
+	}
+
+	#[test]
+	fn the_neutral_seeds_keep_the_neutral_text_and_ink() {
+		let neutral = Palette::NEUTRAL;
+		let seeded = Palette::from_seeds(Seeds {
+			accent: neutral.accent,
+			backdrop: neutral.backdrop,
+			appearance: Appearance::Dark,
+		});
+		assert_eq!(
+			(
+				seeded.primary_text,
+				seeded.secondary_text,
+				seeded.ink,
+				seeded.shade
+			),
+			(
+				neutral.primary_text,
+				neutral.secondary_text,
+				neutral.ink,
+				neutral.shade
+			),
+		);
 	}
 }

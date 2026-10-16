@@ -110,7 +110,7 @@ pub mod prelude {
 		motion::{Curve, EnterExt},
 		notice::{ConfirmRole, banner, chip, confirm_dialog, empty_state, progress_bar, spinner},
 		overlay::{done_button, floating_action_bar, modal, modal_layer},
-		palette::Palette,
+		palette::{Appearance, Palette, Seeds},
 		progress::{OutlineMode, progress_outline},
 		ticker::ticker,
 		tokens,
