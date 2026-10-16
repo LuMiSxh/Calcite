@@ -54,6 +54,7 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-bundle`: a failed packager run no longer leaves partial files in the output directory. Each run writes to a staging directory. The files move into place only after every run succeeds. If a move fails, the previous outputs return and the staging directory is removed.
 - `calcite-bundle`: the `packager` table can no longer set `macos.signing-identity`, `macos.entitlements`, `macos.notarization-credentials`, or the Windows signing keys. Calcite manages them.
 - `calcite-bundle`: a package without a name or a version in cargo metadata is an error, not an empty string.
+- Glass surfaces follow `Style::radii`. The preview's glass style cards, glass elevation cards, and motion lab morph surface kept the default HUD corners. The icon tiles, settings frame, plot boxes, chrome swatches, and motion swatches now follow the active preset too.
 
 ### Security
 

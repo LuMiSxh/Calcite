@@ -8,7 +8,7 @@ use calcite::{
 	glass::{Elevation, GlassExt},
 	motion::{Spring, swiftui_spring, tokens as spring_tokens},
 	prelude::*,
-	tokens::{radius, rgba, scale_alpha, white},
+	tokens::{rgba, scale_alpha, white},
 };
 use calcite_showcase::artwork::SLASH_ASSET;
 use gpui::{
@@ -269,7 +269,7 @@ pub fn glass_styles(theme: Theme) -> impl IntoElement {
 						.w(px(212.))
 						.h(px(72.))
 						.p(px(12.))
-						.rounded(radius::HUD_PILL)
+						.rounded(theme.style.radii.hud_pill)
 						.rounded_smoothing_ios()
 						.glass(theme.hud_surface().elevation(elevation))
 						.child(
@@ -309,7 +309,7 @@ fn glass_style_cards(theme: Theme) -> impl IntoElement {
 						.flex()
 						.flex_col()
 						.justify_between()
-						.rounded(radius::HUD_PILL)
+						.rounded(theme.style.radii.hud_pill)
 						.rounded_smoothing_ios()
 						.glass(styled.hud_surface().elevation(Elevation::Raised))
 						.border_1()
@@ -323,7 +323,7 @@ fn glass_style_cards(theme: Theme) -> impl IntoElement {
 								.font_weight(FontWeight::SEMIBOLD)
 								.child(key),
 						)
-						.child(label("Panel · radius 22 · raised")),
+						.child(label("Panel · HUD radius · raised")),
 				)
 				.child(
 					div().flex().child(
@@ -348,6 +348,7 @@ fn glass_style_cards(theme: Theme) -> impl IntoElement {
 }
 
 pub fn tokens_section(theme: Theme) -> impl IntoElement {
+	let corner = theme.style.radii.control;
 	let swatches = [
 		("Accent", theme.accent),
 		("Cyan fallback", theme.palette.accent),
@@ -386,7 +387,7 @@ pub fn tokens_section(theme: Theme) -> impl IntoElement {
 							div()
 								.w(px(52.))
 								.h(px(32.))
-								.rounded(radius::CONTROL)
+								.rounded(corner)
 								.bg(color)
 								.border_1()
 								.border_color(white(0.14)),
@@ -409,10 +410,10 @@ pub fn tokens_section(theme: Theme) -> impl IntoElement {
 		.child(
 			div().flex().flex_col().gap(px(8.)).children(
 				[
-					("Control 10", radius::CONTROL),
-					("Panel 16", radius::PANEL),
-					("HUD 22", radius::HUD_PILL),
-					("Modal 24", radius::MODAL),
+					("Control 10", Radii::DEFAULT.control),
+					("Panel 16", Radii::DEFAULT.panel),
+					("HUD 22", Radii::DEFAULT.hud_pill),
+					("Modal 24", Radii::DEFAULT.modal),
 				]
 				.into_iter()
 				.map(|(name, corner)| {
@@ -438,7 +439,7 @@ pub fn tokens_section(theme: Theme) -> impl IntoElement {
 }
 
 /// Step response of every motion curve over one second.
-pub fn motion_section(accent: Rgba) -> impl IntoElement {
+pub fn motion_section(accent: Rgba, corner: Pixels) -> impl IntoElement {
 	let params = |spring: Spring| Some((spring.response, spring.bounce));
 	let curve = |curve: Curve| curve.spring().and_then(params);
 	let curves = [
@@ -465,7 +466,7 @@ pub fn motion_section(accent: Rgba) -> impl IntoElement {
 				.child(
 					div()
 						.h(px(74.))
-						.rounded(radius::CONTROL)
+						.rounded(corner)
 						.bg(tokens::black(0.45))
 						.border_1()
 						.border_color(white(0.08))
@@ -583,14 +584,14 @@ fn app_icon_column() -> impl IntoElement {
 		)
 }
 
-pub fn chrome_section() -> impl IntoElement {
+pub fn chrome_section(corner: Pixels) -> impl IntoElement {
 	let strip = |style: ChromeStyle, name: &'static str| {
 		div().flex().flex_col().gap(px(8.)).child(label(name)).child(
 			div()
 				.relative()
 				.w(px(440.))
 				.h(px(52.))
-				.rounded(radius::CONTROL)
+				.rounded(corner)
 				.overflow_hidden()
 				.bg(white(0.05))
 				.border_1()
