@@ -4,7 +4,6 @@
 
 use std::{
 	future::Future,
-	panic,
 	pin::Pin,
 	task::{Context, Poll},
 };
@@ -102,7 +101,7 @@ impl<R: 'static> Future for Spawned<R> {
 			Kind::Tokio(handle) => handle.as_mut().poll(cx).map(|joined| match joined {
 				Ok(value) => Ok(value),
 				Err(error) => match error.try_into_panic() {
-					Ok(payload) => panic::resume_unwind(payload),
+					Ok(payload) => std::panic::resume_unwind(payload),
 					Err(_) => Err(Stale),
 				},
 			}),

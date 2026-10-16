@@ -16,6 +16,11 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-update`: the feed format is 2. A feed has the signed fields `issued_at`, `sequence`, and the optional `minimum_version`. The envelope has a `key_id`. Sign again with `calcite-update sign --key-id ID`; `release` needs `--sequence`.
 - `calcite-update`: `install::install` and `Staged::install` take the product and version, and `Staged::install` hashes the staged tree again first. `publish::sign` takes a `key_id`.
 - `calcite-update`: `Updater` rejects `file://` URLs. The `test-support` feature and `UpdaterBuilder::allow_file_urls` allow them for tests.
+- `calcite-exec` is redesigned. Replace `TaskSlot::replace`, `begin`, `owns`, `invalidate`, and `finish` with `TaskSlot::run` and `TaskSlot::cancel`. `run` takes no slot selector.
+- `calcite-exec`: `TaskSlot::cancel` and a replacing `run` return `Settled`. The new run starts only after the replaced run, its children, and its `Job::on_cancel` cleanup are gone.
+- `calcite-exec`: `ActivityLease` is not `Copy` and not `Clone`, and it releases when it drops. `ActivityStore::begin` returns `Result<ActivityLease, Busy>`. `holds`, `update`, and `end(lease)` on the store are removed; use `ActivityLease::set`, `end`, and `is_current`, or `ActivityStore::revoke`. `ActivityStore<A>` needs only `A: Default`.
+- `calcite-exec`: `Throttle`, `Job::guard`, `Job::update_throttled`, `Job::check`, and `bounded` are removed. Use `Job::progress`, `Job::is_current`, and `try_bounded`.
+- `calcite-exec`: `Job::read` takes `&self` and reads without an update. `Job::token` returns a `CancellationToken`, not a `SlotToken`. `SlotToken` and `SlotSelector` are removed.
 - `calcite`: the default palette is `Palette::NEUTRAL`, graphite surfaces with a blue accent. `Palette::ARKNIGHTS` is a named preset, not the default. `Theme::default` and `Theme::follow_system` use the neutral palette. Pass `Palette::ARKNIGHTS` to keep the old look.
 - `calcite`: `artwork_layer` is replaced by `cover_image(Option<PathBuf>)`. It takes a `.fallback(...)` element that the app supplies, so Calcite no longer draws the "A" glyph or serves the accent slash. `readability_field` is removed; draw your own scrim behind the wordmark.
 - `calcite-bundle`: unknown keys in `[package.metadata.calcite.bundle]` are errors. Before, the bundler ignored them. The error names the key and the manifest.
@@ -27,6 +32,7 @@ All notable changes to Calcite are recorded here. The format follows
 
 ### Added
 
+- `calcite-exec`: `Job::background`, `Job::tokio` (feature `tokio`, returns `JobResult` and fails with `Stale` when the runtime shuts down), `Job::on_cancel`, `Job::hold`, `Job::sleep` and `Job::now` on the executor clock, `Job::progress` with `Progress` (latest value, trailing edge, final value always published), `Counter`, `try_bounded` with `TryBounded::fail_fast` and `cancel`, and `Spawner`.
 - `calcite`: `Assets::with` and `Assets::with_many` register app SVG and PNG files next to Calcite's icons. They take owned or static bytes. A later asset at the same path replaces the earlier one.
 - `calcite`: `Glass::palette` takes the neutral colors from a palette, for glass built outside a theme.
 - `calcite-tint`: `ImageView` accepts a row stride and BGRA pixels, so padded or BGRA buffers need no copy.
