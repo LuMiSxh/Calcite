@@ -59,9 +59,9 @@ pub struct Run<'a> {
 pub fn config(run: &Run) -> Result<cargo_packager::Config> {
 	let mut json = base(run);
 	if let Some(overrides) = &run.settings.packager {
-		if let Some(key) = overrides.keys().find(|key| owns_out_dir(key)) {
+		if let Some(key) = managed_key(overrides) {
 			return Err(format!(
-				"[package.metadata.calcite.bundle.packager]: `{key}` is set by Calcite: each run writes to its own staging directory"
+				"[package.metadata.calcite.bundle.packager]: `{key}` is set by Calcite: it owns the output directory, signing, and notarization"
 			));
 		}
 		merge(&mut json, &Value::Object(overrides.clone()));
@@ -140,14 +140,48 @@ fn insert(object: &mut Map<String, Value>, key: &str, value: Option<&String>) {
 	}
 }
 
-/// The output directory is Calcite's, so no packager setting may name it.
-fn owns_out_dir(key: &str) -> bool {
-	let normalized: String = key
-		.chars()
+/// Calcite owns the output directory, and macOS and Windows signing and notarization, so no
+/// packager setting may name them. Returns the offending key as written, dotted for nested ones.
+fn managed_key(overrides: &Map<String, Value>) -> Option<String> {
+	const MANAGED: [(&str, &[&str]); 3] = [
+		("", &["outdir"]),
+		(
+			"macos",
+			&["signingidentity", "entitlements", "notarizationcredentials"],
+		),
+		(
+			"windows",
+			&[
+				"certificatethumbprint",
+				"signcommand",
+				"timestampurl",
+				"tsp",
+				"digestalgorithm",
+			],
+		),
+	];
+	for (key, value) in overrides {
+		let key_name = normalize(key);
+		for (section, names) in MANAGED {
+			if section.is_empty() && names.contains(&key_name.as_str()) {
+				return Some(key.clone());
+			}
+			if section == key_name
+				&& let Value::Object(inner) = value
+				&& let Some(found) = inner.keys().find(|k| names.contains(&normalize(k).as_str()))
+			{
+				return Some(format!("{key}.{found}"));
+			}
+		}
+	}
+	None
+}
+
+fn normalize(key: &str) -> String {
+	key.chars()
 		.filter(|c| *c != '-' && *c != '_')
 		.map(|c| c.to_ascii_lowercase())
-		.collect();
-	normalized == "outdir"
+		.collect()
 }
 
 fn merge(base: &mut Value, overlay: &Value) {
@@ -237,6 +271,29 @@ mod tests {
 		}));
 		let error = config(&run(&settings, &package, &[])).unwrap_err();
 		assert!(error.contains("out-dir"), "{error}");
+	}
+
+	#[test]
+	fn the_packager_table_cannot_override_signing_or_notarization() {
+		let package = json!({ "name": "preview-app", "version": "0.1.0" });
+		for (table, expected) in [
+			(
+				json!({ "macos": { "signing-identity": "-" } }),
+				"macos.signing-identity",
+			),
+			(
+				json!({ "macos": { "notarizationCredentials": { "keychainProfile": "x" } } }),
+				"macos.notarizationCredentials",
+			),
+			(
+				json!({ "windows": { "certificate_thumbprint": "AB" } }),
+				"windows.certificate_thumbprint",
+			),
+		] {
+			let settings = settings(json!({ "identifier": "dev.example.preview", "packager": table }));
+			let error = config(&run(&settings, &package, &[])).unwrap_err();
+			assert!(error.contains(expected), "{error}");
+		}
 	}
 
 	#[test]

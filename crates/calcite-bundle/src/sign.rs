@@ -44,7 +44,7 @@ impl Commands for SystemCommands {
 }
 
 /// How `notarytool` authenticates.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum NotaryCredentials {
 	AppleId {
 		apple_id: String,
@@ -52,6 +52,22 @@ pub enum NotaryCredentials {
 		team_id: String,
 	},
 	KeychainProfile(String),
+}
+
+impl std::fmt::Debug for NotaryCredentials {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::AppleId {
+				apple_id, team_id, ..
+			} => f
+				.debug_struct("AppleId")
+				.field("apple_id", apple_id)
+				.field("password", &"***")
+				.field("team_id", team_id)
+				.finish(),
+			Self::KeychainProfile(profile) => f.debug_tuple("KeychainProfile").field(profile).finish(),
+		}
+	}
 }
 
 impl NotaryCredentials {
@@ -68,7 +84,9 @@ impl NotaryCredentials {
 		})
 	}
 
-	/// The `notarytool` arguments that select these credentials.
+	/// The `notarytool` arguments that select these credentials. `notarytool` documents no way to
+	/// read the app password from the environment or a file, so the Apple ID form puts it in
+	/// argv; see [`Signing::warnings`].
 	pub fn notarytool_args(&self) -> Vec<String> {
 		match self {
 			Self::AppleId {
@@ -131,10 +149,23 @@ pub fn notarize_dmg(commands: &impl Commands, dmg: &Path, credentials: &NotaryCr
 }
 
 /// The `signtool` certificate: a store thumbprint, or a PFX file with an optional password.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Certificate {
 	Thumbprint(String),
 	Pfx { path: PathBuf, password: Option<String> },
+}
+
+impl std::fmt::Debug for Certificate {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Thumbprint(thumbprint) => f.debug_tuple("Thumbprint").field(thumbprint).finish(),
+			Self::Pfx { path, password } => f
+				.debug_struct("Pfx")
+				.field("path", path)
+				.field("password", &password.as_ref().map(|_| "***"))
+				.finish(),
+		}
+	}
 }
 
 /// Authenticode settings for Windows outputs.
@@ -182,11 +213,21 @@ impl Authenticode {
 }
 
 /// The macOS signing inputs.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MacosSigning {
 	pub identity: String,
 	pub entitlements: Option<PathBuf>,
 	pub notary: NotaryCredentials,
+}
+
+impl std::fmt::Debug for MacosSigning {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("MacosSigning")
+			.field("identity", &self.identity)
+			.field("entitlements", &self.entitlements)
+			.field("notary", &self.notary)
+			.finish()
+	}
 }
 
 /// Every signing input resolved from the manifest and the environment.
@@ -194,6 +235,38 @@ pub struct MacosSigning {
 pub struct Signing {
 	pub macos: Option<MacosSigning>,
 	pub windows: Option<Authenticode>,
+}
+
+impl Signing {
+	/// Warnings for credential forms that expose a secret to local process listings.
+	pub fn warnings(&self) -> Vec<String> {
+		let mut warnings = Vec::new();
+		if let Some(MacosSigning {
+			notary: NotaryCredentials::AppleId { .. },
+			..
+		}) = &self.macos
+		{
+			warnings.push(
+				"warning: notarytool receives APPLE_APP_PASSWORD as an argument, which other local users can \
+				 see in process listings; prefer APPLE_NOTARY_KEYCHAIN_PROFILE"
+					.to_string(),
+			);
+		}
+		if let Some(Authenticode {
+			certificate: Certificate::Pfx {
+				password: Some(_), ..
+			},
+			..
+		}) = &self.windows
+		{
+			warnings.push(
+				"warning: signtool receives CALCITE_SIGN_PASSWORD as an argument, which other local users can \
+				 see in process listings; prefer `certificate-thumbprint` with a certificate in the store"
+					.to_string(),
+			);
+		}
+		warnings
+	}
 }
 
 /// Resolves the signing inputs. `env` reads environment variables; tests pass a closure.
@@ -416,6 +489,103 @@ mod tests {
 		)
 		.unwrap_err();
 		assert!(error.contains("not both"), "{error}");
+	}
+
+	fn windows(settings: serde_json::Value, vars: &[(&str, &str)]) -> Result<Option<Authenticode>> {
+		let settings = WindowsSettings::from_settings(
+			&Settings {
+				windows: Some(settings),
+				..Settings::default()
+			},
+			"/app/Cargo.toml",
+		)
+		.unwrap();
+		resolve_windows(&settings, "/app/Cargo.toml", &env(vars))
+	}
+
+	#[test]
+	fn a_pfx_comes_from_the_environment_and_needs_a_timestamp_url() {
+		let signing = windows(
+			serde_json::json!({ "timestamp-url": "http://ts.example" }),
+			&[("CALCITE_SIGN_CERT", "app.pfx"), ("CALCITE_SIGN_PASSWORD", "pw")],
+		)
+		.unwrap()
+		.unwrap();
+		assert_eq!(
+			signing.certificate,
+			Certificate::Pfx {
+				path: PathBuf::from("app.pfx"),
+				password: Some("pw".to_string()),
+			}
+		);
+		let error = windows(serde_json::json!({}), &[("CALCITE_SIGN_CERT", "app.pfx")]).unwrap_err();
+		assert!(error.contains("timestamp-url"), "{error}");
+	}
+
+	#[test]
+	fn a_pfx_password_without_a_pfx_is_an_error() {
+		let error = windows(serde_json::json!({}), &[("CALCITE_SIGN_PASSWORD", "pw")]).unwrap_err();
+		assert!(error.contains("needs CALCITE_SIGN_CERT"), "{error}");
+	}
+
+	#[test]
+	fn macos_signing_needs_notary_credentials_and_joins_entitlements_to_the_manifest_dir() {
+		let settings = MacosSettings::from_settings(
+			&Settings {
+				macos: Some(serde_json::json!({
+					"signing-identity": "Developer ID Application: Example",
+					"entitlements": "packaging/app.plist",
+				})),
+				..Settings::default()
+			},
+			"/app/Cargo.toml",
+		)
+		.unwrap();
+		let manifest_dir = Path::new("/app");
+		let error = resolve_macos(&settings, manifest_dir, "/app/Cargo.toml", &env(&[])).unwrap_err();
+		assert!(error.contains("APPLE_NOTARY_KEYCHAIN_PROFILE"), "{error}");
+		let signing = resolve_macos(
+			&settings,
+			manifest_dir,
+			"/app/Cargo.toml",
+			&env(&[("APPLE_NOTARY_KEYCHAIN_PROFILE", "ci")]),
+		)
+		.unwrap()
+		.unwrap();
+		assert_eq!(
+			signing.entitlements,
+			Some(PathBuf::from("/app/packaging/app.plist"))
+		);
+	}
+
+	#[test]
+	fn secrets_are_masked_in_debug_output_and_flagged_as_warnings() {
+		let signing = Signing {
+			macos: Some(MacosSigning {
+				identity: "id".to_string(),
+				entitlements: None,
+				notary: NotaryCredentials::AppleId {
+					apple_id: "dev@example.com".to_string(),
+					password: "app-secret".to_string(),
+					team_id: "TEAM".to_string(),
+				},
+			}),
+			windows: Some(Authenticode {
+				certificate: Certificate::Pfx {
+					path: PathBuf::from("app.pfx"),
+					password: Some("pfx-secret".to_string()),
+				},
+				timestamp_url: "http://ts.example".to_string(),
+			}),
+		};
+		let debug = format!("{signing:?}");
+		assert!(
+			!debug.contains("app-secret") && !debug.contains("pfx-secret"),
+			"{debug}"
+		);
+		assert!(debug.contains("***"), "{debug}");
+		assert_eq!(signing.warnings().len(), 2);
+		assert!(Signing::default().warnings().is_empty());
 	}
 
 	#[test]

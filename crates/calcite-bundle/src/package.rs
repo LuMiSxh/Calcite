@@ -104,6 +104,9 @@ pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 	let settings = Settings::from_metadata(&package["metadata"], manifest)?;
 	let identifier = settings.identifier(manifest)?.to_string();
 	let signing = crate::sign::resolve(&settings, &manifest_dir, manifest, |key| std::env::var(key).ok())?;
+	for warning in signing.warnings() {
+		eprintln!("{warning}");
+	}
 	let bin = select_bin(package, options.bin.as_deref())?;
 	let profile = if options.debug { "debug" } else { "release" };
 

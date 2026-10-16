@@ -41,7 +41,13 @@
 //! Signing is off unless a signing key is set, so local builds need no certificate. Notarizing
 //! a signed macOS build needs `APPLE_NOTARY_KEYCHAIN_PROFILE`, or `APPLE_ID`, `APPLE_TEAM_ID`,
 //! and `APPLE_APP_PASSWORD`. A Windows certificate file needs `CALCITE_SIGN_CERT`, with
-//! `CALCITE_SIGN_PASSWORD` if it is protected. Credentials come from the environment only.
+//! `CALCITE_SIGN_PASSWORD` if it is protected. Credentials come from the environment only, and
+//! the `packager` table cannot override signing or notarization.
+//!
+//! Prefer `APPLE_NOTARY_KEYCHAIN_PROFILE` and `certificate-thumbprint`. `notarytool` and
+//! `signtool` take the Apple app password and the PFX password only as command-line arguments,
+//! so those forms expose the secret to local process listings while the tool runs. Calcite
+//! prints a warning when it uses one of them. Secrets are masked in debug output.
 //! cargo-packager signs the `.app` with the hardened runtime, and Calcite notarizes and staples
 //! the DMG.
 //!

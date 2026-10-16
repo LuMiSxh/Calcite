@@ -32,14 +32,15 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-update`: `publish::sign_feed`, `publish::FeedBuilder`, and `publish::build_target`.
 - `calcite-update`: a crate README with the security model.
 - `calcite-bundle`: `[package.metadata.calcite.bundle.packager]` merges its keys into the cargo-packager configuration, for options that Calcite does not name.
-- `calcite-bundle`: macOS signing with `[package.metadata.calcite.bundle.macos]` (`signing-identity`, `entitlements`). The DMG is notarized and stapled. Credentials come from `APPLE_NOTARY_KEYCHAIN_PROFILE`, or from `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD`.
-- `calcite-bundle`: Windows signing with `[package.metadata.calcite.bundle.windows]` (`certificate-thumbprint`, `timestamp-url`), or with a PFX from `CALCITE_SIGN_CERT` and `CALCITE_SIGN_PASSWORD`. The binary and the installers are signed.
+- `calcite-bundle`: macOS signing with `[package.metadata.calcite.bundle.macos]` (`signing-identity`, `entitlements`). The DMG is notarized and stapled. Credentials come from `APPLE_NOTARY_KEYCHAIN_PROFILE`, or from `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD`. The Apple ID form puts the password in the `notarytool` arguments, so Calcite warns and recommends the keychain profile.
+- `calcite-bundle`: Windows signing with `[package.metadata.calcite.bundle.windows]` (`certificate-thumbprint`, `timestamp-url`), or with a PFX from `CALCITE_SIGN_CERT` and `CALCITE_SIGN_PASSWORD`. The binary and the installers are signed. A PFX password goes in the `signtool` arguments, so Calcite warns and recommends `certificate-thumbprint`.
 
 ### Fixed
 
 - `calcite-tint`: a red image no longer loses to a smaller blue area when its hue sits at the 0/1 seam. Hue buckets wrap, and the winning hue is a circular mean.
 - `calcite-tint`: the artwork is averaged over a grid of cells instead of read at one pixel per cell, so the tint no longer depends on image size or a single stray pixel.
-- `calcite-bundle`: a failed packager run no longer leaves partial files in the output directory. Each run writes to a staging directory. The files move into place only after every run succeeds.
+- `calcite-bundle`: a failed packager run no longer leaves partial files in the output directory. Each run writes to a staging directory. The files move into place only after every run succeeds. If a move fails, the previous outputs return and the staging directory is removed.
+- `calcite-bundle`: the `packager` table can no longer set `macos.signing-identity`, `macos.entitlements`, `macos.notarization-credentials`, or the Windows signing keys. Calcite manages them.
 - `calcite-bundle`: a package without a name or a version in cargo metadata is an error, not an empty string.
 
 ### Security
