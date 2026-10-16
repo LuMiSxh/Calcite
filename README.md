@@ -38,7 +38,7 @@
 | `calcite-tint`     | Dynamic theme colors from artwork. No dependencies, no UI code.                                |
 | `calcite-bundle`   | `cargo calcite bundle`: `.app` and DMG, NSIS and MSI, deb and AppImage. Embeds the Windows icon. |
 | `calcite-update`   | Signed updates with per-file deltas, staged next to the app and installed on quit. Sparkle's model on every platform. |
-| `calcite-exec`     | Execution layer for views: `TaskSlot`, `ActivityStore` with leases, `Throttle`, `bounded`.     |
+| `calcite-exec`     | Execution layer for views: `TaskSlot`, `ActivityStore` with leases, `Progress`, `try_bounded`.  |
 | `calcite-showcase` | `preview` (the Developer Preview: grouped component sections with variant and state matrices) and `home` (a launcher home screen with a simulated install). |
 | `patches/`         | The gpui-ce patches (paint transform, `Filter::Glass`, cached-view fix) and the pinned gpui-ce commit. |
 | `third_party/gpui-ce` | Upstream gpui-ce at the pinned commit with the patches applied. Cargo builds it. `scripts/vendor-sync.sh` rebuilds it. |
@@ -228,14 +228,19 @@ reach state only through `Entity::update`. Each type maps to one Swift type in A
 
 | Rust                                       | Swift                                      |
 | ------------------------------------------ | ------------------------------------------ |
-| `TaskSlot::replace`, `owns`, `invalidate`, `publish` | `TaskSlot.replace`, `owns`, `invalidate` |
-| `ActivityStore::begin`, `update`, `end`    | `LauncherLifecycleStore` and `ActivityLease` |
-| `Throttle::progress()`                     | progress throttling to about 10 Hz         |
-| `bounded(limit, items, work)`              | windowed task group with an `AppConstants` limit |
+| `TaskSlot::run`, `cancel`, `Settled`       | `TaskSlot.replace`, `owns`, `invalidate`   |
+| `ActivityStore::begin`, `revoke`, `ActivityLease` | `LauncherLifecycleStore` and `ActivityLease` |
+| `Job::progress`, `Progress`                | progress throttling to about 10 Hz         |
+| `try_bounded(spawner, limit, items, work)` | windowed task group with an `AppConstants` limit |
 
-The `home` binary shows the pattern. `start_transfer` claims a lease and replaces the slot's task.
-It throttles raw progress and publishes only while its token owns the slot. Pause invalidates the
-slot before it ends the lease.
+Cancellation is real. `TaskSlot::cancel` and a new `run` drop the work, cancel its background and tokio
+children, and run its `Job::on_cancel` cleanup to completion. Await the returned `Settled` to wait for
+all of it. A new run starts only after the replaced run settled. A lease releases when it drops.
+The `tokio` cargo feature adds `Job::tokio`. The default build has no async runtime.
+
+The `home` binary shows the pattern. `start_transfer` moves a lease into the slot's task, publishes
+raw progress through `Job::progress`, and ends the lease when the download finishes. Pause cancels
+the slot and revokes the store, so the old lease cannot set idle.
 
 ## Verification status
 
