@@ -1,4 +1,4 @@
-/vendor/
+/vendor
 /.gpui-ce-work/
 /target/
 /.worktrees/
