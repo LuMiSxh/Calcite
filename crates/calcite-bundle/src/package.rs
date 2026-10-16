@@ -8,11 +8,15 @@ use std::{
 	process::Command,
 };
 
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 
-/// Pixel sizes generated from the source icon. The packager turns them into `.icns` on
-/// macOS, `.ico` on Windows, and hicolor PNGs on Linux.
-const ICON_SIZES: [u32; 6] = [32, 64, 128, 256, 512, 1024];
+use crate::{
+	config::Settings,
+	icons,
+	packager::{CargoPackager, Packager, Run},
+	sign::{Commands, Signing, SystemCommands, notarize_dmg},
+	stage::Staging,
+};
 
 /// The format that copies the bare Windows executable instead of running the packager.
 const STANDALONE_EXE: &str = "exe";
@@ -56,90 +60,230 @@ pub struct Output {
 
 pub type Result<T> = std::result::Result<T, String>;
 
+/// Everything a bundle needs, resolved from cargo metadata and the manifest.
+pub struct Plan {
+	pub product_name: String,
+	pub version: String,
+	pub identifier: String,
+	/// The cargo metadata of the package.
+	pub package: Value,
+	pub settings: Settings,
+	pub signing: Signing,
+	pub bin: String,
+	pub binaries_dir: PathBuf,
+	pub out_dir: PathBuf,
+	/// `target/calcite-bundle`: the staging root goes here, beside the output directory.
+	pub bundle_dir: PathBuf,
+	pub manifest_dir: PathBuf,
+	/// The formats after the `standalone` alias is resolved, or `None` for the platform defaults.
+	pub formats: Option<Vec<String>>,
+}
+
 /// Builds the app and writes its packages to `target/calcite-bundle/<profile>`.
 pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 	let metadata = cargo_metadata()?;
 	let package = select_package(&metadata, options.package.as_deref())?;
-	let manifest_dir = PathBuf::from(
-		package["manifest_path"]
-			.as_str()
-			.ok_or("cargo metadata: package has no manifest_path")?,
-	)
-	.parent()
-	.ok_or("cargo metadata: manifest_path has no parent")?
-	.to_path_buf();
+	let name = package["name"]
+		.as_str()
+		.ok_or("cargo metadata: package has no name")?;
+	let version = package["version"]
+		.as_str()
+		.ok_or("cargo metadata: package has no version")?;
+	let manifest = package["manifest_path"]
+		.as_str()
+		.ok_or("cargo metadata: package has no manifest_path")?;
+	let manifest_dir = Path::new(manifest)
+		.parent()
+		.ok_or("cargo metadata: manifest_path has no parent")?
+		.to_path_buf();
 	let target_dir = PathBuf::from(
 		metadata["target_directory"]
 			.as_str()
 			.ok_or("cargo metadata: no target_directory")?,
 	);
-	let settings = package["metadata"]["calcite"]["bundle"]
-		.as_object()
-		.cloned()
-		.ok_or_else(|| {
-			format!(
-				"{}: add a [package.metadata.calcite.bundle] table with at least `identifier`",
-				package["name"].as_str().unwrap_or("package")
-			)
-		})?;
+	let settings = Settings::from_metadata(&package["metadata"], manifest)?;
+	let identifier = settings.identifier(manifest)?.to_string();
+	let signing = crate::sign::resolve(&settings, &manifest_dir, manifest, |key| std::env::var(key).ok())?;
 	let bin = select_bin(package, options.bin.as_deref())?;
 	let profile = if options.debug { "debug" } else { "release" };
 
 	if !options.no_build {
-		build(package["name"].as_str().unwrap_or_default(), &bin, options.debug)?;
+		build(name, &bin, options.debug)?;
 	}
 
-	let out_dir = target_dir.join("calcite-bundle").join(profile);
-	fs::create_dir_all(&out_dir).map_err(|error| format!("{}: {error}", out_dir.display()))?;
-	// The icon set is shared by every format in one packager run, so the formats that need
-	// the `.icns` margin run separately from the rest.
-	let icon = settings.get("icon").and_then(Value::as_str);
-	let mut requested = requested_formats(options.formats.clone(), &settings);
-	let mut outputs = Vec::new();
-	if let Some(formats) = requested.as_mut()
-		&& formats.iter().any(|format| format == STANDALONE_EXE)
-	{
-		formats.retain(|format| format != STANDALONE_EXE);
-		outputs.push(standalone_exe(StandaloneInput {
-			product_name: &product_name(package, &settings),
-			version: package["version"].as_str().unwrap_or_default(),
-			settings: &settings,
-			bin: &bin,
-			binaries_dir: &target_dir.join(profile),
-			out_dir: &out_dir,
-		})?);
-		if formats.is_empty() {
-			return Ok(outputs);
-		}
+	let bundle_dir = target_dir.join("calcite-bundle");
+	let plan = Plan {
+		product_name: settings.name.clone().unwrap_or_else(|| name.to_string()),
+		version: version.to_string(),
+		identifier,
+		package: package.clone(),
+		signing,
+		binaries_dir: target_dir.join(profile),
+		out_dir: bundle_dir.join(profile),
+		bundle_dir,
+		manifest_dir,
+		formats: requested_formats(options.formats.clone(), &settings),
+		settings,
+		bin,
+	};
+	publish(&plan, &CargoPackager, &SystemCommands)
+}
+
+/// Runs every packager step into a staging root, then moves the outputs into `plan.out_dir`.
+/// A failure removes the staging root and leaves `plan.out_dir` as it was.
+pub fn publish(plan: &Plan, packager: &impl Packager, commands: &impl Commands) -> Result<Vec<Output>> {
+	fs::create_dir_all(&plan.out_dir).map_err(|error| format!("{}: {error}", plan.out_dir.display()))?;
+	let staging = Staging::create(&plan.bundle_dir)?;
+	match produce(plan, &staging, packager, commands) {
+		Ok(outputs) => staging.commit(&plan.out_dir, outputs),
+		Err(error) => Err(match staging.discard() {
+			Ok(()) => error,
+			Err(cleanup) => format!("{error}\n{cleanup}"),
+		}),
 	}
-	for (pad_for_macos, formats) in format_groups(requested) {
-		let icons = match icon {
-			Some(icon) => generate_icons(
-				&manifest_dir.join(icon),
-				&out_dir.join(if pad_for_macos { "icons-macos" } else { "icons" }),
+}
+
+fn produce(
+	plan: &Plan,
+	staging: &Staging,
+	packager: &impl Packager,
+	commands: &impl Commands,
+) -> Result<Vec<Output>> {
+	let mut outputs = Vec::new();
+	let mut formats = plan.formats.clone();
+	let wants_standalone = formats
+		.as_ref()
+		.is_some_and(|formats| formats.iter().any(|format| format == STANDALONE_EXE));
+	if wants_standalone {
+		formats
+			.as_mut()
+			.unwrap()
+			.retain(|format| format != STANDALONE_EXE);
+	}
+	let wants_windows = wants_standalone
+		|| formats.as_ref().map_or(cfg!(windows), |formats| {
+			formats.iter().any(|format| is_windows_format(format))
+		});
+
+	// Windows signing signs the binary once, before any installer packs it. The installers and
+	// the standalone exe then carry the same signed file.
+	let binaries_dir = match &plan.signing.windows {
+		Some(authenticode) if wants_windows => {
+			let shared = staging.dir("shared")?;
+			let source = plan.binaries_dir.join(format!("{}.exe", plan.bin));
+			let signed = shared.join(format!("{}.exe", plan.bin));
+			fs::copy(&source, &signed).map_err(|error| format!("{}: {error}", source.display()))?;
+			authenticode.sign(commands, &signed)?;
+			shared
+		}
+		_ => plan.binaries_dir.clone(),
+	};
+
+	if wants_standalone {
+		outputs.push(standalone_exe(plan, staging, &binaries_dir)?);
+	}
+	if formats.as_ref().is_some_and(Vec::is_empty) {
+		return Ok(outputs);
+	}
+
+	for (index, (pad_for_macos, run_formats)) in format_groups(formats).into_iter().enumerate() {
+		let run_dir = staging.dir(&format!("run-{index}"))?;
+		let icons = match &plan.settings.icon {
+			Some(icon) => icons::generate(
+				&plan.manifest_dir.join(icon),
+				&run_dir.join(if pad_for_macos { "icons-macos" } else { "icons" }),
 				pad_for_macos,
 			)?,
 			None => Vec::new(),
 		};
-		let config = packager_config(PackagerInput {
-			package,
-			settings: &settings,
-			bin: &bin,
-			binaries_dir: &target_dir.join(profile),
-			out_dir: &out_dir,
-			manifest_dir: &manifest_dir,
+		let config = crate::packager::config(&Run {
+			product_name: &plan.product_name,
+			version: &plan.version,
+			identifier: &plan.identifier,
+			package: &plan.package,
+			settings: &plan.settings,
+			macos: plan.signing.macos.as_ref(),
+			bin: &plan.bin,
+			binaries_dir: &binaries_dir,
+			out_dir: &run_dir,
+			manifest_dir: &plan.manifest_dir,
 			icons: &icons,
-			formats: formats.as_deref(),
+			formats: run_formats.as_deref(),
 		})?;
-		let config: cargo_packager::Config =
-			serde_json::from_value(config).map_err(|error| format!("bundle settings: {error}"))?;
-		let packaged = cargo_packager::package(&config).map_err(|error| error.to_string())?;
-		outputs.extend(packaged.into_iter().map(|output| Output {
-			format: format!("{:?}", output.format).to_lowercase(),
-			paths: output.paths,
-		}));
+		for packaged in packager.package(&config)? {
+			for path in &packaged.paths {
+				match (packaged.format.as_str(), &plan.signing) {
+					(
+						"dmg",
+						crate::sign::Signing {
+							macos: Some(macos), ..
+						},
+					) => {
+						notarize_dmg(commands, path, &macos.notary)?;
+					}
+					(
+						"nsis" | "wix",
+						crate::sign::Signing {
+							windows: Some(authenticode),
+							..
+						},
+					) => {
+						authenticode.sign(commands, path)?;
+					}
+					_ => {}
+				}
+			}
+			outputs.push(Output {
+				format: packaged.format,
+				paths: packaged.paths,
+			});
+		}
 	}
 	Ok(outputs)
+}
+
+/// Copies the executable alone, named like the NSIS installer without `-setup`:
+/// `<name>_<version>_<arch>.exe`. Its icon comes from [`crate::build::windows_icon`].
+fn standalone_exe(plan: &Plan, staging: &Staging, binaries_dir: &Path) -> Result<Output> {
+	if !cfg!(windows) {
+		return Err(format!(
+			"the `{STANDALONE_EXE}` format needs a Windows host: it copies the Windows build"
+		));
+	}
+	if plan.settings.resources.is_some() {
+		return Err(format!(
+			"the `{STANDALONE_EXE}` format is a single file and cannot carry `resources`; use `nsis` or `wix`"
+		));
+	}
+	let source = binaries_dir.join(format!("{}.exe", plan.bin));
+	let path = staging.dir(STANDALONE_EXE)?.join(standalone_exe_name(
+		&plan.product_name,
+		&plan.version,
+		std::env::consts::ARCH,
+	));
+	fs::copy(&source, &path).map_err(|error| format!("{}: {error}", source.display()))?;
+	Ok(Output {
+		format: STANDALONE_EXE.to_string(),
+		paths: vec![path],
+	})
+}
+
+fn standalone_exe_name(product_name: &str, version: &str, arch: &str) -> String {
+	// The architecture names of the NSIS and MSI outputs.
+	let arch = match arch {
+		"x86_64" => "x64",
+		"aarch64" => "arm64",
+		other => other,
+	};
+	format!("{product_name}_{version}_{arch}.exe")
+}
+
+fn is_macos_format(format: &str) -> bool {
+	matches!(format, "app" | "dmg")
+}
+
+fn is_windows_format(format: &str) -> bool {
+	matches!(format, "nsis" | "wix" | STANDALONE_EXE)
 }
 
 fn cargo() -> Command {
@@ -225,141 +369,10 @@ fn build(package: &str, bin: &str, debug: bool) -> Result<()> {
 	}
 }
 
-/// Apple's macOS icon template draws the artwork at 824 of 1024 px, centered, inside a
-/// transparent margin. Scales `icon` to that size on a transparent canvas of the same size.
-fn add_macos_margin(icon: &image::RgbaImage) -> image::RgbaImage {
-	let (width, height) = icon.dimensions();
-	let inner_width = (width * 824 / 1024).max(1);
-	let inner_height = (height * 824 / 1024).max(1);
-	let scaled = image::imageops::resize(
-		icon,
-		inner_width,
-		inner_height,
-		image::imageops::FilterType::Lanczos3,
-	);
-	let mut canvas = image::RgbaImage::new(width, height);
-	image::imageops::overlay(
-		&mut canvas,
-		&scaled,
-		i64::from((width - inner_width) / 2),
-		i64::from((height - inner_height) / 2),
-	);
-	canvas
-}
-
-/// Resizes the source icon to every size the packager needs. `pad_for_macos` adds Apple's
-/// transparent margin first, for the `.icns`; the other platforms keep the full-bleed artwork.
-fn generate_icons(source: &Path, directory: &Path, pad_for_macos: bool) -> Result<Vec<PathBuf>> {
-	let image = image::open(source).map_err(|error| format!("icon {}: {error}", source.display()))?;
-	if image.width() != image.height() {
-		return Err(format!(
-			"icon {}: must be square, is {}×{}",
-			source.display(),
-			image.width(),
-			image.height()
-		));
-	}
-	if image.width() < 512 {
-		return Err(format!(
-			"icon {}: must be at least 512 px, is {} px",
-			source.display(),
-			image.width()
-		));
-	}
-	let image = if pad_for_macos {
-		image::DynamicImage::ImageRgba8(add_macos_margin(&image.to_rgba8()))
-	} else {
-		image
-	};
-	fs::create_dir_all(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
-	ICON_SIZES
-		.iter()
-		.filter(|&&size| size <= image.width())
-		.map(|&size| {
-			// The `.icns` writer has no 1x type for 64 and 1024 px: they are the 32 and 512 px icons at 2x.
-			let path = directory.join(match size {
-				64 => "32x32@2x.png".to_string(),
-				1024 => "512x512@2x.png".to_string(),
-				_ => format!("{size}x{size}.png"),
-			});
-			image
-				.resize_exact(size, size, image::imageops::FilterType::Lanczos3)
-				.save(&path)
-				.map_err(|error| format!("{}: {error}", path.display()))?;
-			Ok(path)
-		})
-		.collect()
-}
-
-struct StandaloneInput<'a> {
-	product_name: &'a str,
-	version: &'a str,
-	settings: &'a Map<String, Value>,
-	bin: &'a str,
-	binaries_dir: &'a Path,
-	out_dir: &'a Path,
-}
-
-/// Copies the executable alone, named like the NSIS installer without `-setup`:
-/// `<name>_<version>_<arch>.exe`. Its icon comes from [`crate::build::windows_icon`].
-fn standalone_exe(input: StandaloneInput) -> Result<Output> {
-	if !cfg!(windows) {
-		return Err(format!(
-			"the `{STANDALONE_EXE}` format needs a Windows host: it copies the Windows build"
-		));
-	}
-	if input.settings.contains_key("resources") {
-		return Err(format!(
-			"the `{STANDALONE_EXE}` format is a single file and cannot carry `resources`; use `nsis` or `wix`"
-		));
-	}
-	let source = input.binaries_dir.join(format!("{}.exe", input.bin));
-	let path = input.out_dir.join(standalone_exe_name(
-		input.product_name,
-		input.version,
-		std::env::consts::ARCH,
-	));
-	fs::copy(&source, &path).map_err(|error| format!("{}: {error}", source.display()))?;
-	Ok(Output {
-		format: STANDALONE_EXE.to_string(),
-		paths: vec![path],
-	})
-}
-
-fn standalone_exe_name(product_name: &str, version: &str, arch: &str) -> String {
-	// The architecture names of the NSIS and MSI outputs.
-	let arch = match arch {
-		"x86_64" => "x64",
-		"aarch64" => "arm64",
-		other => other,
-	};
-	format!("{product_name}_{version}_{arch}.exe")
-}
-
-fn product_name(package: &Value, settings: &Map<String, Value>) -> String {
-	settings
-		.get("name")
-		.and_then(Value::as_str)
-		.unwrap_or_else(|| package["name"].as_str().unwrap_or_default())
-		.to_string()
-}
-
-fn is_macos_format(format: &str) -> bool {
-	matches!(format, "app" | "dmg")
-}
-
 /// The CLI's formats, else the manifest's `formats`, with `standalone` resolved for the host;
 /// `None` leaves the choice to the packager.
-fn requested_formats(cli: Option<Vec<String>>, settings: &Map<String, Value>) -> Option<Vec<String>> {
-	let formats = cli.or_else(|| {
-		settings.get("formats").and_then(Value::as_array).map(|formats| {
-			formats
-				.iter()
-				.filter_map(Value::as_str)
-				.map(str::to_string)
-				.collect()
-		})
-	})?;
+fn requested_formats(cli: Option<Vec<String>>, settings: &Settings) -> Option<Vec<String>> {
+	let formats = cli.or_else(|| settings.formats.clone())?;
 	let mut resolved: Vec<String> = Vec::with_capacity(formats.len());
 	for format in formats {
 		let format = if format == STANDALONE {
@@ -388,124 +401,224 @@ fn format_groups(requested: Option<Vec<String>>) -> Vec<(bool, Option<Vec<String
 	if !macos.is_empty() {
 		groups.push((true, Some(macos)));
 	}
-	if !others.is_empty() || groups.is_empty() {
+	if !others.is_empty() {
 		groups.push((false, Some(others)));
 	}
 	groups
 }
 
-struct PackagerInput<'a> {
-	package: &'a Value,
-	settings: &'a Map<String, Value>,
-	bin: &'a str,
-	binaries_dir: &'a Path,
-	out_dir: &'a Path,
-	manifest_dir: &'a Path,
-	icons: &'a [PathBuf],
-	formats: Option<&'a [String]>,
-}
-
-/// The cargo-packager configuration as JSON, in its own camelCase schema.
-fn packager_config(input: PackagerInput) -> Result<Value> {
-	let PackagerInput {
-		package,
-		settings,
-		bin,
-		binaries_dir,
-		out_dir,
-		manifest_dir,
-		icons,
-		formats,
-	} = input;
-	let text = |key: &str| settings.get(key).and_then(Value::as_str).map(str::to_string);
-	let identifier =
-		text("identifier").ok_or("[package.metadata.calcite.bundle]: `identifier` is required")?;
-	let product_name = product_name(package, settings);
-
-	let mut config = json!({
-		"productName": product_name,
-		"version": package["version"],
-		"identifier": identifier,
-		"binaries": [{ "path": bin, "main": true }],
-		"binariesDir": binaries_dir,
-		"outDir": out_dir,
-		"icons": icons,
-	});
-	let object = config.as_object_mut().expect("the literal is an object");
-	let mut set = |key: &str, value: Value| {
-		if !value.is_null() {
-			object.insert(key.to_string(), value);
-		}
-	};
-	set("description", package["description"].clone());
-	set("homepage", package["homepage"].clone());
-	set("authors", package["authors"].clone());
-	set(
-		"publisher",
-		settings.get("publisher").cloned().unwrap_or(Value::Null),
-	);
-	set(
-		"copyright",
-		settings.get("copyright").cloned().unwrap_or(Value::Null),
-	);
-	set(
-		"category",
-		settings.get("category").cloned().unwrap_or(Value::Null),
-	);
-	if let Some(file) = package["license_file"].as_str() {
-		set("licenseFile", json!(manifest_dir.join(file)));
-	}
-	if let Some(resources) = settings.get("resources").and_then(Value::as_array) {
-		// Globs resolve against the app's manifest directory, not the shell's.
-		let resources: Vec<Value> = resources
-			.iter()
-			.filter_map(Value::as_str)
-			.map(|glob| json!(manifest_dir.join(glob).to_string_lossy()))
-			.collect();
-		set("resources", json!(resources));
-	}
-	set("formats", formats.map_or(Value::Null, |formats| json!(formats)));
-	if let Some(version) = text("minimum-macos") {
-		set("macos", json!({ "minimumSystemVersion": version }));
-	}
-	Ok(config)
-}
-
 #[cfg(test)]
 mod tests {
-	use super::*;
+	use std::cell::Cell;
 
-	#[test]
-	fn the_settings_map_onto_a_valid_packager_config() {
-		let package = json!({
-			"name": "preview-app",
-			"version": "0.1.0",
-			"description": "A demo",
-			"authors": ["Example"],
-			"homepage": null,
-			"license_file": null,
-		});
-		let settings = json!({
+	use serde_json::json;
+
+	use super::*;
+	use crate::{
+		packager::{Packaged, config},
+		sign::{Authenticode, Certificate, MacosSigning, NotaryCredentials},
+	};
+
+	/// Writes one file per run and fails the run at `fail_at`.
+	struct FakePackager {
+		calls: Cell<usize>,
+		fail_at: usize,
+	}
+
+	impl Packager for FakePackager {
+		fn package(&self, config: &cargo_packager::Config) -> Result<Vec<Packaged>> {
+			let call = self.calls.get();
+			self.calls.set(call + 1);
+			if call == self.fail_at {
+				return Err("packager run 2 failed".to_string());
+			}
+			let path = config.out_dir.join(format!("App-{call}.deb"));
+			fs::write(&path, b"package").unwrap();
+			Ok(vec![Packaged {
+				format: "deb".to_string(),
+				paths: vec![path],
+			}])
+		}
+	}
+
+	/// Records every tool call. Notarization answers with an accepted verdict.
+	#[derive(Default)]
+	struct Recorder {
+		calls: std::cell::RefCell<Vec<(String, Vec<String>)>>,
+	}
+
+	impl Commands for Recorder {
+		fn run(&self, program: &str, args: &[String]) -> Result<String> {
+			self.calls.borrow_mut().push((program.to_string(), args.to_vec()));
+			Ok(r#"{"status":"Accepted","id":"1"}"#.to_string())
+		}
+	}
+
+	fn temp(name: &str) -> PathBuf {
+		let dir = std::env::temp_dir().join(format!("calcite-package-{}-{name}", std::process::id()));
+		let _ = fs::remove_dir_all(&dir);
+		fs::create_dir_all(dir.join("release")).unwrap();
+		dir
+	}
+
+	fn plan(bundle_dir: &Path, formats: Option<Vec<String>>, signing: Signing) -> Plan {
+		let settings: Settings = serde_json::from_value(json!({
 			"identifier": "dev.example.preview",
 			"name": "Calcite Developer Preview",
-			"resources": ["assets/*.svg"],
-			"category": "DeveloperTool",
-			"minimum-macos": "13.0",
-		});
-		let config = packager_config(PackagerInput {
-			package: &package,
-			settings: settings.as_object().unwrap(),
-			bin: "preview",
-			binaries_dir: Path::new("/target/release"),
-			out_dir: Path::new("/target/calcite-bundle/release"),
-			manifest_dir: Path::new("/app"),
-			icons: &[PathBuf::from("/icons/512x512.png")],
-			formats: Some(&["deb".to_string()]),
-		})
+		}))
 		.unwrap();
-		let config: cargo_packager::Config = serde_json::from_value(config).unwrap();
-		assert_eq!(config.product_name, "Calcite Developer Preview");
-		assert_eq!(config.identifier.as_deref(), Some("dev.example.preview"));
+		Plan {
+			product_name: "Calcite Developer Preview".to_string(),
+			version: "0.1.0".to_string(),
+			identifier: "dev.example.preview".to_string(),
+			package: json!({ "name": "preview-app", "version": "0.1.0" }),
+			settings,
+			signing,
+			bin: "preview".to_string(),
+			binaries_dir: bundle_dir.join("target-release"),
+			out_dir: bundle_dir.join("release"),
+			bundle_dir: bundle_dir.to_path_buf(),
+			manifest_dir: bundle_dir.to_path_buf(),
+			formats,
+		}
+	}
+
+	#[test]
+	fn a_failed_second_run_leaves_the_output_directory_untouched() {
+		let bundle = temp("failed-run");
+		// `dmg` and `deb` are two runs: `publish` must not publish run 1 when run 2 fails.
+		let plan = plan(
+			&bundle,
+			Some(vec!["dmg".into(), "deb".into()]),
+			Signing::default(),
+		);
+		let packager = FakePackager {
+			calls: Cell::new(0),
+			fail_at: 1,
+		};
+		let error = publish(&plan, &packager, &Recorder::default()).unwrap_err();
+		assert!(error.contains("run 2 failed"), "{error}");
+		assert_eq!(fs::read_dir(&plan.out_dir).unwrap().count(), 0);
+		assert!(!bundle.read_dir().unwrap().any(|entry| {
+			entry
+				.unwrap()
+				.file_name()
+				.to_string_lossy()
+				.starts_with(".staging")
+		}));
+		fs::remove_dir_all(&bundle).unwrap();
+	}
+
+	#[test]
+	fn a_successful_publish_moves_every_run_into_the_output_directory() {
+		let bundle = temp("publish");
+		let plan = plan(
+			&bundle,
+			Some(vec!["dmg".into(), "deb".into()]),
+			Signing::default(),
+		);
+		let packager = FakePackager {
+			calls: Cell::new(0),
+			fail_at: usize::MAX,
+		};
+		let outputs = publish(&plan, &packager, &Recorder::default()).unwrap();
+		assert_eq!(outputs.len(), 2);
+		assert!(
+			outputs
+				.iter()
+				.all(|output| output.paths[0].starts_with(&plan.out_dir))
+		);
+		assert!(outputs.iter().all(|output| output.paths[0].exists()));
+		fs::remove_dir_all(&bundle).unwrap();
+	}
+
+	#[test]
+	fn a_dmg_is_notarized_and_stapled_after_packaging() {
+		struct DmgPackager;
+		impl Packager for DmgPackager {
+			fn package(&self, config: &cargo_packager::Config) -> Result<Vec<Packaged>> {
+				let path = config.out_dir.join("App.dmg");
+				fs::write(&path, b"dmg").unwrap();
+				Ok(vec![Packaged {
+					format: "dmg".to_string(),
+					paths: vec![path],
+				}])
+			}
+		}
+		let bundle = temp("notarize");
+		let signing = Signing {
+			macos: Some(MacosSigning {
+				identity: "Developer ID Application: Example".to_string(),
+				entitlements: None,
+				notary: NotaryCredentials::KeychainProfile("ci".to_string()),
+			}),
+			windows: None,
+		};
+		let plan = plan(&bundle, Some(vec!["dmg".into()]), signing);
+		let recorder = Recorder::default();
+		publish(&plan, &DmgPackager, &recorder).unwrap();
+		let calls = recorder.calls.into_inner();
+		assert_eq!(calls[0].0, "xcrun");
+		assert_eq!(calls[0].1[1], "submit");
+		// The DMG is stapled in its staging directory, then moved: the ticket travels with it.
+		assert_eq!(calls[1].1[..3], ["stapler", "staple", "-v"]);
+		assert!(calls[1].1[3].ends_with("App.dmg"));
+		fs::remove_dir_all(&bundle).unwrap();
+	}
+
+	#[test]
+	fn windows_signing_signs_the_binary_before_packaging_and_each_installer() {
+		struct InstallerPackager;
+		impl Packager for InstallerPackager {
+			fn package(&self, config: &cargo_packager::Config) -> Result<Vec<Packaged>> {
+				// The packager must read the signed copy, not the build output.
+				assert!(config.binaries_dir.as_ref().unwrap().ends_with("shared"));
+				let path = config.out_dir.join("App-setup.exe");
+				fs::write(&path, b"installer").unwrap();
+				Ok(vec![Packaged {
+					format: "nsis".to_string(),
+					paths: vec![path],
+				}])
+			}
+		}
+		let bundle = temp("windows");
+		let signing = Signing {
+			macos: None,
+			windows: Some(Authenticode {
+				certificate: Certificate::Thumbprint("ABCDEF".to_string()),
+				timestamp_url: "http://ts.example".to_string(),
+			}),
+		};
+		let plan = Plan {
+			binaries_dir: bundle.join("target-release"),
+			..plan(&bundle, Some(vec!["nsis".into()]), signing)
+		};
+		fs::create_dir_all(&plan.binaries_dir).unwrap();
+		fs::write(plan.binaries_dir.join("preview.exe"), b"exe").unwrap();
+		let recorder = Recorder::default();
+		publish(&plan, &InstallerPackager, &recorder).unwrap();
+		let calls = recorder.calls.into_inner();
+		assert_eq!(calls.len(), 2);
+		assert_eq!(calls[0].0, "signtool");
+		assert!(calls[0].1[0] == "sign" && calls[0].1.last().unwrap().ends_with("preview.exe"));
+		assert!(calls[1].1.last().unwrap().ends_with("App-setup.exe"));
+		fs::remove_dir_all(&bundle).unwrap();
+	}
+
+	#[test]
+	fn the_standalone_exe_is_split_from_the_packager_formats() {
+		let settings: Settings = serde_json::from_value(json!({ "formats": ["exe", "nsis"] })).unwrap();
+		assert_eq!(
+			requested_formats(None, &settings),
+			Some(vec!["exe".to_string(), "nsis".to_string()])
+		);
+		let cli = requested_formats(Some(vec!["deb".to_string()]), &settings);
+		assert_eq!(cli, Some(vec!["deb".to_string()]));
+		let standalone = requested_formats(
+			Some(vec![STANDALONE.to_string(), standalone_format().to_string()]),
+			&Settings::default(),
+		);
+		assert_eq!(standalone, Some(vec![standalone_format().to_string()]));
 	}
 
 	#[test]
@@ -521,52 +634,31 @@ mod tests {
 	}
 
 	#[test]
-	fn the_standalone_exe_is_split_from_the_packager_formats() {
-		let settings = json!({ "formats": ["exe", "nsis"] });
-		let requested = requested_formats(None, settings.as_object().unwrap());
-		assert_eq!(requested, Some(vec!["exe".to_string(), "nsis".to_string()]));
-		let cli = requested_formats(Some(vec!["deb".to_string()]), settings.as_object().unwrap());
-		assert_eq!(cli, Some(vec!["deb".to_string()]));
-		let standalone = requested_formats(
-			Some(vec!["standalone".to_string(), standalone_format().to_string()]),
-			&Map::new(),
-		);
-		assert_eq!(standalone, Some(vec![standalone_format().to_string()]));
-	}
-
-	#[test]
-	fn macos_icons_keep_the_size_and_get_a_transparent_margin() {
-		let icon = image::RgbaImage::from_pixel(512, 512, image::Rgba([200, 30, 30, 255]));
-		let padded = add_macos_margin(&icon);
-		assert_eq!(padded.dimensions(), (512, 512));
-		assert_eq!(padded.get_pixel(0, 0)[3], 0);
-		assert_eq!(padded.get_pixel(256, 256)[3], 255);
-	}
-
-	#[test]
 	fn only_the_macos_formats_get_the_icon_margin() {
-		let source = std::env::temp_dir().join(format!("calcite-icon-{}.png", std::process::id()));
-		image::RgbaImage::from_pixel(512, 512, image::Rgba([200, 30, 30, 255]))
-			.save(&source)
-			.unwrap();
-		for format in ["nsis", "deb", "appimage", "dmg", "app"] {
-			let (pad_for_macos, _) = format_groups(Some(vec![format.to_string()])).remove(0);
-			let directory =
-				std::env::temp_dir().join(format!("calcite-icons-{}-{format}", std::process::id()));
-			generate_icons(&source, &directory, pad_for_macos).unwrap();
-			let icon = image::open(directory.join("512x512.png")).unwrap().to_rgba8();
-			fs::remove_dir_all(&directory).ok();
-			if pad_for_macos {
-				assert_eq!(icon.get_pixel(0, 0)[3], 0, "{format}: corner must be transparent");
-				assert_eq!(
-					icon.get_pixel(256, 256)[3],
-					255,
-					"{format}: centre must be opaque"
-				);
-			} else {
-				assert_eq!(icon.get_pixel(0, 0)[3], 255, "{format}: corner must stay opaque");
-			}
-		}
-		fs::remove_file(&source).ok();
+		let groups = format_groups(Some(vec!["nsis".into(), "dmg".into(), "app".into()]));
+		assert_eq!(groups[0], (true, Some(vec!["dmg".into(), "app".into()])));
+		assert_eq!(groups[1], (false, Some(vec!["nsis".into()])));
+	}
+
+	#[test]
+	fn the_config_for_a_run_carries_the_packager_formats() {
+		let settings: Settings =
+			serde_json::from_value(json!({ "identifier": "dev.example.preview" })).unwrap();
+		let run = Run {
+			product_name: "App",
+			version: "1.0.0",
+			identifier: "dev.example.preview",
+			package: &json!({}),
+			settings: &settings,
+			macos: None,
+			bin: "preview",
+			binaries_dir: Path::new("/target/release"),
+			out_dir: Path::new("/out"),
+			manifest_dir: Path::new("/app"),
+			icons: &[],
+			formats: Some(&["deb".to_string()]),
+		};
+		let config = config(&run).unwrap();
+		assert_eq!(config.formats.unwrap().len(), 1);
 	}
 }

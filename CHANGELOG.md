@@ -16,6 +16,7 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-update`: the feed format is 2. A feed has the signed fields `issued_at`, `sequence`, and the optional `minimum_version`. The envelope has a `key_id`. Sign again with `calcite-update sign --key-id ID`; `release` needs `--sequence`.
 - `calcite-update`: `install::install` and `Staged::install` take the product and version, and `Staged::install` hashes the staged tree again first. `publish::sign` takes a `key_id`.
 - `calcite-update`: `Updater` rejects `file://` URLs. The `test-support` feature and `UpdaterBuilder::allow_file_urls` allow them for tests.
+- `calcite-bundle`: unknown keys in `[package.metadata.calcite.bundle]` are errors. Before, the bundler ignored them. The error names the key and the manifest.
 
 ### Changed
 
@@ -30,11 +31,16 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-update`: `Available::is_required` reports that the running version is below the feed's `minimum_version`.
 - `calcite-update`: `publish::sign_feed`, `publish::FeedBuilder`, and `publish::build_target`.
 - `calcite-update`: a crate README with the security model.
+- `calcite-bundle`: `[package.metadata.calcite.bundle.packager]` merges its keys into the cargo-packager configuration, for options that Calcite does not name.
+- `calcite-bundle`: macOS signing with `[package.metadata.calcite.bundle.macos]` (`signing-identity`, `entitlements`). The DMG is notarized and stapled. Credentials come from `APPLE_NOTARY_KEYCHAIN_PROFILE`, or from `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD`.
+- `calcite-bundle`: Windows signing with `[package.metadata.calcite.bundle.windows]` (`certificate-thumbprint`, `timestamp-url`), or with a PFX from `CALCITE_SIGN_CERT` and `CALCITE_SIGN_PASSWORD`. The binary and the installers are signed.
 
 ### Fixed
 
 - `calcite-tint`: a red image no longer loses to a smaller blue area when its hue sits at the 0/1 seam. Hue buckets wrap, and the winning hue is a circular mean.
 - `calcite-tint`: the artwork is averaged over a grid of cells instead of read at one pixel per cell, so the tint no longer depends on image size or a single stray pixel.
+- `calcite-bundle`: a failed packager run no longer leaves partial files in the output directory. Each run writes to a staging directory. The files move into place only after every run succeeds.
+- `calcite-bundle`: a package without a name or a version in cargo metadata is an error, not an empty string.
 
 ### Security
 

@@ -15,10 +15,11 @@ required-features = ["packager"]
 default = ["packager"]
 # `bundle` and the `cargo calcite bundle` command. Build scripts that only embed the
 # Windows icon turn it off.
-packager = ["dep:cargo-packager", "dep:serde_json"]
+packager = ["dep:cargo-packager", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 cargo-packager = { version = "0.11.8", default-features = false, features = ["rustls-tls"], optional = true }
 embed-resource = "3.0.12"
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }

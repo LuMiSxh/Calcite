@@ -22,9 +22,28 @@
 //! copyright = "© 2026 Example"
 //! formats = ["app", "dmg"]             # default: the platform's formats
 //! minimum-macos = "13.0"
+//!
+//! [package.metadata.calcite.bundle.macos]    # optional: signs the .app and DMG
+//! signing-identity = "Developer ID Application: Example (TEAM123)"
+//! entitlements = "packaging/entitlements.plist"
+//!
+//! [package.metadata.calcite.bundle.windows]  # optional: signs the binary and installers
+//! certificate-thumbprint = "0123456789ABCDEF0123456789ABCDEF01234567"  # or CALCITE_SIGN_CERT
+//! timestamp-url = "http://timestamp.digicert.com"
+//!
+//! [package.metadata.calcite.bundle.packager] # optional: merged verbatim into cargo-packager's config
+//! deb = { depends = ["libgtk-3-0"] }
 //! ```
 //!
-//! Version, description, authors, homepage, and license come from the package itself.
+//! Unknown keys in these tables are errors that name the key and the manifest. Version,
+//! description, authors, homepage, and license come from the package itself.
+//!
+//! Signing is off unless a signing key is set, so local builds need no certificate. Notarizing
+//! a signed macOS build needs `APPLE_NOTARY_KEYCHAIN_PROFILE`, or `APPLE_ID`, `APPLE_TEAM_ID`,
+//! and `APPLE_APP_PASSWORD`. A Windows certificate file needs `CALCITE_SIGN_CERT`, with
+//! `CALCITE_SIGN_PASSWORD` if it is protected. Credentials come from the environment only.
+//! cargo-packager signs the `.app` with the hardened runtime, and Calcite notarizes and staples
+//! the DMG.
 //!
 //! | Platform | Default formats   | Other formats                   |
 //! | -------- | ----------------- | ------------------------------- |
@@ -40,7 +59,17 @@
 
 pub mod build;
 #[cfg(feature = "packager")]
+mod config;
+#[cfg(feature = "packager")]
+mod icons;
+#[cfg(feature = "packager")]
 mod package;
+#[cfg(feature = "packager")]
+mod packager;
+#[cfg(feature = "packager")]
+mod sign;
+#[cfg(feature = "packager")]
+mod stage;
 
 #[cfg(feature = "packager")]
 pub use package::{Options, Output, Result, bundle};
