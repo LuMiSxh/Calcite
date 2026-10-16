@@ -53,7 +53,9 @@
 //! `--feed` writes `update.json`, a signed calcite-update feed, beside the bundle that
 //! calcite-update installs: the `app`, `appimage`, or `exe` output. It needs the `feed` feature,
 //! `--sequence N`, and the Ed25519 seed in `CALCITE_UPDATE_KEY`. The feed lists the packages by
-//! file name, so clients resolve them next to `update.json` at `base-url`. It has no deltas.
+//! file name, so clients resolve them next to `update.json` at `base-url`. Each `--previous`
+//! `VERSION=PATH` (repeatable) adds a delta from an earlier release. PATH is that release's
+//! installable tree, the same kind as the new output. A delta holds only the changed files.
 //!
 //! Prefer `APPLE_NOTARY_KEYCHAIN_PROFILE` and `certificate-thumbprint`. `notarytool` and
 //! `signtool` take the Apple app password and the PFX password only as command-line arguments,

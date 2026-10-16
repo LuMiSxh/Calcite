@@ -60,6 +60,9 @@ pub struct FeedOptions {
 	pub sequence: Option<u64>,
 	/// Release notes in Markdown, read from this file.
 	pub notes: Option<PathBuf>,
+	/// Earlier releases to build deltas from, as `--previous VERSION=PATH` gives them. Each PATH
+	/// is that release's installable tree, the same kind as the new output.
+	pub previous: Vec<(String, PathBuf)>,
 }
 
 /// One package that was written.
@@ -122,6 +125,7 @@ pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 		eprintln!("{warning}");
 	}
 	let bin = select_bin(package, options.bin.as_deref())?;
+	let formats = requested_formats(options.formats.clone(), &settings);
 	// The feed settings are checked before the build, so a missing key fails in seconds.
 	#[cfg(feature = "feed")]
 	let feed = match &options.feed {
@@ -129,9 +133,12 @@ pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 			request,
 			&settings,
 			manifest,
-			&identifier,
-			name,
-			version,
+			&crate::feed::Release {
+				identifier: &identifier,
+				name,
+				version,
+				formats: formats.as_deref(),
+			},
 			|key| std::env::var(key).ok(),
 		)?),
 		None => None,
@@ -157,7 +164,7 @@ pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 		out_dir: bundle_dir.join(profile),
 		bundle_dir,
 		manifest_dir,
-		formats: requested_formats(options.formats.clone(), &settings),
+		formats,
 		#[cfg(feature = "feed")]
 		feed,
 		settings,
