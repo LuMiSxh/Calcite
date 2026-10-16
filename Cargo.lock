@@ -807,6 +807,7 @@ dependencies = [
  "cargo-packager",
  "embed-resource",
  "image",
+ "serde",
  "serde_json",
 ]
 
