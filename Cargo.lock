@@ -804,6 +804,7 @@ dependencies = [
 name = "calcite-bundle"
 version = "0.4.0"
 dependencies = [
+ "calcite-update",
  "cargo-packager",
  "embed-resource",
  "image",

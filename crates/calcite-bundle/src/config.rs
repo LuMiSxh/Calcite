@@ -10,6 +10,9 @@ use serde_json::{Map, Value};
 /// The manifest table that holds the bundle settings.
 const TABLE: &str = "[package.metadata.calcite.bundle]";
 
+/// The table that holds the calcite-update feed settings, read by `--feed`.
+pub const UPDATE_TABLE: &str = "[package.metadata.calcite.bundle.update]";
+
 /// The Calcite-owned keys of `[package.metadata.calcite.bundle]`.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -32,6 +35,41 @@ pub struct Settings {
 	pub windows: Option<Value>,
 	/// Keys merged verbatim into the cargo-packager configuration.
 	pub packager: Option<Map<String, Value>>,
+	/// `[package.metadata.calcite.bundle.update]`, read by `--feed`.
+	#[cfg_attr(not(feature = "feed"), allow(dead_code))]
+	pub update: Option<Value>,
+}
+
+/// `[package.metadata.calcite.bundle.update]`: the calcite-update feed that `--feed` writes.
+#[cfg_attr(not(feature = "feed"), allow(dead_code))]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct UpdateSettings {
+	/// The feed channel. Default: `stable`.
+	#[serde(default = "default_channel")]
+	pub channel: String,
+	/// The HTTPS folder that hosts `update.json` and the packages. Required with `--feed`.
+	pub base_url: Option<String>,
+	/// The calcite-update key ID that the apps trust. Required with `--feed`.
+	pub key_id: Option<String>,
+	/// The oldest version that may keep running. Optional.
+	pub minimum_version: Option<String>,
+}
+
+#[cfg_attr(not(feature = "feed"), allow(dead_code))]
+fn default_channel() -> String {
+	"stable".to_string()
+}
+
+impl UpdateSettings {
+	/// The update table, or `None` when the manifest has none.
+	#[cfg_attr(not(feature = "feed"), allow(dead_code))]
+	pub fn from_settings(settings: &Settings, manifest: &str) -> Result<Option<Self>, String> {
+		match &settings.update {
+			Some(value) => from_table(value, UPDATE_TABLE, manifest).map(Some),
+			None => Ok(None),
+		}
+	}
 }
 
 /// `[package.metadata.calcite.bundle.macos]`: signing for the `.app` and DMG.
@@ -130,5 +168,37 @@ mod tests {
 			"{error}"
 		);
 		assert!(error.contains("signing-identty"), "{error}");
+	}
+
+	#[test]
+	fn an_update_table_keeps_its_keys_and_defaults_the_channel() {
+		let metadata = json!({ "calcite": { "bundle": {
+			"identifier": "dev.example.app",
+			"update": {
+				"base-url": "https://example.dev/app",
+				"key-id": "2026",
+				"minimum-version": "0.9.0",
+			},
+		} } });
+		let settings = Settings::from_metadata(&metadata, "/app/Cargo.toml").unwrap();
+		let update = UpdateSettings::from_settings(&settings, "/app/Cargo.toml")
+			.unwrap()
+			.unwrap();
+		assert_eq!(update.channel, "stable");
+		assert_eq!(update.base_url.as_deref(), Some("https://example.dev/app"));
+		assert_eq!(update.key_id.as_deref(), Some("2026"));
+		assert_eq!(update.minimum_version.as_deref(), Some("0.9.0"));
+	}
+
+	#[test]
+	fn an_unknown_key_in_the_update_table_names_the_table() {
+		let metadata = json!({ "calcite": { "bundle": {
+			"identifier": "dev.example.app",
+			"update": { "chanel": "beta" },
+		} } });
+		let settings = Settings::from_metadata(&metadata, "/app/Cargo.toml").unwrap();
+		let error = UpdateSettings::from_settings(&settings, "/app/Cargo.toml").unwrap_err();
+		assert!(error.contains(UPDATE_TABLE), "{error}");
+		assert!(error.contains("chanel"), "{error}");
 	}
 }

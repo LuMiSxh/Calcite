@@ -31,6 +31,12 @@
 //! certificate-thumbprint = "0123456789ABCDEF0123456789ABCDEF01234567"  # or CALCITE_SIGN_CERT
 //! timestamp-url = "http://timestamp.digicert.com"
 //!
+//! [package.metadata.calcite.bundle.update]  # optional: `--feed` writes a calcite-update feed
+//! base-url = "https://example.dev/releases/client"  # HTTPS folder that hosts the feed and packages
+//! key-id = "2026"                           # the key ID that the apps trust
+//! channel = "stable"                        # default: stable
+//! minimum-version = "0.9.0"                 # optional: older versions must update
+//!
 //! [package.metadata.calcite.bundle.packager] # optional: merged verbatim into cargo-packager's config
 //! deb = { depends = ["libgtk-3-0"] }
 //! ```
@@ -43,6 +49,11 @@
 //! and `APPLE_APP_PASSWORD`. A Windows certificate file needs `CALCITE_SIGN_CERT`, with
 //! `CALCITE_SIGN_PASSWORD` if it is protected. Credentials come from the environment only, and
 //! the `packager` table cannot override signing or notarization.
+//!
+//! `--feed` writes `update.json`, a signed calcite-update feed, beside the bundle that
+//! calcite-update installs: the `app`, `appimage`, or `exe` output. It needs the `feed` feature,
+//! `--sequence N`, and the Ed25519 seed in `CALCITE_UPDATE_KEY`. The feed lists the packages by
+//! file name, so clients resolve them next to `update.json` at `base-url`. It has no deltas.
 //!
 //! Prefer `APPLE_NOTARY_KEYCHAIN_PROFILE` and `certificate-thumbprint`. `notarytool` and
 //! `signtool` take the Apple app password and the PFX password only as command-line arguments,
@@ -66,6 +77,8 @@
 pub mod build;
 #[cfg(feature = "packager")]
 mod config;
+#[cfg(feature = "feed")]
+mod feed;
 #[cfg(feature = "packager")]
 mod icons;
 #[cfg(feature = "packager")]
@@ -78,4 +91,4 @@ mod sign;
 mod stage;
 
 #[cfg(feature = "packager")]
-pub use package::{Options, Output, Result, bundle};
+pub use package::{FeedOptions, Options, Output, Result, bundle};
