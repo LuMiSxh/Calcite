@@ -254,6 +254,8 @@ pub enum BackgroundTag {
     PatternSlash = 2,
     /// Alternating colored and transparent squares.
     Checkerboard = 3,
+    /// A two-stop radial gradient.
+    RadialGradient = 4,
 }
 
 /// A color space for color interpolation.
@@ -301,6 +303,15 @@ impl std::fmt::Debug for Background {
                 f,
                 "LinearGradient({}, {:?}, {:?})",
                 self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
+            ),
+            BackgroundTag::RadialGradient => write!(
+                f,
+                "RadialGradient(({}, {}), {}, {:?}, {:?})",
+                self.solid.h,
+                self.solid.s,
+                self.gradient_angle_or_pattern_height,
+                self.colors[0],
+                self.colors[1]
             ),
             BackgroundTag::PatternSlash => write!(
                 f,
@@ -386,7 +397,37 @@ pub fn linear_gradient(
     }
 }
 
-/// A color stop in a linear gradient.
+/// Creates a radial gradient background color.
+///
+/// `center` is relative to the painted bounds: `(0.5, 0.5)` is the middle and `(0., 0.)` the
+/// top-left corner. `radius` is a fraction of the shorter side of the bounds, so `0.5` reaches
+/// the edge of a centered circle in a square. The stops' percentages (0.0 to 1.0) are fractions
+/// of `radius`; the colors stay at the first or last stop outside that range.
+///
+/// The center is stored in the `h` and `s` fields of the unused solid color, and the radius in
+/// the field that holds the angle of a linear gradient, so the shader layout does not change.
+pub fn radial_gradient(
+    center: crate::Point<f32>,
+    radius: f32,
+    from: impl Into<LinearColorStop>,
+    to: impl Into<LinearColorStop>,
+) -> Background {
+    Background {
+        tag: BackgroundTag::RadialGradient,
+        solid: crate::SceneHsla {
+            h: center.x,
+            s: center.y,
+            l: 0.0,
+            a: 0.0,
+        },
+        gradient_angle_or_pattern_height: radius,
+        colors: [from.into(), to.into()],
+        color_space: ColorSpace::Oklab,
+        ..Default::default()
+    }
+}
+
+/// A color stop in a linear or radial gradient.
 ///
 /// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop>
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -431,6 +472,15 @@ pub enum BackgroundKind {
         /// The two ends of the gradient.
         stops: [LinearColorStop; 2],
     },
+    /// A radial gradient between two color stops.
+    RadialGradient {
+        /// The center, relative to the painted bounds.
+        center: crate::Point<f32>,
+        /// The radius, as a fraction of the shorter side of the painted bounds.
+        radius: f32,
+        /// The two ends of the gradient.
+        stops: [LinearColorStop; 2],
+    },
     /// A diagonal stripe pattern.
     PatternSlash {
         /// The stripe color.
@@ -465,6 +515,11 @@ impl Background {
             BackgroundTag::Solid => BackgroundKind::Solid(self.solid.into()),
             BackgroundTag::LinearGradient => BackgroundKind::LinearGradient {
                 angle: self.gradient_angle_or_pattern_height,
+                stops: self.colors,
+            },
+            BackgroundTag::RadialGradient => BackgroundKind::RadialGradient {
+                center: crate::point(self.solid.h, self.solid.s),
+                radius: self.gradient_angle_or_pattern_height,
                 stops: self.colors,
             },
             BackgroundTag::PatternSlash => {
@@ -516,7 +571,9 @@ impl Background {
     pub fn is_transparent(&self) -> bool {
         match self.tag {
             BackgroundTag::Solid => self.solid.a == 0.,
-            BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.a == 0.),
+            BackgroundTag::LinearGradient | BackgroundTag::RadialGradient => {
+                self.colors.iter().all(|c| c.color.a == 0.)
+            }
             BackgroundTag::PatternSlash => self.solid.a == 0.,
             BackgroundTag::Checkerboard => self.solid.a == 0.,
         }
@@ -561,6 +618,24 @@ mod tests {
 
         assert_eq!(background.opacity(0.5).colors[0], from.opacity(0.5));
         assert_eq!(background.opacity(0.5).colors[1], to.opacity(0.5));
+        assert!(!background.is_transparent());
+        assert!(background.opacity(0.0).is_transparent());
+    }
+
+    #[test]
+    fn test_background_radial_gradient() {
+        let from = linear_color_stop(rgba(0xff0099ff), 0.0);
+        let to = linear_color_stop(rgba(0x00ff99ff), 1.0);
+        let background = radial_gradient(crate::point(0.25, 0.75), 0.5, from, to);
+        assert_eq!(
+            background.kind(),
+            BackgroundKind::RadialGradient {
+                center: crate::point(0.25, 0.75),
+                radius: 0.5,
+                stops: [from, to],
+            }
+        );
+        assert_eq!(background.opacity(0.5).colors[0], from.opacity(0.5));
         assert!(!background.is_transparent());
         assert!(background.opacity(0.0).is_transparent());
     }

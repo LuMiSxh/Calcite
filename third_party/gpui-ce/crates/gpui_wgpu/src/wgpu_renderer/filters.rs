@@ -4,14 +4,15 @@ use gpui_render::{
     blur::{
         BlurAxis, BlurKernel, FilterCompositeClip, FilterCompositeParameters,
         GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS, ScissorRectangle, downsampled_dimension,
-        glass_sampling_margin,
+        drop_shadow_margin, glass_sampling_margin,
     },
     shaders::blur::BlurUniforms,
 };
 
 use super::{WgpuRenderer, begin_color_render_pass, pipelines};
 
-pub(super) const FILTER_UNIFORMS_PER_COMPOSITE: u64 = 4;
+/// Downsample, two blur passes, a composite, and the sharp copy over a drop shadow.
+pub(super) const FILTER_UNIFORMS_PER_COMPOSITE: u64 = 5;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct FrameUniformRequirements {
@@ -19,7 +20,7 @@ pub(super) struct FrameUniformRequirements {
     pub(super) surface_count: u64,
 }
 
-const _: () = assert!(std::mem::size_of::<BlurUniforms>() == 480);
+const _: () = assert!(std::mem::size_of::<BlurUniforms>() == 512);
 
 impl WgpuRenderer {
     fn make_blur_bind_group(
@@ -82,7 +83,8 @@ impl WgpuRenderer {
             downsampled_dimension(full_height) as f32,
         ];
         let dilation = GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * parameters.blur_radius
-            + glass_sampling_margin(parameters.glass);
+            + glass_sampling_margin(parameters.glass)
+            + drop_shadow_margin(parameters.drop_shadow);
         let scissor = ScissorRectangle::for_filter(
             parameters.bounds,
             parameters.content_mask,
@@ -150,7 +152,8 @@ impl WgpuRenderer {
             blur_size,
             [full_width as f32, full_height as f32],
         )
-        .with_glass(parameters.glass);
+        .with_glass(parameters.glass)
+        .with_drop_shadow(parameters.drop_shadow);
         let (bind_group, uniform_offset) = self.make_blur_bind_group(uniforms, &horizontal_target);
         let resources = self.resources();
         let pipeline = if uniforms.corner_smoothing > 0.0 {
@@ -172,6 +175,34 @@ impl WgpuRenderer {
             &[uniform_offset],
         );
         pass.draw(0..pipeline.fixed_vertex_count(), 0..1);
+        drop(pass);
+
+        if parameters.drop_shadow.is_some() {
+            let full_size = [full_width as f32, full_height as f32];
+            let uniforms = BlurUniforms::content_copy(
+                composite_bounds,
+                parameters.content_mask,
+                parameters.opacity,
+                full_size,
+            );
+            let (bind_group, uniform_offset) = self.make_blur_bind_group(uniforms, source);
+            let resources = self.resources();
+            let pipeline = &resources.pipelines.blur_composite;
+            let mut pass =
+                begin_color_render_pass(encoder, "content_copy", target, wgpu::LoadOp::Load);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(
+                shader_interface::GLOBAL_BIND_GROUP,
+                &resources.globals_bind_group,
+                &[],
+            );
+            pass.set_bind_group(
+                shader_interface::DATA_BIND_GROUP,
+                &bind_group,
+                &[uniform_offset],
+            );
+            pass.draw(0..pipeline.fixed_vertex_count(), 0..1);
+        }
     }
 
     pub(super) fn draw_backdrop_filter(
@@ -193,6 +224,7 @@ impl WgpuRenderer {
                 opacity: filter.opacity,
                 clip: FilterCompositeClip::RoundedBounds,
                 glass: filter.glass(),
+                drop_shadow: None,
             },
         );
     }

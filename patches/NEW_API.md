@@ -109,3 +109,50 @@ in `gpui_render/src/shaders/filters.rs` and compiled to MSL, WGSL and HLSL, so M
 No new public API. A cached view that is reused now carries over the element states it created
 while it rendered, so state such as a text field's cursor survives a frame in which only another
 view changed. The patch also fills the `Quad` fields that the debug overlay lacked.
+
+## 4. `0004-radial-gradient.patch`: radial gradient fill
+
+```rust
+pub fn radial_gradient(
+    center: Point<f32>,
+    radius: f32,
+    from: impl Into<LinearColorStop>,
+    to: impl Into<LinearColorStop>,
+) -> Background;
+// BackgroundTag::RadialGradient, BackgroundKind::RadialGradient { center, radius, stops }
+```
+
+Semantics
+
+- Use the result wherever a `Background` goes, for example `bg(..)`.
+- `center` is relative to the painted bounds: `(0.5, 0.5)` is the middle. `radius` is a fraction of
+  the shorter side of the bounds, so `0.5` reaches the edge of a centered circle in a square.
+- The stop percentages (0 to 1) are fractions of `radius`. Outside that range the colors stay at
+  the first or last stop. Colors blend in Oklab, as in `linear_gradient`.
+- Like `linear_gradient`, it takes two stops. The center and the radius use fields that a solid
+  color and a linear gradient leave unused, so the Metal, wgpu, and Direct3D layouts do not change.
+  The gradient code is in the shared shader source, so all three backends draw it.
+
+## 5. `0005-drop-shadow.patch`: alpha-shaped drop shadow
+
+```rust
+pub enum Filter { Blur(Pixels), Glass(GlassFilter), DropShadow(DropShadowFilter) }
+
+pub struct DropShadowFilter { pub offset: Point<Pixels>, pub blur: Pixels, pub color: [f32; 4] }
+impl DropShadowFilter { pub fn new(offset: Point<Pixels>, blur: Pixels, color: [f32; 4]) -> Self; }
+```
+
+Semantics
+
+- Use it as a content filter (`Styled::filter`). The element paints into an offscreen layer. The
+  layer draws a copy of its own alpha, shifted by `offset`, blurred, and tinted with `color`, then
+  draws the sharp layer over it. The shadow follows text, SVG, images, and shapes, not the box.
+- The color is straight-alpha sRGB. Its alpha scales the alpha of the content.
+- The blur uses the existing blur passes. Its radius is the largest blur radius of the filter
+  chain, so a `Filter::Blur` on the same element does not blur the content: it enlarges the shadow
+  blur. `blur = 0` still softens the edge by about one pixel.
+- If a chain has several drop shadows, the last one wins. As a backdrop filter, it acts as its blur.
+- Metal, wgpu (Linux), and Direct3D share the composite shader. Each backend adds one composite
+  pass for the sharp copy. `BlurUniforms` grows by 32 bytes.
+- Limitation: every element with a drop shadow costs an offscreen layer and the blur passes, so
+  use it on small content, not on a whole page.

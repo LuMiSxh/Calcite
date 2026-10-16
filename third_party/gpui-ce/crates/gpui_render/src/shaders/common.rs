@@ -14,6 +14,7 @@ mod source {
     pub const PATTERN_PACKING_RADIX: f32 = 65535.0;
     pub const MIN_NORMALIZED_WEIGHT: f32 = 0.00001;
     pub const MIN_PATH_GRADIENT: f32 = 0.001;
+    pub const MIN_RADIAL_GRADIENT_REACH: f32 = 0.001;
     pub const UNDERLINE_WAVE_FREQUENCY: f32 = 2.0;
     pub const UNDERLINE_WAVE_HEIGHT_RATIO: f32 = 0.8;
     pub const GRADIENT_DITHER_SCALE: f32 = 0.6180339887;
@@ -73,6 +74,7 @@ mod source {
         LinearGradient = 1,
         PatternSlash = 2,
         Checkerboard = 3,
+        RadialGradient = 4,
     }
 
     #[repr(u32)]
@@ -632,7 +634,9 @@ mod source {
     pub fn prepare_paint(paint: Paint) -> PreparedPaint {
         let mut prepared = PreparedPaint::new(transparent(), transparent(), transparent());
 
-        if paint.background.tag == BackgroundTag::LinearGradient {
+        if paint.background.tag == BackgroundTag::LinearGradient
+            || paint.background.tag == BackgroundTag::RadialGradient
+        {
             prepared.color0 = hsla_to_rgba(paint.background.colors[0usize].color);
             prepared.color1 = hsla_to_rgba(paint.background.colors[1usize].color);
             if paint.background.color_space == ColorSpace::Srgb {
@@ -687,8 +691,47 @@ mod source {
         )
     }
 
+    /// The center is relative to the bounds and stored in `solid.h` and `solid.s`; the radius is a
+    /// fraction of the shorter bounds side and stored in `gradient_angle_or_pattern_height`.
+    pub fn radial_gradient_ratio(paint: Paint, position: Vec2f) -> f32 {
+        let center = vec2f(
+            paint.bounds.origin.x + paint.background.solid.h * paint.bounds.size.x,
+            paint.bounds.origin.y + paint.background.solid.s * paint.bounds.size.y,
+        );
+        let reach = max(
+            paint.background.gradient_angle_or_pattern_height
+                * min(paint.bounds.size.x, paint.bounds.size.y),
+            MIN_RADIAL_GRADIENT_REACH,
+        );
+        let first_stop = paint.background.colors[0usize].percentage;
+        let last_stop = paint.background.colors[1usize].percentage;
+        saturate((length(position - center) / reach - first_stop) / (last_stop - first_stop))
+    }
+
     pub fn linear_gradient_color(paint: Paint, position: Vec2f, prepared: PreparedPaint) -> Vec4f {
-        let ratio = linear_gradient_ratio(paint, position);
+        gradient_color(
+            paint,
+            position,
+            prepared,
+            linear_gradient_ratio(paint, position),
+        )
+    }
+
+    pub fn radial_gradient_color(paint: Paint, position: Vec2f, prepared: PreparedPaint) -> Vec4f {
+        gradient_color(
+            paint,
+            position,
+            prepared,
+            radial_gradient_ratio(paint, position),
+        )
+    }
+
+    pub fn gradient_color(
+        paint: Paint,
+        position: Vec2f,
+        prepared: PreparedPaint,
+        ratio: f32,
+    ) -> Vec4f {
         let ratio4 = vec4f(ratio, ratio, ratio, ratio);
         let interpolated = mix(prepared.color0, prepared.color1, ratio4);
         let mut color = transparent();
@@ -736,6 +779,9 @@ mod source {
             }
             BackgroundTag::LinearGradient => {
                 color = linear_gradient_color(paint, position, prepared);
+            }
+            BackgroundTag::RadialGradient => {
+                color = radial_gradient_color(paint, position, prepared);
             }
             BackgroundTag::PatternSlash => {
                 color = slash_pattern_color(paint, position, prepared.solid);

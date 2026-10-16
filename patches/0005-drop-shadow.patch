@@ -1,0 +1,666 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Calcite <calcite@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 22:30:00 +0200
+Subject: [PATCH] feat(gpui): alpha-shaped drop shadow content filter
+
+Adds Filter::DropShadow. A content filter layer draws a blurred, offset, tinted copy of its own alpha, then the sharp layer over it. Metal, wgpu, and Direct3D share the composite shader and the blur passes of the glass patch; each backend adds one composite pass for the sharp copy. BlurUniforms grows by 32 bytes.
+
+diff --git a/crates/gpui/src/scene.rs b/crates/gpui/src/scene.rs
+index abfbaaf..86ed57d 100644
+--- a/crates/gpui/src/scene.rs
++++ b/crates/gpui/src/scene.rs
+@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
+ 
+ use crate::{
+     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Pixels, Point,
+-    Radians, ScaledFilter, ScaledGlass, ScaledGlassFilter, ScaledGlassGroup, ScaledPixels, Size,
+-    bounds_tree::BoundsTree, point,
++    Radians, ScaledDropShadow, ScaledFilter, ScaledGlass, ScaledGlassFilter, ScaledGlassGroup,
++    ScaledPixels, Size, bounds_tree::BoundsTree, point,
+ };
+ use smallvec::SmallVec;
+ use std::{
+@@ -943,6 +943,16 @@ impl FilterBoundary {
+     pub fn max_blur_radius(&self) -> f32 {
+         max_blur_radius(&self.filters)
+     }
++
++    /// The drop shadow drawn under the isolated content, if the chain has one. The last drop
++    /// shadow wins. The content itself stays sharp; the largest blur radius of the chain is the
++    /// blur of the shadow.
++    pub fn drop_shadow(&self) -> Option<ScaledDropShadow> {
++        self.filters.iter().rev().find_map(|filter| match filter {
++            ScaledFilter::DropShadow(shadow) => Some(*shadow),
++            ScaledFilter::Blur(_) | ScaledFilter::Glass(_) => None,
++        })
++    }
+ }
+ 
+ /// Returns the largest blur radius in a scene-space filter chain.
+@@ -954,13 +964,15 @@ fn max_blur_radius(filters: &[ScaledFilter]) -> f32 {
+         ScaledFilter::Blur(filter_radius) => radius.max(filter_radius.0),
+         // The renderer needs a blur pass to sample from, so glass always blurs a little.
+         ScaledFilter::Glass(glass) => radius.max(glass.blur.0.max(1.0)),
++        // A hard shadow still needs the blur passes to read the content alpha from.
++        ScaledFilter::DropShadow(shadow) => radius.max(shadow.blur.0.max(1.0)),
+     })
+ }
+ 
+ /// The glass material of a filter chain, if any. The last glass filter wins.
+ fn glass_filter(filters: &[ScaledFilter]) -> Option<ScaledGlassFilter> {
+     filters.iter().rev().find_map(|filter| match filter {
+-        ScaledFilter::Blur(_) => None,
++        ScaledFilter::Blur(_) | ScaledFilter::DropShadow(_) => None,
+         ScaledFilter::Glass(glass) => Some(*glass),
+     })
+ }
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index 342b547..a5da669 100644
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -559,6 +559,63 @@ pub enum Filter {
+     /// saturation, a fill, a Fresnel rim, a specular highlight, and an optional pointer light.
+     /// Only meaningful as a backdrop filter; as a content filter it acts as its blur.
+     Glass(GlassFilter),
++    /// A shadow that follows the alpha of the element's painted content (text, images, SVG,
++    /// shapes). Only meaningful as a content filter; as a backdrop filter it acts as its blur.
++    DropShadow(DropShadowFilter),
++}
++
++/// Parameters of [`Filter::DropShadow`], in logical pixels. The color is straight-alpha sRGB.
++#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
++pub struct DropShadowFilter {
++    /// How far the shadow is shifted from the content.
++    pub offset: Point<Pixels>,
++    /// Gaussian blur radius of the shadow. `0` still softens the edge by about a pixel.
++    pub blur: Pixels,
++    /// The shadow color. Its alpha scales the alpha of the content.
++    pub color: [f32; 4],
++}
++
++impl DropShadowFilter {
++    /// A drop shadow of `color`, shifted by `offset` and blurred by `blur`.
++    pub fn new(offset: Point<Pixels>, blur: Pixels, color: [f32; 4]) -> Self {
++        Self {
++            offset,
++            blur,
++            color,
++        }
++    }
++
++    fn scale(&self, factor: f32) -> ScaledDropShadow {
++        ScaledDropShadow {
++            offset: self.offset.scale(factor),
++            blur: self.blur.scale(factor),
++            color: self.color,
++        }
++    }
++}
++
++/// The scene-space form of [`DropShadowFilter`]: lengths in device pixels.
++#[derive(Clone, Copy, Debug, PartialEq)]
++#[expect(missing_docs)]
++pub struct ScaledDropShadow {
++    pub offset: Point<ScaledPixels>,
++    pub blur: ScaledPixels,
++    pub color: [f32; 4],
++}
++
++impl ScaledDropShadow {
++    /// Applies a uniform paint transform: lengths scale. The offset is a vector, so the
++    /// translation does not apply to it.
++    pub fn transformed(&self, scale: f32) -> Self {
++        Self {
++            offset: Point {
++                x: self.offset.x * scale,
++                y: self.offset.y * scale,
++            },
++            blur: self.blur * scale,
++            ..*self
++        }
++    }
+ }
+ 
+ /// Parameters of [`Filter::Glass`], in logical pixels. Colors are straight-alpha sRGB.
+@@ -839,6 +896,7 @@ impl ScaledFilter {
+             ScaledFilter::Glass(glass) => {
+                 ScaledFilter::Glass(glass.transformed(scale, translation))
+             }
++            ScaledFilter::DropShadow(shadow) => ScaledFilter::DropShadow(shadow.transformed(scale)),
+         }
+     }
+ }
+@@ -854,6 +912,7 @@ impl Filter {
+         match self {
+             Filter::Blur(radius) => *radius <= Pixels::ZERO,
+             Filter::Glass(_) => false,
++            Filter::DropShadow(shadow) => shadow.color[3] <= 0.0,
+         }
+     }
+ 
+@@ -863,6 +922,7 @@ impl Filter {
+         match self {
+             Filter::Blur(radius) => ScaledFilter::Blur(radius.scale(factor)),
+             Filter::Glass(glass) => ScaledFilter::Glass(glass.scale(factor)),
++            Filter::DropShadow(shadow) => ScaledFilter::DropShadow(shadow.scale(factor)),
+         }
+     }
+ }
+@@ -880,6 +940,8 @@ pub enum ScaledFilter {
+     Blur(ScaledPixels),
+     /// A refractive glass material; see [`Filter::Glass`].
+     Glass(ScaledGlassFilter),
++    /// A shadow that follows the alpha of the content; see [`Filter::DropShadow`].
++    DropShadow(ScaledDropShadow),
+ }
+ 
+ /// How to handle whitespace in text
+diff --git a/crates/gpui_apple/src/metal_renderer.rs b/crates/gpui_apple/src/metal_renderer.rs
+index 376f867..7837369 100644
+--- a/crates/gpui_apple/src/metal_renderer.rs
++++ b/crates/gpui_apple/src/metal_renderer.rs
+@@ -11,7 +11,7 @@ use gpui_render::{
+     artifacts::{NATIVE_SHADERS, NativeShader},
+     blur::{
+         BlurAxis, BlurKernel, BlurUniforms, GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS, ScissorRectangle,
+-        downsampled_dimension,
++        downsampled_dimension, drop_shadow_margin,
+     },
+     path_types::{self, PathRasterizationVertex},
+     shaders::{
+@@ -1052,6 +1052,7 @@ impl MetalRenderer {
+                                 filter.opacity,
+                                 true,
+                                 filter.glass(),
++                                None,
+                             );
+                         }
+                     }
+@@ -1113,6 +1114,7 @@ impl MetalRenderer {
+                             boundary.opacity,
+                             false,
+                             None,
++                            boundary.drop_shadow(),
+                         );
+                     }
+                     current_target = parent;
+@@ -1270,6 +1272,8 @@ impl MetalRenderer {
+         // Backdrop clips to the rounded rect; content (`filter`) bleeds past its bounds.
+         clip_rounded: bool,
+         glass: Option<gpui::ScaledGlass>,
++        // Content filters only: a shadow of the blurred alpha under the sharp `source`.
++        drop_shadow: Option<gpui::ScaledDropShadow>,
+     ) {
+         let Some(kernel) = BlurKernel::for_radius(blur_radius) else {
+             return;
+@@ -1285,7 +1289,8 @@ impl MetalRenderer {
+             height: DevicePixels(blur_size[1] as i32),
+         };
+         let dilation = GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * blur_radius
+-            + gpui_render::blur::glass_sampling_margin(glass);
++            + gpui_render::blur::glass_sampling_margin(glass)
++            + drop_shadow_margin(drop_shadow);
+         let clip = if clip_rounded {
+             gpui_render::blur::FilterCompositeClip::RoundedBounds
+         } else {
+@@ -1360,7 +1365,8 @@ impl MetalRenderer {
+             blur_size,
+             [full_width as f32, full_height as f32],
+         )
+-        .with_glass(glass);
++        .with_glass(glass)
++        .with_drop_shadow(drop_shadow);
+         let encoder = new_command_encoder_for_texture(
+             command_buffer,
+             target,
+@@ -1390,6 +1396,40 @@ impl MetalRenderer {
+         encoder.set_fragment_sampler_state(SAMPLER_SLOT, Some(&self.sampler));
+         encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
+         encoder.end_encoding();
++
++        if drop_shadow.is_some() {
++            // The sharp content over its shadow.
++            let copy_uniforms = BlurUniforms::content_copy(
++                composite_bounds,
++                content_mask,
++                opacity,
++                [full_width as f32, full_height as f32],
++            );
++            let encoder = new_command_encoder_for_texture(
++                command_buffer,
++                target,
++                viewport_size,
++                |color_attachment| {
++                    color_attachment.set_load_action(metal::MTLLoadAction::Load);
++                },
++            );
++            encoder.set_render_pipeline_state(&self.blur_composite_pipeline_state);
++            bind_scene_uniforms(encoder, scene_uniforms);
++            encoder.set_vertex_bytes(
++                DATA_SLOT,
++                mem::size_of::<BlurUniforms>() as u64,
++                &copy_uniforms as *const BlurUniforms as *const _,
++            );
++            encoder.set_fragment_bytes(
++                DATA_SLOT,
++                mem::size_of::<BlurUniforms>() as u64,
++                &copy_uniforms as *const BlurUniforms as *const _,
++            );
++            encoder.set_fragment_texture(PRIMARY_TEXTURE_SLOT, Some(source));
++            encoder.set_fragment_sampler_state(SAMPLER_SLOT, Some(&self.sampler));
++            encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
++            encoder.end_encoding();
++        }
+     }
+ 
+     fn draw_paths_to_intermediate(
+@@ -2681,6 +2721,75 @@ mod tests {
+         assert_eq!(corner[3], 255, "shadow corner alpha: {corner:?}");
+     }
+ 
++    #[test]
++    fn generated_drop_shadow_follows_content_alpha() {
++        let mut renderer = MetalHeadlessRenderer::new();
++        let full = Bounds {
++            origin: gpui::point(ScaledPixels(0.0), ScaledPixels(0.0)),
++            size: Size {
++                width: ScaledPixels(32.0),
++                height: ScaledPixels(32.0),
++            },
++        };
++        let content = Bounds {
++            origin: gpui::point(ScaledPixels(4.0), ScaledPixels(4.0)),
++            size: Size {
++                width: ScaledPixels(8.0),
++                height: ScaledPixels(8.0),
++            },
++        };
++        let content_mask = ContentMask {
++            bounds: full,
++            ..Default::default()
++        };
++        let boundary = gpui::FilterBoundary {
++            order: 0,
++            bounds: content,
++            content_mask: content_mask.clone(),
++            corner_radii: Corners::default(),
++            corner_smoothing: 0.0,
++            filters: smallvec::smallvec![ScaledFilter::DropShadow(gpui::ScaledDropShadow {
++                offset: gpui::point(ScaledPixels(12.0), ScaledPixels(12.0)),
++                blur: ScaledPixels(2.0),
++                color: [0.0, 0.0, 1.0, 1.0],
++            })],
++            opacity: 1.0,
++            is_start: true,
++        };
++        let mut scene = Scene::default();
++        scene.insert_primitive(boundary.clone());
++        scene.insert_primitive(Quad {
++            bounds: content,
++            content_mask,
++            background: gpui::hsla(0.0, 1.0, 0.5, 1.0).into(),
++            ..Default::default()
++        });
++        scene.insert_primitive(gpui::FilterBoundary {
++            is_start: false,
++            ..boundary
++        });
++        scene.finish();
++        let Some(image) = render_for_contracts(
++            &mut renderer,
++            &scene,
++            Size {
++                width: DevicePixels(32),
++                height: DevicePixels(32),
++            },
++        ) else {
++            return;
++        };
++        // The content stays sharp, the shadow sits at the offset content, and the rest is clear.
++        let sharp = pixel(&image, 8, 8);
++        assert!(sharp[0] > 200 && sharp[2] < 60, "sharp content: {sharp:?}");
++        let shadow = pixel(&image, 20, 20);
++        assert!(
++            shadow[2] > 150 && shadow[0] < 60,
++            "shadow at the offset: {shadow:?}"
++        );
++        assert_pixel_close(&image, 28, 4, [0, 0, 0, 255], 2, "clear outside the shadow");
++    }
++
+     #[test]
+     fn generated_blur_shader_softens_backdrop() {
+         let mut renderer = MetalHeadlessRenderer::new();
+diff --git a/crates/gpui_render/src/blur.rs b/crates/gpui_render/src/blur.rs
+index 7638cbe..2ce25d8 100644
+--- a/crates/gpui_render/src/blur.rs
++++ b/crates/gpui_render/src/blur.rs
+@@ -5,7 +5,7 @@ pub use crate::shaders::{
+         Corners as ShaderCorners, DownsampleMode,
+     },
+ };
+-use gpui::{Bounds, Corners, ScaledGlass, ScaledPixels};
++use gpui::{Bounds, Corners, ScaledDropShadow, ScaledGlass, ScaledPixels};
+ use wgsl_rs::std::{vec2f, vec4f};
+ 
+ pub const DOWNSAMPLE_FACTOR: u32 = 2;
+@@ -41,6 +41,16 @@ pub struct FilterCompositeParameters {
+     pub clip: FilterCompositeClip,
+     /// Composites refractive glass instead of the plain blur.
+     pub glass: Option<ScaledGlass>,
++    /// Draws a tinted, shifted copy of the blurred alpha, then the sharp source, instead of the
++    /// blurred source. Content filters only.
++    pub drop_shadow: Option<ScaledDropShadow>,
++}
++
++/// Extra margin a drop shadow adds around the blurred bounds: the shadow moves by its offset.
++pub fn drop_shadow_margin(shadow: Option<ScaledDropShadow>) -> f32 {
++    shadow.map_or(0.0, |shadow| {
++        shadow.offset.x.0.abs().max(shadow.offset.y.0.abs())
++    })
+ }
+ 
+ /// Extra blurred margin a glass composite samples beyond its bounds.
+@@ -135,6 +145,37 @@ impl BlurUniforms {
+ }
+ 
+ impl BlurUniforms {
++    /// Turns a composite into the shadow of the blurred source. `None` keeps the plain blur.
++    pub fn with_drop_shadow(mut self, shadow: Option<ScaledDropShadow>) -> Self {
++        let Some(shadow) = shadow else {
++            return self;
++        };
++        let [r, g, b, a] = shadow.color;
++        self.shadow_color = vec4f(r, g, b, a.clamp(0.0, 1.0));
++        self.shadow_offset = vec4f(shadow.offset.x.0, shadow.offset.y.0, 1.0, 0.0);
++        self
++    }
++
++    /// Composites the full-resolution source as it is, over a drop shadow. It has no corner
++    /// rounding: a content filter does not clip to its shape.
++    pub fn content_copy(
++        bounds: Bounds<ScaledPixels>,
++        content_mask: Bounds<ScaledPixels>,
++        opacity: f32,
++        size: [f32; 2],
++    ) -> Self {
++        Self::composite(
++            bounds,
++            content_mask,
++            Corners::default(),
++            0.0,
++            opacity,
++            FilterCompositeClip::ContentShape,
++            size,
++            size,
++        )
++    }
++
+     /// Enables the glass branch of the composite shader. `None` keeps the plain blur.
+     pub fn with_glass(mut self, glass: Option<ScaledGlass>) -> Self {
+         let Some(ScaledGlass {
+@@ -325,6 +366,8 @@ fn empty_uniforms(downsample_mode: DownsampleMode) -> BlurUniforms {
+         glass_rects: [vec4f(0.0, 0.0, 0.0, 0.0); 8],
+         glass_radii: [vec4f(0.0, 0.0, 0.0, 0.0); 8],
+         glass_border: vec4f(0.0, 0.0, 0.0, 0.0),
++        shadow_color: vec4f(0.0, 0.0, 0.0, 0.0),
++        shadow_offset: vec4f(0.0, 0.0, 0.0, 0.0),
+     }
+ }
+ 
+diff --git a/crates/gpui_render/src/shaders/filters.rs b/crates/gpui_render/src/shaders/filters.rs
+index a2949d1..b2f73db 100644
+--- a/crates/gpui_render/src/shaders/filters.rs
++++ b/crates/gpui_render/src/shaders/filters.rs
+@@ -127,6 +127,10 @@ pub mod blur {
+         pub glass_radii: [Vec4f; 8],
+         /// Straight-alpha outline colour of the combined group shape (width in `glass_group.z`).
+         pub glass_border: Vec4f,
++        /// Straight-alpha drop shadow color. Used when `shadow_offset.z` is 1.
++        pub shadow_color: Vec4f,
++        /// xy: shadow offset in target pixels, z: 1 when the composite draws a drop shadow.
++        pub shadow_offset: Vec4f,
+     }
+     uniform!(group(1), binding(0), BLUR_LOCALS: BlurUniforms);
+     texture!(group(1), binding(1), BLUR_TEXTURE: Texture2D<f32>);
+@@ -291,10 +295,32 @@ pub mod blur {
+         )
+     }
+ 
++    /// The blurred alpha of the content, shifted by the offset and tinted with the shadow color.
++    /// The sharp content is composited over it by a second pass.
++    pub fn drop_shadow_composite_color(position: Vec2f, coverage: f32) -> Vec4f {
++        let locals = get!(BLUR_LOCALS);
++        let blurred = texture_sample_level(
++            BLUR_TEXTURE,
++            BLUR_SAMPLER,
++            (position - locals.shadow_offset.xy()) / locals.target_size,
++            0.0,
++        );
++        let alpha = blurred.w * locals.shadow_color.w * coverage * locals.opacity;
++        vec4f(
++            locals.shadow_color.x * alpha,
++            locals.shadow_color.y * alpha,
++            locals.shadow_color.z * alpha,
++            alpha,
++        )
++    }
++
+     pub fn blur_composite_color(position: Vec2f, coverage: f32) -> Vec4f {
+         if get!(BLUR_LOCALS).glass_shape.w > 0.5 {
+             return glass_composite_color(position, coverage);
+         }
++        if get!(BLUR_LOCALS).shadow_offset.z > 0.5 {
++            return drop_shadow_composite_color(position, coverage);
++        }
+         let blurred = texture_sample_level(
+             BLUR_TEXTURE,
+             BLUR_SAMPLER,
+diff --git a/crates/gpui_render/src/shaders/interface.rs b/crates/gpui_render/src/shaders/interface.rs
+index 98d9b5b..ad631c1 100644
+--- a/crates/gpui_render/src/shaders/interface.rs
++++ b/crates/gpui_render/src/shaders/interface.rs
+@@ -239,7 +239,9 @@ pub const RENDER_BUFFER_LAYOUTS: &[gpui::SceneBufferLayout] = &[
+         glass_group,
+         glass_rects,
+         glass_radii,
+-        glass_border
++        glass_border,
++        shadow_color,
++        shadow_offset
+     ),
+     render_layout!(crate::path_types::PathSprite, "PathSprite", bounds),
+     render_layout!(
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer/filters.rs b/crates/gpui_wgpu/src/wgpu_renderer/filters.rs
+index 6ca7f9c..5ce3549 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer/filters.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer/filters.rs
+@@ -4,14 +4,15 @@ use gpui_render::{
+     blur::{
+         BlurAxis, BlurKernel, FilterCompositeClip, FilterCompositeParameters,
+         GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS, ScissorRectangle, downsampled_dimension,
+-        glass_sampling_margin,
++        drop_shadow_margin, glass_sampling_margin,
+     },
+     shaders::blur::BlurUniforms,
+ };
+ 
+ use super::{WgpuRenderer, begin_color_render_pass, pipelines};
+ 
+-pub(super) const FILTER_UNIFORMS_PER_COMPOSITE: u64 = 4;
++/// Downsample, two blur passes, a composite, and the sharp copy over a drop shadow.
++pub(super) const FILTER_UNIFORMS_PER_COMPOSITE: u64 = 5;
+ 
+ #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+ pub(super) struct FrameUniformRequirements {
+@@ -19,7 +20,7 @@ pub(super) struct FrameUniformRequirements {
+     pub(super) surface_count: u64,
+ }
+ 
+-const _: () = assert!(std::mem::size_of::<BlurUniforms>() == 480);
++const _: () = assert!(std::mem::size_of::<BlurUniforms>() == 512);
+ 
+ impl WgpuRenderer {
+     fn make_blur_bind_group(
+@@ -82,7 +83,8 @@ impl WgpuRenderer {
+             downsampled_dimension(full_height) as f32,
+         ];
+         let dilation = GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * parameters.blur_radius
+-            + glass_sampling_margin(parameters.glass);
++            + glass_sampling_margin(parameters.glass)
++            + drop_shadow_margin(parameters.drop_shadow);
+         let scissor = ScissorRectangle::for_filter(
+             parameters.bounds,
+             parameters.content_mask,
+@@ -150,7 +152,8 @@ impl WgpuRenderer {
+             blur_size,
+             [full_width as f32, full_height as f32],
+         )
+-        .with_glass(parameters.glass);
++        .with_glass(parameters.glass)
++        .with_drop_shadow(parameters.drop_shadow);
+         let (bind_group, uniform_offset) = self.make_blur_bind_group(uniforms, &horizontal_target);
+         let resources = self.resources();
+         let pipeline = if uniforms.corner_smoothing > 0.0 {
+@@ -172,6 +175,34 @@ impl WgpuRenderer {
+             &[uniform_offset],
+         );
+         pass.draw(0..pipeline.fixed_vertex_count(), 0..1);
++        drop(pass);
++
++        if parameters.drop_shadow.is_some() {
++            let full_size = [full_width as f32, full_height as f32];
++            let uniforms = BlurUniforms::content_copy(
++                composite_bounds,
++                parameters.content_mask,
++                parameters.opacity,
++                full_size,
++            );
++            let (bind_group, uniform_offset) = self.make_blur_bind_group(uniforms, source);
++            let resources = self.resources();
++            let pipeline = &resources.pipelines.blur_composite;
++            let mut pass =
++                begin_color_render_pass(encoder, "content_copy", target, wgpu::LoadOp::Load);
++            pass.set_pipeline(pipeline);
++            pass.set_bind_group(
++                shader_interface::GLOBAL_BIND_GROUP,
++                &resources.globals_bind_group,
++                &[],
++            );
++            pass.set_bind_group(
++                shader_interface::DATA_BIND_GROUP,
++                &bind_group,
++                &[uniform_offset],
++            );
++            pass.draw(0..pipeline.fixed_vertex_count(), 0..1);
++        }
+     }
+ 
+     pub(super) fn draw_backdrop_filter(
+@@ -193,6 +224,7 @@ impl WgpuRenderer {
+                 opacity: filter.opacity,
+                 clip: FilterCompositeClip::RoundedBounds,
+                 glass: filter.glass(),
++                drop_shadow: None,
+             },
+         );
+     }
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer/frame.rs b/crates/gpui_wgpu/src/wgpu_renderer/frame.rs
+index fa11d76..da1f85d 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer/frame.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer/frame.rs
+@@ -482,6 +482,7 @@ impl<'a> FrameEncoder<'a> {
+                             opacity: boundary.opacity,
+                             clip: FilterCompositeClip::ContentShape,
+                             glass: None,
++                            drop_shadow: boundary.drop_shadow(),
+                         },
+                     );
+                     pass = begin_scene_render_pass(
+diff --git a/crates/gpui_windows/src/directx_renderer.rs b/crates/gpui_windows/src/directx_renderer.rs
+index 9037b5c..2e55f20 100644
+--- a/crates/gpui_windows/src/directx_renderer.rs
++++ b/crates/gpui_windows/src/directx_renderer.rs
+@@ -11,7 +11,7 @@ use gpui_render::{
+     blur::{
+         BlurAxis, BlurKernel, BlurUniforms, FilterCompositeClip,
+         GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS, ScissorRectangle, downsampled_dimension,
+-        glass_sampling_margin,
++        drop_shadow_margin, glass_sampling_margin,
+     },
+     path_types::{PathRasterizationVertex, PathSprite},
+     shaders::{
+@@ -700,6 +700,7 @@ impl DirectXRenderer {
+                                 filter.opacity,
+                                 true,
+                                 filter.glass(),
++                                None,
+                             )?;
+                         }
+                         Ok::<(), anyhow::Error>(())
+@@ -746,6 +747,7 @@ impl DirectXRenderer {
+                         boundary.opacity,
+                         false,
+                         None,
++                        boundary.drop_shadow(),
+                     );
+                     current_rtv = parent_rtv;
+                     current_srv = parent_srv;
+@@ -1333,6 +1335,8 @@ impl DirectXRenderer {
+         // Backdrop clips to the rounded rect; content (`filter`) bleeds past its bounds.
+         clip_rounded: bool,
+         glass: Option<ScaledGlass>,
++        // Content filters only: a shadow of the blurred alpha under the sharp `source_srv`.
++        drop_shadow: Option<ScaledDropShadow>,
+     ) -> Result<()> {
+         let full_width = self.width;
+         let full_height = self.height;
+@@ -1373,8 +1377,9 @@ impl DirectXRenderer {
+         // Blur only the half-res region the composite samples: the bounds plus the gaussian
+         // tail and the glass refraction offset. A full-window pass per filter made every glass
+         // control cost three passes over the whole window.
+-        let dilation =
+-            GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * blur_radius + glass_sampling_margin(glass);
++        let dilation = GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * blur_radius
++            + glass_sampling_margin(glass)
++            + drop_shadow_margin(drop_shadow);
+         let scissor = ScissorRectangle::for_filter(
+             bounds,
+             content_mask,
+@@ -1444,7 +1449,8 @@ impl DirectXRenderer {
+             blur_size,
+             [full_width as f32, full_height as f32],
+         )
+-        .with_glass(glass);
++        .with_glass(glass)
++        .with_drop_shadow(drop_shadow);
+         let (composite_vertex, composite_fragment) = if composite_uniforms.corner_smoothing > 0.0 {
+             (
+                 &self.pipelines.smoothed_blur_composite_vertex,
+@@ -1470,6 +1476,27 @@ impl DirectXRenderer {
+             false,
+             None,
+         )?;
++        if drop_shadow.is_some() {
++            // The sharp content over its shadow.
++            self.dx_blur_pass(
++                &self.pipelines.blur_composite_vertex,
++                &self.pipelines.blur_composite_fragment,
++                &self.pipelines.blur_blend_composite,
++                target_rtv,
++                source_srv,
++                BlurUniforms::content_copy(
++                    composite_bounds,
++                    content_mask,
++                    opacity,
++                    [full_width as f32, full_height as f32],
++                ),
++                &full_vp,
++                D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
++                4,
++                false,
++                None,
++            )?;
++        }
+         Ok(())
+     }
+ 

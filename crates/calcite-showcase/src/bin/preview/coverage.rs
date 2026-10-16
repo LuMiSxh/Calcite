@@ -245,6 +245,16 @@ pub const COVERAGE: &[Row] = &[
 		Kind::Menus,
 		"attached_surface(id).open(open).placement(Placement::Down).trigger(f).body(size, radius, f)",
 	),
+	(
+		"radial_gradient",
+		Kind::Effects,
+		"div().bg(radial_gradient(point(0.5, 0.5), 0.6, from, to))",
+	),
+	(
+		"text_shadow",
+		Kind::Effects,
+		"text_shadow(text).offset(point(px(0.), px(2.))).blur(px(4.)).color(color)",
+	),
 ];
 
 /// Prelude names that are not components: helpers and modules.
@@ -274,6 +284,7 @@ fn files(kind: Kind) -> &'static [&'static str] {
 		Kind::Icons => &[include_str!("icon_search.rs")],
 		Kind::Typography => &[include_str!("typography.rs")],
 		Kind::Style | Kind::Glow => &[include_str!("style_demo.rs")],
+		Kind::Effects => &[include_str!("effects.rs")],
 		Kind::MotionLab => &[include_str!("motion_lab.rs")],
 	}
 }

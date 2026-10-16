@@ -127,6 +127,10 @@ pub mod blur {
         pub glass_radii: [Vec4f; 8],
         /// Straight-alpha outline colour of the combined group shape (width in `glass_group.z`).
         pub glass_border: Vec4f,
+        /// Straight-alpha drop shadow color. Used when `shadow_offset.z` is 1.
+        pub shadow_color: Vec4f,
+        /// xy: shadow offset in target pixels, z: 1 when the composite draws a drop shadow.
+        pub shadow_offset: Vec4f,
     }
     uniform!(group(1), binding(0), BLUR_LOCALS: BlurUniforms);
     texture!(group(1), binding(1), BLUR_TEXTURE: Texture2D<f32>);
@@ -291,9 +295,31 @@ pub mod blur {
         )
     }
 
+    /// The blurred alpha of the content, shifted by the offset and tinted with the shadow color.
+    /// The sharp content is composited over it by a second pass.
+    pub fn drop_shadow_composite_color(position: Vec2f, coverage: f32) -> Vec4f {
+        let locals = get!(BLUR_LOCALS);
+        let blurred = texture_sample_level(
+            BLUR_TEXTURE,
+            BLUR_SAMPLER,
+            (position - locals.shadow_offset.xy()) / locals.target_size,
+            0.0,
+        );
+        let alpha = blurred.w * locals.shadow_color.w * coverage * locals.opacity;
+        vec4f(
+            locals.shadow_color.x * alpha,
+            locals.shadow_color.y * alpha,
+            locals.shadow_color.z * alpha,
+            alpha,
+        )
+    }
+
     pub fn blur_composite_color(position: Vec2f, coverage: f32) -> Vec4f {
         if get!(BLUR_LOCALS).glass_shape.w > 0.5 {
             return glass_composite_color(position, coverage);
+        }
+        if get!(BLUR_LOCALS).shadow_offset.z > 0.5 {
+            return drop_shadow_composite_color(position, coverage);
         }
         let blurred = texture_sample_level(
             BLUR_TEXTURE,

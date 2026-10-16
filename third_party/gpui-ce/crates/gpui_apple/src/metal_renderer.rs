@@ -11,7 +11,7 @@ use gpui_render::{
     artifacts::{NATIVE_SHADERS, NativeShader},
     blur::{
         BlurAxis, BlurKernel, BlurUniforms, GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS, ScissorRectangle,
-        downsampled_dimension,
+        downsampled_dimension, drop_shadow_margin,
     },
     path_types::{self, PathRasterizationVertex},
     shaders::{
@@ -1052,6 +1052,7 @@ impl MetalRenderer {
                                 filter.opacity,
                                 true,
                                 filter.glass(),
+                                None,
                             );
                         }
                     }
@@ -1113,6 +1114,7 @@ impl MetalRenderer {
                             boundary.opacity,
                             false,
                             None,
+                            boundary.drop_shadow(),
                         );
                     }
                     current_target = parent;
@@ -1270,6 +1272,8 @@ impl MetalRenderer {
         // Backdrop clips to the rounded rect; content (`filter`) bleeds past its bounds.
         clip_rounded: bool,
         glass: Option<gpui::ScaledGlass>,
+        // Content filters only: a shadow of the blurred alpha under the sharp `source`.
+        drop_shadow: Option<gpui::ScaledDropShadow>,
     ) {
         let Some(kernel) = BlurKernel::for_radius(blur_radius) else {
             return;
@@ -1285,7 +1289,8 @@ impl MetalRenderer {
             height: DevicePixels(blur_size[1] as i32),
         };
         let dilation = GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * blur_radius
-            + gpui_render::blur::glass_sampling_margin(glass);
+            + gpui_render::blur::glass_sampling_margin(glass)
+            + drop_shadow_margin(drop_shadow);
         let clip = if clip_rounded {
             gpui_render::blur::FilterCompositeClip::RoundedBounds
         } else {
@@ -1360,7 +1365,8 @@ impl MetalRenderer {
             blur_size,
             [full_width as f32, full_height as f32],
         )
-        .with_glass(glass);
+        .with_glass(glass)
+        .with_drop_shadow(drop_shadow);
         let encoder = new_command_encoder_for_texture(
             command_buffer,
             target,
@@ -1390,6 +1396,40 @@ impl MetalRenderer {
         encoder.set_fragment_sampler_state(SAMPLER_SLOT, Some(&self.sampler));
         encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
         encoder.end_encoding();
+
+        if drop_shadow.is_some() {
+            // The sharp content over its shadow.
+            let copy_uniforms = BlurUniforms::content_copy(
+                composite_bounds,
+                content_mask,
+                opacity,
+                [full_width as f32, full_height as f32],
+            );
+            let encoder = new_command_encoder_for_texture(
+                command_buffer,
+                target,
+                viewport_size,
+                |color_attachment| {
+                    color_attachment.set_load_action(metal::MTLLoadAction::Load);
+                },
+            );
+            encoder.set_render_pipeline_state(&self.blur_composite_pipeline_state);
+            bind_scene_uniforms(encoder, scene_uniforms);
+            encoder.set_vertex_bytes(
+                DATA_SLOT,
+                mem::size_of::<BlurUniforms>() as u64,
+                &copy_uniforms as *const BlurUniforms as *const _,
+            );
+            encoder.set_fragment_bytes(
+                DATA_SLOT,
+                mem::size_of::<BlurUniforms>() as u64,
+                &copy_uniforms as *const BlurUniforms as *const _,
+            );
+            encoder.set_fragment_texture(PRIMARY_TEXTURE_SLOT, Some(source));
+            encoder.set_fragment_sampler_state(SAMPLER_SLOT, Some(&self.sampler));
+            encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
+            encoder.end_encoding();
+        }
     }
 
     fn draw_paths_to_intermediate(
@@ -2679,6 +2719,75 @@ mod tests {
         // The opaque headless target composites over black, so alpha stays 1.
         assert_eq!(center[3], 255, "shadow center alpha: {center:?}");
         assert_eq!(corner[3], 255, "shadow corner alpha: {corner:?}");
+    }
+
+    #[test]
+    fn generated_drop_shadow_follows_content_alpha() {
+        let mut renderer = MetalHeadlessRenderer::new();
+        let full = Bounds {
+            origin: gpui::point(ScaledPixels(0.0), ScaledPixels(0.0)),
+            size: Size {
+                width: ScaledPixels(32.0),
+                height: ScaledPixels(32.0),
+            },
+        };
+        let content = Bounds {
+            origin: gpui::point(ScaledPixels(4.0), ScaledPixels(4.0)),
+            size: Size {
+                width: ScaledPixels(8.0),
+                height: ScaledPixels(8.0),
+            },
+        };
+        let content_mask = ContentMask {
+            bounds: full,
+            ..Default::default()
+        };
+        let boundary = gpui::FilterBoundary {
+            order: 0,
+            bounds: content,
+            content_mask: content_mask.clone(),
+            corner_radii: Corners::default(),
+            corner_smoothing: 0.0,
+            filters: smallvec::smallvec![ScaledFilter::DropShadow(gpui::ScaledDropShadow {
+                offset: gpui::point(ScaledPixels(12.0), ScaledPixels(12.0)),
+                blur: ScaledPixels(2.0),
+                color: [0.0, 0.0, 1.0, 1.0],
+            })],
+            opacity: 1.0,
+            is_start: true,
+        };
+        let mut scene = Scene::default();
+        scene.insert_primitive(boundary.clone());
+        scene.insert_primitive(Quad {
+            bounds: content,
+            content_mask,
+            background: gpui::hsla(0.0, 1.0, 0.5, 1.0).into(),
+            ..Default::default()
+        });
+        scene.insert_primitive(gpui::FilterBoundary {
+            is_start: false,
+            ..boundary
+        });
+        scene.finish();
+        let Some(image) = render_for_contracts(
+            &mut renderer,
+            &scene,
+            Size {
+                width: DevicePixels(32),
+                height: DevicePixels(32),
+            },
+        ) else {
+            return;
+        };
+        // The content stays sharp, the shadow sits at the offset content, and the rest is clear.
+        let sharp = pixel(&image, 8, 8);
+        assert!(sharp[0] > 200 && sharp[2] < 60, "sharp content: {sharp:?}");
+        let shadow = pixel(&image, 20, 20);
+        assert!(
+            shadow[2] > 150 && shadow[0] < 60,
+            "shadow at the offset: {shadow:?}"
+        );
+        assert_pixel_close(&image, 28, 4, [0, 0, 0, 255], 2, "clear outside the shadow");
     }
 
     #[test]

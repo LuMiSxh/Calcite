@@ -1,0 +1,301 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Calcite <calcite@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 22:30:00 +0200
+Subject: [PATCH] feat(gpui): radial gradient backgrounds
+
+Adds BackgroundTag::RadialGradient and radial_gradient(). The center and radius reuse unused fields of Background, so the shared quad, shadow, and path shaders gain the gradient in one place and the Metal, wgpu, and Direct3D layouts do not change.
+
+diff --git a/crates/gpui/src/color.rs b/crates/gpui/src/color.rs
+index 1270130..cbe72ac 100644
+--- a/crates/gpui/src/color.rs
++++ b/crates/gpui/src/color.rs
+@@ -254,6 +254,8 @@ pub enum BackgroundTag {
+     PatternSlash = 2,
+     /// Alternating colored and transparent squares.
+     Checkerboard = 3,
++    /// A two-stop radial gradient.
++    RadialGradient = 4,
+ }
+ 
+ /// A color space for color interpolation.
+@@ -302,6 +304,15 @@ impl std::fmt::Debug for Background {
+                 "LinearGradient({}, {:?}, {:?})",
+                 self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
+             ),
++            BackgroundTag::RadialGradient => write!(
++                f,
++                "RadialGradient(({}, {}), {}, {:?}, {:?})",
++                self.solid.h,
++                self.solid.s,
++                self.gradient_angle_or_pattern_height,
++                self.colors[0],
++                self.colors[1]
++            ),
+             BackgroundTag::PatternSlash => write!(
+                 f,
+                 "PatternSlash({:?}, {})",
+@@ -386,7 +397,37 @@ pub fn linear_gradient(
+     }
+ }
+ 
+-/// A color stop in a linear gradient.
++/// Creates a radial gradient background color.
++///
++/// `center` is relative to the painted bounds: `(0.5, 0.5)` is the middle and `(0., 0.)` the
++/// top-left corner. `radius` is a fraction of the shorter side of the bounds, so `0.5` reaches
++/// the edge of a centered circle in a square. The stops' percentages (0.0 to 1.0) are fractions
++/// of `radius`; the colors stay at the first or last stop outside that range.
++///
++/// The center is stored in the `h` and `s` fields of the unused solid color, and the radius in
++/// the field that holds the angle of a linear gradient, so the shader layout does not change.
++pub fn radial_gradient(
++    center: crate::Point<f32>,
++    radius: f32,
++    from: impl Into<LinearColorStop>,
++    to: impl Into<LinearColorStop>,
++) -> Background {
++    Background {
++        tag: BackgroundTag::RadialGradient,
++        solid: crate::SceneHsla {
++            h: center.x,
++            s: center.y,
++            l: 0.0,
++            a: 0.0,
++        },
++        gradient_angle_or_pattern_height: radius,
++        colors: [from.into(), to.into()],
++        color_space: ColorSpace::Oklab,
++        ..Default::default()
++    }
++}
++
++/// A color stop in a linear or radial gradient.
+ ///
+ /// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop>
+ #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+@@ -431,6 +472,15 @@ pub enum BackgroundKind {
+         /// The two ends of the gradient.
+         stops: [LinearColorStop; 2],
+     },
++    /// A radial gradient between two color stops.
++    RadialGradient {
++        /// The center, relative to the painted bounds.
++        center: crate::Point<f32>,
++        /// The radius, as a fraction of the shorter side of the painted bounds.
++        radius: f32,
++        /// The two ends of the gradient.
++        stops: [LinearColorStop; 2],
++    },
+     /// A diagonal stripe pattern.
+     PatternSlash {
+         /// The stripe color.
+@@ -467,6 +517,11 @@ impl Background {
+                 angle: self.gradient_angle_or_pattern_height,
+                 stops: self.colors,
+             },
++            BackgroundTag::RadialGradient => BackgroundKind::RadialGradient {
++                center: crate::point(self.solid.h, self.solid.s),
++                radius: self.gradient_angle_or_pattern_height,
++                stops: self.colors,
++            },
+             BackgroundTag::PatternSlash => {
+                 const PATTERN_COMPONENT_SCALE: f32 = u8::MAX as f32;
+                 const PATTERN_PACKING_RADIX: f32 = u16::MAX as f32;
+@@ -516,7 +571,9 @@ impl Background {
+     pub fn is_transparent(&self) -> bool {
+         match self.tag {
+             BackgroundTag::Solid => self.solid.a == 0.,
+-            BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.a == 0.),
++            BackgroundTag::LinearGradient | BackgroundTag::RadialGradient => {
++                self.colors.iter().all(|c| c.color.a == 0.)
++            }
+             BackgroundTag::PatternSlash => self.solid.a == 0.,
+             BackgroundTag::Checkerboard => self.solid.a == 0.,
+         }
+@@ -565,6 +622,24 @@ mod tests {
+         assert!(background.opacity(0.0).is_transparent());
+     }
+ 
++    #[test]
++    fn test_background_radial_gradient() {
++        let from = linear_color_stop(rgba(0xff0099ff), 0.0);
++        let to = linear_color_stop(rgba(0x00ff99ff), 1.0);
++        let background = radial_gradient(crate::point(0.25, 0.75), 0.5, from, to);
++        assert_eq!(
++            background.kind(),
++            BackgroundKind::RadialGradient {
++                center: crate::point(0.25, 0.75),
++                radius: 0.5,
++                stops: [from, to],
++            }
++        );
++        assert_eq!(background.opacity(0.5).colors[0], from.opacity(0.5));
++        assert!(!background.is_transparent());
++        assert!(background.opacity(0.0).is_transparent());
++    }
++
+     #[test]
+     fn test_background_kind() {
+         let color: Hsla = rgba(0xff0099ff).into_color();
+diff --git a/crates/gpui_render/src/shaders/common.rs b/crates/gpui_render/src/shaders/common.rs
+index d28513c..e2a2ada 100644
+--- a/crates/gpui_render/src/shaders/common.rs
++++ b/crates/gpui_render/src/shaders/common.rs
+@@ -14,6 +14,7 @@ mod source {
+     pub const PATTERN_PACKING_RADIX: f32 = 65535.0;
+     pub const MIN_NORMALIZED_WEIGHT: f32 = 0.00001;
+     pub const MIN_PATH_GRADIENT: f32 = 0.001;
++    pub const MIN_RADIAL_GRADIENT_REACH: f32 = 0.001;
+     pub const UNDERLINE_WAVE_FREQUENCY: f32 = 2.0;
+     pub const UNDERLINE_WAVE_HEIGHT_RATIO: f32 = 0.8;
+     pub const GRADIENT_DITHER_SCALE: f32 = 0.6180339887;
+@@ -73,6 +74,7 @@ mod source {
+         LinearGradient = 1,
+         PatternSlash = 2,
+         Checkerboard = 3,
++        RadialGradient = 4,
+     }
+ 
+     #[repr(u32)]
+@@ -632,7 +634,9 @@ mod source {
+     pub fn prepare_paint(paint: Paint) -> PreparedPaint {
+         let mut prepared = PreparedPaint::new(transparent(), transparent(), transparent());
+ 
+-        if paint.background.tag == BackgroundTag::LinearGradient {
++        if paint.background.tag == BackgroundTag::LinearGradient
++            || paint.background.tag == BackgroundTag::RadialGradient
++        {
+             prepared.color0 = hsla_to_rgba(paint.background.colors[0usize].color);
+             prepared.color1 = hsla_to_rgba(paint.background.colors[1usize].color);
+             if paint.background.color_space == ColorSpace::Srgb {
+@@ -687,8 +691,47 @@ mod source {
+         )
+     }
+ 
++    /// The center is relative to the bounds and stored in `solid.h` and `solid.s`; the radius is a
++    /// fraction of the shorter bounds side and stored in `gradient_angle_or_pattern_height`.
++    pub fn radial_gradient_ratio(paint: Paint, position: Vec2f) -> f32 {
++        let center = vec2f(
++            paint.bounds.origin.x + paint.background.solid.h * paint.bounds.size.x,
++            paint.bounds.origin.y + paint.background.solid.s * paint.bounds.size.y,
++        );
++        let reach = max(
++            paint.background.gradient_angle_or_pattern_height
++                * min(paint.bounds.size.x, paint.bounds.size.y),
++            MIN_RADIAL_GRADIENT_REACH,
++        );
++        let first_stop = paint.background.colors[0usize].percentage;
++        let last_stop = paint.background.colors[1usize].percentage;
++        saturate((length(position - center) / reach - first_stop) / (last_stop - first_stop))
++    }
++
+     pub fn linear_gradient_color(paint: Paint, position: Vec2f, prepared: PreparedPaint) -> Vec4f {
+-        let ratio = linear_gradient_ratio(paint, position);
++        gradient_color(
++            paint,
++            position,
++            prepared,
++            linear_gradient_ratio(paint, position),
++        )
++    }
++
++    pub fn radial_gradient_color(paint: Paint, position: Vec2f, prepared: PreparedPaint) -> Vec4f {
++        gradient_color(
++            paint,
++            position,
++            prepared,
++            radial_gradient_ratio(paint, position),
++        )
++    }
++
++    pub fn gradient_color(
++        paint: Paint,
++        position: Vec2f,
++        prepared: PreparedPaint,
++        ratio: f32,
++    ) -> Vec4f {
+         let ratio4 = vec4f(ratio, ratio, ratio, ratio);
+         let interpolated = mix(prepared.color0, prepared.color1, ratio4);
+         let mut color = transparent();
+@@ -737,6 +780,9 @@ mod source {
+             BackgroundTag::LinearGradient => {
+                 color = linear_gradient_color(paint, position, prepared);
+             }
++            BackgroundTag::RadialGradient => {
++                color = radial_gradient_color(paint, position, prepared);
++            }
+             BackgroundTag::PatternSlash => {
+                 color = slash_pattern_color(paint, position, prepared.solid);
+             }
+diff --git a/crates/gpui_render/src/shaders/tests.rs b/crates/gpui_render/src/shaders/tests.rs
+index c4a41b9..d79de17 100644
+--- a/crates/gpui_render/src/shaders/tests.rs
++++ b/crates/gpui_render/src/shaders/tests.rs
+@@ -189,6 +189,10 @@ fn shader_discriminants_match_scene_types() {
+         common::BackgroundTag::Checkerboard as u32,
+         gpui::BackgroundTag::Checkerboard as u32
+     );
++    assert_eq!(
++        common::BackgroundTag::RadialGradient as u32,
++        gpui::BackgroundTag::RadialGradient as u32
++    );
+     assert_eq!(
+         common::ColorSpace::Srgb as u32,
+         gpui::ColorSpace::Srgb as u32
+@@ -207,6 +211,56 @@ fn shader_discriminants_match_scene_types() {
+     );
+ }
+ 
++#[test]
++fn radial_gradient_runs_from_its_center_to_its_radius() {
++    use common::*;
++    use wgsl_rs::std::*;
++
++    let stop = |l: f32, percentage: f32| LinearColorStop {
++        color: Hsla {
++            h: 0.0,
++            s: 0.0,
++            l,
++            a: 1.0,
++        },
++        percentage,
++    };
++    let background = Background {
++        tag: BackgroundTag::RadialGradient,
++        color_space: ColorSpace::Srgb,
++        // Center at (0.5, 0.5) of the bounds.
++        solid: Hsla {
++            h: 0.5,
++            s: 0.5,
++            l: 0.0,
++            a: 0.0,
++        },
++        gradient_angle_or_pattern_height: 0.5,
++        colors: [stop(0.0, 0.0), stop(1.0, 1.0)],
++        padding: 0,
++    };
++    let bounds = Bounds {
++        origin: vec2f(10.0, 20.0),
++        size: vec2f(100.0, 200.0),
++    };
++    let paint = Paint::new(background, bounds);
++    let prepared = prepare_paint(paint);
++    let center = paint_color(paint, vec2f(60.0, 120.0), prepared);
++    let inside = paint_color(paint, vec2f(60.0 + 25.0, 120.0), prepared);
++    let beyond = paint_color(paint, vec2f(60.0, 120.0 + 80.0), prepared);
++
++    // The radius is half of the shorter side (50 px): black in the middle, white from there out.
++    assert!(center.x < 0.01, "center is the first stop: {center:?}");
++    assert!(
++        inside.x > center.x + 0.05 && inside.x < beyond.x,
++        "color grows with distance: {center:?} {inside:?} {beyond:?}"
++    );
++    assert!(
++        beyond.x > 0.95,
++        "past the radius is the last stop: {beyond:?}"
++    );
++}
++
+ #[test]
+ fn linear_gradients_preserve_native_dithering() {
+     use common::*;

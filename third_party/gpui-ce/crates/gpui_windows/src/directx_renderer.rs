@@ -11,7 +11,7 @@ use gpui_render::{
     blur::{
         BlurAxis, BlurKernel, BlurUniforms, FilterCompositeClip,
         GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS, ScissorRectangle, downsampled_dimension,
-        glass_sampling_margin,
+        drop_shadow_margin, glass_sampling_margin,
     },
     path_types::{PathRasterizationVertex, PathSprite},
     shaders::{
@@ -700,6 +700,7 @@ impl DirectXRenderer {
                                 filter.opacity,
                                 true,
                                 filter.glass(),
+                                None,
                             )?;
                         }
                         Ok::<(), anyhow::Error>(())
@@ -746,6 +747,7 @@ impl DirectXRenderer {
                         boundary.opacity,
                         false,
                         None,
+                        boundary.drop_shadow(),
                     );
                     current_rtv = parent_rtv;
                     current_srv = parent_srv;
@@ -1333,6 +1335,8 @@ impl DirectXRenderer {
         // Backdrop clips to the rounded rect; content (`filter`) bleeds past its bounds.
         clip_rounded: bool,
         glass: Option<ScaledGlass>,
+        // Content filters only: a shadow of the blurred alpha under the sharp `source_srv`.
+        drop_shadow: Option<ScaledDropShadow>,
     ) -> Result<()> {
         let full_width = self.width;
         let full_height = self.height;
@@ -1373,8 +1377,9 @@ impl DirectXRenderer {
         // Blur only the half-res region the composite samples: the bounds plus the gaussian
         // tail and the glass refraction offset. A full-window pass per filter made every glass
         // control cost three passes over the whole window.
-        let dilation =
-            GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * blur_radius + glass_sampling_margin(glass);
+        let dilation = GAUSSIAN_CUTOFF_STANDARD_DEVIATIONS * blur_radius
+            + glass_sampling_margin(glass)
+            + drop_shadow_margin(drop_shadow);
         let scissor = ScissorRectangle::for_filter(
             bounds,
             content_mask,
@@ -1444,7 +1449,8 @@ impl DirectXRenderer {
             blur_size,
             [full_width as f32, full_height as f32],
         )
-        .with_glass(glass);
+        .with_glass(glass)
+        .with_drop_shadow(drop_shadow);
         let (composite_vertex, composite_fragment) = if composite_uniforms.corner_smoothing > 0.0 {
             (
                 &self.pipelines.smoothed_blur_composite_vertex,
@@ -1470,6 +1476,27 @@ impl DirectXRenderer {
             false,
             None,
         )?;
+        if drop_shadow.is_some() {
+            // The sharp content over its shadow.
+            self.dx_blur_pass(
+                &self.pipelines.blur_composite_vertex,
+                &self.pipelines.blur_composite_fragment,
+                &self.pipelines.blur_blend_composite,
+                target_rtv,
+                source_srv,
+                BlurUniforms::content_copy(
+                    composite_bounds,
+                    content_mask,
+                    opacity,
+                    [full_width as f32, full_height as f32],
+                ),
+                &full_vp,
+                D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+                4,
+                false,
+                None,
+            )?;
+        }
         Ok(())
     }
 

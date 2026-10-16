@@ -9,6 +9,7 @@
 
 mod cli;
 mod coverage;
+mod effects;
 mod icon_search;
 mod interactive;
 mod menus;
