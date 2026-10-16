@@ -20,6 +20,7 @@
 
 use gpui::{BoxShadow, Filter, GlassFilter, Pixels, Point, Rgba, Size, Styled, px};
 
+use crate::palette::Palette;
 use crate::tokens::{self, black, is_chromatic, over, scale_alpha, stack, white, with_alpha};
 
 /// The slider positions of macOS 27's Liquid Glass transparency setting.
@@ -234,11 +235,20 @@ impl Glass {
 			pointer_tint: white(1.),
 			pointer_radius: None,
 			overlay: None,
-			quiet_edge: crate::palette::Palette::ARKNIGHTS.quiet_control,
+			quiet_edge: Palette::default().quiet_control,
 			ink: white(1.),
 			shade: black(1.),
 			shadow_scale: 1.,
 		}
+	}
+
+	/// Takes the neutral colors (the quiet edge, ink, and shade) from `palette`. Glass drawn
+	/// from a theme gets them from [`Theme::surface`](crate::theme::Theme::surface).
+	pub fn palette(mut self, palette: &Palette) -> Self {
+		self.quiet_edge = palette.quiet_control;
+		self.ink = palette.ink;
+		self.shade = palette.shade;
+		self
 	}
 
 	pub fn elevation(mut self, elevation: Elevation) -> Self {

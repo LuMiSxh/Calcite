@@ -62,7 +62,8 @@ fn main() {
 ```
 
 `calcite::init` sets the theme and the text input key bindings. `Assets::default()` serves the
-icons. Run the full example:
+icons. Add your own SVG or PNG files with `Assets::with(path, bytes)`, or several with
+`Assets::with_many(files)`. Run the full example:
 
 ```sh
 cargo run -p calcite --example minimal
@@ -146,7 +147,7 @@ Theme::set_dynamic_accent(cx, Some(gpui::rgba(0xF59E38FF)));
 Theme changes crossfade over the `Crossfade` curve (0.48 s). Under Reduce Motion they apply at
 once. Use `Theme::set_immediately` to skip the crossfade.
 
-`Theme::follow_system(window, cx)` installs the Arknights palette in dark windows and
+`Theme::follow_system(window, cx)` installs the neutral palette in dark windows and
 `Palette::LIGHT` in light ones, and follows changes of the OS appearance. It leaves the theme's
 Reduce Motion flag alone. gpui-ce has no notification for the system flag, so call
 `Theme::sync_reduce_motion(cx)` to copy `cx.reduce_motion()` into the theme. gpui-ce does not expose
@@ -212,11 +213,14 @@ the HUD tint. Pick one at compile time with a `const`:
 const EMBER: Palette = Palette {
 	accent: tokens::rgba(0.96, 0.62, 0.30, 1.),
 	panel_background: tokens::rgba(0.09, 0.07, 0.06, 1.),
-	..Palette::ARKNIGHTS
+	..Palette::NEUTRAL
 };
 
 calcite::init_with(cx, Theme::new(EMBER));
 ```
+
+`Palette::NEUTRAL` is the default. `Palette::ARKNIGHTS` is the Arknights preset, and
+`Palette::LIGHT` is the light look.
 
 Replace it at runtime. The dynamic accent stays:
 

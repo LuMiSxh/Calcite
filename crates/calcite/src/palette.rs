@@ -5,10 +5,10 @@
 //! Pick a palette at compile time with a `const`, and change it at runtime through the theme:
 //!
 //! ```ignore
-//! const EMBER: Palette = Palette { accent: rgba(0.96, 0.55, 0.22, 1.), ..Palette::ARKNIGHTS };
+//! const EMBER: Palette = Palette { accent: rgba(0.96, 0.55, 0.22, 1.), ..Palette::NEUTRAL };
 //!
 //! calcite::init_with(cx, Theme::new(EMBER));
-//! Theme::update(cx, |theme| *theme = theme.with_palette(Palette::ARKNIGHTS));
+//! Theme::update(cx, |theme| *theme = theme.with_palette(Palette::NEUTRAL));
 //! ```
 //!
 //! Colors are straight (non-premultiplied) sRGB.
@@ -17,7 +17,7 @@ use gpui::Rgba;
 
 use crate::tokens::{black, hsb, hue, is_chromatic, mix, rgba, white};
 
-/// The colors of one look. Build it with struct update syntax from [`Palette::ARKNIGHTS`].
+/// The colors of one look. Build it with struct update syntax from [`Palette::NEUTRAL`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Palette {
 	/// The accent when the app sets no dynamic accent: primary action, selection, progress.
@@ -58,7 +58,33 @@ pub struct Palette {
 }
 
 impl Palette {
-	/// The Arknights Client look: dark chrome and the Arknights cyan.
+	/// The default look: graphite surfaces and a calm blue accent. Apps that want another look
+	/// start from this value with struct update syntax.
+	pub const NEUTRAL: Self = Self {
+		accent: rgba(0.039, 0.518, 1., 1.),
+		control: rgba(0.74, 0.75, 0.78, 1.),
+		quiet_control: rgba(0.60, 0.61, 0.64, 1.),
+		hairline: white(0.12),
+		danger: rgba(0.69, 0.141, 0.231, 1.),
+		danger_text: rgba(0.98, 0.42, 0.48, 1.),
+		warning: rgba(0.91, 0.61, 0.21, 1.),
+		success: rgba(0.28, 0.78, 0.55, 1.),
+		primary_text: white(0.92),
+		secondary_text: white(0.55),
+		backdrop: rgba(0.075, 0.078, 0.086, 1.),
+		panel_background: rgba(0.11, 0.115, 0.125, 1.),
+		panel_border: white(0.10),
+		navigation_rail: black(0.28),
+		navigation_hover: white(0.06),
+		opaque_surface: rgba(0.17, 0.175, 0.19, 1.),
+		opaque_disabled_surface: rgba(0.12, 0.125, 0.135, 1.),
+		hud_tint: black(0.52),
+		hud_hue_tint: (0.1, 0.1, 0.52),
+		ink: white(1.),
+		shade: black(1.),
+	};
+
+	/// The Arknights Client preset: dark chrome and the Arknights cyan. Not the default.
 	pub const ARKNIGHTS: Self = Self {
 		accent: rgba(0.094, 0.82, 1., 1.),
 		control: rgba(0.72, 0.74, 0.77, 1.),
@@ -165,7 +191,7 @@ impl Palette {
 
 impl Default for Palette {
 	fn default() -> Self {
-		Self::ARKNIGHTS
+		Self::NEUTRAL
 	}
 }
 
@@ -208,7 +234,11 @@ mod tests {
 
 	#[test]
 	fn text_reads_on_every_main_surface_in_both_palettes() {
-		for (name, palette) in [("dark", Palette::ARKNIGHTS), ("light", Palette::LIGHT)] {
+		for (name, palette) in [
+			("dark", Palette::NEUTRAL),
+			("arknights", Palette::ARKNIGHTS),
+			("light", Palette::LIGHT),
+		] {
 			for (surface, base) in surfaces(palette) {
 				let base = with_alpha_one(base);
 				let primary = contrast_ratio(over(palette.primary_text, base), base);
@@ -235,7 +265,7 @@ mod tests {
 
 	#[test]
 	fn prominent_labels_read_on_the_accent_and_status_fills() {
-		for palette in [Palette::ARKNIGHTS, Palette::LIGHT] {
+		for palette in [Palette::NEUTRAL, Palette::ARKNIGHTS, Palette::LIGHT] {
 			for fill in [palette.accent, palette.danger, palette.warning, palette.success] {
 				let ratio = contrast_ratio(on_color(fill), fill);
 				assert!(ratio >= 3., "label on {fill:?}: {ratio:.2}");

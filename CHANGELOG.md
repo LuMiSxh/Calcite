@@ -16,6 +16,8 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-update`: the feed format is 2. A feed has the signed fields `issued_at`, `sequence`, and the optional `minimum_version`. The envelope has a `key_id`. Sign again with `calcite-update sign --key-id ID`; `release` needs `--sequence`.
 - `calcite-update`: `install::install` and `Staged::install` take the product and version, and `Staged::install` hashes the staged tree again first. `publish::sign` takes a `key_id`.
 - `calcite-update`: `Updater` rejects `file://` URLs. The `test-support` feature and `UpdaterBuilder::allow_file_urls` allow them for tests.
+- `calcite`: the default palette is `Palette::NEUTRAL`, graphite surfaces with a blue accent. `Palette::ARKNIGHTS` is a named preset, not the default. `Theme::default` and `Theme::follow_system` use the neutral palette. Pass `Palette::ARKNIGHTS` to keep the old look.
+- `calcite`: `artwork_layer` is replaced by `cover_image(Option<PathBuf>)`. It takes a `.fallback(...)` element that the app supplies, so Calcite no longer draws the "A" glyph or serves the accent slash. `readability_field` is removed; draw your own scrim behind the wordmark.
 
 ### Changed
 
@@ -30,6 +32,8 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-update`: `Available::is_required` reports that the running version is below the feed's `minimum_version`.
 - `calcite-update`: `publish::sign_feed`, `publish::FeedBuilder`, and `publish::build_target`.
 - `calcite-update`: a crate README with the security model.
+- `calcite`: `Assets::with` and `Assets::with_many` register app SVG and PNG files next to Calcite's icons. They take owned or static bytes. A later asset at the same path replaces the earlier one.
+- `calcite`: `Glass::palette` takes the neutral colors from a palette, for glass built outside a theme.
 
 ### Fixed
 

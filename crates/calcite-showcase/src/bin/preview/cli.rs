@@ -13,7 +13,7 @@ usage: preview [OPTIONS]
 
 Options:
   --section <NAME>        open this section, e.g. buttons, forms, motion-lab
-  --palette <NAME>        arknights (the default dark look), ember, or light
+  --palette <NAME>        neutral (the default dark look), arknights, ember, or light
   --reduce-motion         start with Reduce Motion on
   --reduce-transparency   start with Reduce Transparency on
   --glass <STYLE>         macos26, macos27-clear, macos27-default, macos27-tinted,
@@ -135,6 +135,7 @@ fn slug(text: &str) -> String {
 
 fn palette(name: &str) -> Option<Palette> {
 	match name.to_ascii_lowercase().as_str() {
+		"neutral" => Some(Palette::NEUTRAL),
 		"arknights" => Some(Palette::ARKNIGHTS),
 		"ember" => Some(EMBER),
 		"light" => Some(LIGHT),

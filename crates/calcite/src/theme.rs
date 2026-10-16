@@ -47,7 +47,7 @@ pub struct Theme {
 
 impl Default for Theme {
 	fn default() -> Self {
-		Self::new(Palette::ARKNIGHTS)
+		Self::new(Palette::default())
 	}
 }
 
@@ -77,7 +77,7 @@ impl Theme {
 		}
 	}
 
-	/// Follows the system appearance: installs [`Palette::ARKNIGHTS`] while `window` is dark and
+	/// Follows the system appearance: installs [`Palette::NEUTRAL`] while `window` is dark and
 	/// [`Palette::LIGHT`] while it is light, and switches (with the theme crossfade) when the OS
 	/// changes. Hold or `.detach()` the returned subscription.
 	///
@@ -89,7 +89,7 @@ impl Theme {
 	/// followed: set [`GlassStyle::ReducedTransparency`] with [`Theme::with_glass`] and
 	/// [`Theme::shows_borders`] yourself when your app learns them from the platform.
 	pub fn follow_system(window: &mut Window, cx: &mut App) -> Subscription {
-		Self::follow_system_with(Palette::ARKNIGHTS, Palette::LIGHT, window, cx)
+		Self::follow_system_with(Palette::NEUTRAL, Palette::LIGHT, window, cx)
 	}
 
 	/// Like [`Theme::follow_system`], with your own `dark` and `light` palettes.
@@ -235,11 +235,10 @@ impl Theme {
 	pub fn surface(&self, tint: Option<Rgba>) -> glass::Glass {
 		glass::Glass {
 			shows_border: self.shows_borders,
-			quiet_edge: self.palette.quiet_control,
-			ink: self.palette.ink,
-			shade: self.palette.shade,
 			shadow_scale: if self.palette.is_light() { LIGHT_SHADOW } else { 1. },
-			..glass::Glass::new(tint, self.style.glass).strength(self.style.glass_strength)
+			..glass::Glass::new(tint, self.style.glass)
+				.strength(self.style.glass_strength)
+				.palette(&self.palette)
 		}
 	}
 

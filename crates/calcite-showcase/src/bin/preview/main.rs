@@ -68,7 +68,7 @@ macro_rules! shortcuts {
 shortcuts! {
 	"g" => CycleGlass, "Next glass style";
 	"a" => CycleAccent, "Next accent";
-	"p" => CyclePalette, "Next palette: Arknights, Ember, Light";
+	"p" => CyclePalette, "Next palette: Neutral, Arknights, Ember, Light";
 	"m" => ToggleReduceMotion, "Toggle Reduce Motion";
 	"o" => TogglePill, "Open or close the morph pill";
 	"]" => NextSection, "Next section in the sidebar";
@@ -84,7 +84,7 @@ const EMBER: Palette = Palette {
 	backdrop: color(0.05, 0.035, 0.03, 1.),
 	panel_background: color(0.09, 0.07, 0.06, 1.),
 	navigation_rail: color(0.10, 0.05, 0.02, 0.32),
-	..Palette::ARKNIGHTS
+	..Palette::NEUTRAL
 };
 
 pub const WIDTH: f32 = 1480.;
@@ -301,7 +301,7 @@ impl Preview {
 			motion_lab: cx.new(|_| MotionLab::new()),
 			section,
 			dark_palette: if dark_palette.is_light() {
-				Palette::ARKNIGHTS
+				Palette::NEUTRAL
 			} else {
 				dark_palette
 			},
@@ -555,13 +555,9 @@ impl Render for Preview {
 				}))
 				.on_action(cx.listener(|this, _: &CyclePalette, _, cx| {
 					let current = cx.target_theme().palette;
-					let next = if current == EMBER {
-						LIGHT
-					} else if current == LIGHT {
-						Palette::ARKNIGHTS
-					} else {
-						EMBER
-					};
+					const CYCLE: [Palette; 4] = [Palette::NEUTRAL, Palette::ARKNIGHTS, EMBER, LIGHT];
+					let index = CYCLE.iter().position(|palette| *palette == current);
+					let next = CYCLE[index.map_or(0, |index| (index + 1) % CYCLE.len())];
 					if next != LIGHT {
 						this.dark_palette = next;
 					}
