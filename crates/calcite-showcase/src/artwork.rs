@@ -8,14 +8,11 @@
 use std::path::PathBuf;
 
 use gpui::{
-	Filter, FontWeight, IntoElement, ObjectFit, ParentElement, Pixels, Rgba, Styled, StyledImage, div, img,
-	linear_color_stop, linear_gradient, px,
+	Filter, FontWeight, IntoElement, ParentElement, Pixels, Rgba, Styled, div, linear_color_stop,
+	linear_gradient, px,
 };
 
-use calcite::{
-	palette::Palette,
-	tokens::{black, rgba, scale_alpha, white},
-};
+use calcite::tokens::{black, rgba, scale_alpha, white};
 
 /// Asset path of the accent slash in the fallback artwork.
 pub const SLASH_ASSET: &str = "artwork/slash.svg";
@@ -39,7 +36,7 @@ fn blob(left: f32, top: f32, size: f32, color: Rgba, blur: f32) -> impl IntoElem
 }
 
 /// A bright, detailed scene so that the blur and the backplates are easy to judge.
-fn procedural(accent: Rgba, corner: Pixels) -> impl IntoElement {
+pub fn procedural(accent: Rgba, backdrop: Rgba, corner: Pixels) -> impl IntoElement {
 	let tile = |left: f32, top: f32, width: f32, height: f32, color: Rgba| {
 		div()
 			.absolute()
@@ -57,7 +54,7 @@ fn procedural(accent: Rgba, corner: Pixels) -> impl IntoElement {
 		.bg(linear_gradient(
 			165.,
 			linear_color_stop(rgba(0.07, 0.10, 0.16, 1.), 0.),
-			linear_color_stop(Palette::ARKNIGHTS.backdrop, 1.),
+			linear_color_stop(backdrop, 1.),
 		))
 		.child(blob(520., -120., 620., scale_alpha(accent, 0.55), 120.))
 		.child(blob(-140., 300., 520., rgba(0.96, 0.52, 0.18, 0.45), 110.))
@@ -96,25 +93,6 @@ fn procedural(accent: Rgba, corner: Pixels) -> impl IntoElement {
 					.text_color(scale_alpha(accent, 0.4)),
 			),
 		)
-}
-
-/// The artwork behind the launcher. `corner` rounds it inside a client-drawn window frame.
-pub fn artwork_layer(artwork: &Artwork, accent: Rgba, corner: Pixels) -> impl IntoElement {
-	match artwork {
-		Artwork::Procedural => procedural(accent, corner).into_any_element(),
-		Artwork::Image(path) => div()
-			.absolute()
-			.size_full()
-			.rounded(corner)
-			.bg(Palette::ARKNIGHTS.backdrop)
-			.child(
-				img(path.clone())
-					.size_full()
-					.rounded(corner)
-					.object_fit(ObjectFit::Cover),
-			)
-			.into_any_element(),
-	}
 }
 
 /// The small top-leading contrast field behind the wordmark and status text. SwiftUI uses

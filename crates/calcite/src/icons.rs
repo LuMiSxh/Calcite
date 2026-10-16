@@ -11,7 +11,7 @@
 //! [`Lucide`] names every icon of the set, for example `Lucide::Rocket`.
 //! `scripts/update-lucide.sh` vendors a new Lucide version.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
 use gpui::{AssetSource, IntoElement, Pixels, Rgba, SharedString, Styled, Svg, svg};
 
@@ -175,16 +175,17 @@ impl Icon {
 
 /// Serves the built-in icons, registered icon sets, and other app assets to GPUI's `svg()`
 /// and `img()` elements. The default registers [`Icon`] and, with the `lucide` feature,
-/// [`Lucide`].
+/// [`Lucide`]. Add app files with [`Assets::with`] or [`Assets::with_many`].
 pub struct Assets {
-	entries: Vec<(&'static str, &'static [u8])>,
+	entries: HashMap<String, Cow<'static, [u8]>>,
 }
 
 impl Default for Assets {
 	fn default() -> Self {
-		let assets = Self { entries: Vec::new() }
-			.icons::<Icon>()
-			.with(crate::artwork::SLASH_PATH, crate::artwork::SLASH_SVG);
+		let assets = Self {
+			entries: HashMap::new(),
+		}
+		.icons::<Icon>();
 		#[cfg(feature = "lucide")]
 		let assets = assets.icons::<Lucide>();
 		assets
@@ -193,35 +194,40 @@ impl Default for Assets {
 
 impl Assets {
 	/// Registers every icon of an icon set.
-	pub fn icons<I: IconSet>(mut self) -> Self {
-		self.entries
-			.extend(I::all().iter().map(|icon| (icon.path(), icon.bytes())));
+	pub fn icons<I: IconSet>(self) -> Self {
+		self.with_many(I::all().iter().map(|icon| (icon.path(), icon.bytes())))
+	}
+
+	/// Registers one app-owned asset served at `path`. A later asset at the same path replaces
+	/// the earlier one, so an app can override a built-in icon.
+	pub fn with(mut self, path: impl Into<String>, bytes: impl Into<Cow<'static, [u8]>>) -> Self {
+		self.entries.insert(path.into(), bytes.into());
 		self
 	}
 
-	/// Registers one app-owned asset served at `path`.
-	pub fn with(mut self, path: &'static str, bytes: &'static [u8]) -> Self {
-		self.entries.push((path, bytes));
-		self
+	/// Registers several app-owned assets, as [`Assets::with`] does for each.
+	pub fn with_many<P, B>(self, assets: impl IntoIterator<Item = (P, B)>) -> Self
+	where
+		P: Into<String>,
+		B: Into<Cow<'static, [u8]>>,
+	{
+		assets
+			.into_iter()
+			.fold(self, |assets, (path, bytes)| assets.with(path, bytes))
 	}
 }
 
 impl AssetSource for Assets {
 	fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
-		Ok(self
-			.entries
-			.iter()
-			.find(|(name, _)| *name == path)
-			.map(|(_, bytes)| Cow::Borrowed(*bytes)))
+		Ok(self.entries.get(path).cloned())
 	}
 
 	fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
 		Ok(self
 			.entries
-			.iter()
-			.map(|(name, _)| *name)
+			.keys()
 			.filter(|name| name.starts_with(path))
-			.map(SharedString::from)
+			.map(|name| SharedString::from(name.as_str()))
 			.collect())
 	}
 }

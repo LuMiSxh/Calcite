@@ -637,7 +637,7 @@ mod tests {
 
 	#[test]
 	fn a_prominent_label_reads_on_its_fill_in_both_palettes() {
-		for palette in [Palette::ARKNIGHTS, Palette::LIGHT] {
+		for palette in [Palette::default(), Palette::LIGHT] {
 			let theme = Theme::new(palette);
 			for tone in [Tone::Neutral, Tone::Accent, Tone::Warning, Tone::Danger] {
 				let fill = tone.prominent_fill(&theme);
@@ -653,7 +653,7 @@ mod tests {
 		Palette {
 			control: rgba(0.78, 0.72, 0.66, 1.),
 			quiet_control: rgba(0.64, 0.58, 0.52, 1.),
-			..Palette::ARKNIGHTS
+			..Palette::default()
 		}
 	}
 
@@ -726,7 +726,7 @@ mod tests {
 
 	#[test]
 	fn neutral_keeps_one_paint_kind_for_any_palette() {
-		for palette in [Palette::ARKNIGHTS, warm()] {
+		for palette in [Palette::default(), warm()] {
 			let theme = Theme::default().with_palette(palette);
 			assert!(matches!(resolved(Tone::Neutral, &theme).0, Paint::Flat(_)));
 		}

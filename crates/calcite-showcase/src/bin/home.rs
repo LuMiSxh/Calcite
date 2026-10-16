@@ -13,11 +13,9 @@ use std::{
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use calcite::{UI_FONT, app_icon::AppIcon, chrome, prelude::*, tokens::hud};
+use calcite::{UI_FONT, app_icon::AppIcon, artwork::cover_image, chrome, prelude::*, tokens::hud};
 use calcite_exec::prelude::*;
-use calcite_showcase::artwork::{
-	Artwork, SLASH_ASSET, SLASH_SVG, artwork_layer, readability_field, wordmark,
-};
+use calcite_showcase::artwork::{Artwork, SLASH_ASSET, SLASH_SVG, procedural, readability_field, wordmark};
 use gpui::{
 	App, Bounds, Context, FocusHandle, FontWeight, IntoElement, MouseButton, SharedString, Task, Window,
 	WindowOptions, actions, div, px, rgba, size,
@@ -570,11 +568,18 @@ impl Render for Home {
 				this.shows_legend = !this.shows_legend;
 				cx.notify();
 			}))
-			.child(artwork_layer(
-				&self.artwork,
-				theme.accent,
-				chrome::corner_radius(window),
-			))
+			.child(
+				cover_image(match &self.artwork {
+					Artwork::Procedural => None,
+					Artwork::Image(path) => Some(path.clone()),
+				})
+				.fallback(procedural(
+					theme.accent,
+					theme.palette.backdrop,
+					chrome::corner_radius(window),
+				))
+				.corner(chrome::corner_radius(window)),
+			)
 			.child(readability_field(theme.reduce_transparency()))
 			// Like the SwiftUI HUD, a click outside an expanded pill collapses it.
 			.when(self.expanded.is_some(), |this| {
