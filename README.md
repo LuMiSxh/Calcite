@@ -10,7 +10,7 @@
 [![Rust 1.97+](https://img.shields.io/badge/Rust-1.97%2B-477acc?style=flat-square&labelColor=23252a)](https://www.rust-lang.org/)
 [![gpui-ce](https://img.shields.io/badge/gpui--ce-patched-477acc?style=flat-square&labelColor=23252a)](patches/)
 [![MPL-2.0 license](https://img.shields.io/badge/license-MPL--2.0-477acc?style=flat-square&labelColor=23252a)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.0-477acc?style=flat-square&labelColor=23252a)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-477acc?style=flat-square&labelColor=23252a)](CHANGELOG.md)
 
 <img src="assets/github/preview.png" width="1480" alt="The Calcite Developer Preview: buttons in every tone and state, with the section sidebar and the appearance toolbar" />
 

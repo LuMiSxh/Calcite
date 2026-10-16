@@ -5,6 +5,12 @@ All notable changes to Calcite are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-16
+
+### Added
+
+- `artwork`: `artwork_layer` draws the launcher backdrop (a cover-fit image, or the fallback "A" and accent slash, with an optional blurred cross-fade) and `readability_field` draws the dark field behind the wordmark. `Assets::default` serves the slash.
+
 ## [0.3.0] - 2026-10-15
 
 ### Added
