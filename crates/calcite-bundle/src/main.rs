@@ -2,9 +2,9 @@
 
 //! `cargo calcite bundle`: packages a Calcite app. See the crate docs for the settings.
 
-use std::process::ExitCode;
+use std::{path::PathBuf, process::ExitCode};
 
-use calcite_bundle::{Options, bundle};
+use calcite_bundle::{FeedOptions, Options, bundle};
 
 const USAGE: &str = "\
 Packages a Calcite app for distribution.
@@ -18,6 +18,10 @@ Options:
                        or standalone (exe, dmg, or appimage for the host)
       --debug          Build and package the debug profile
       --no-build       Package an existing build
+      --feed           Also write a signed calcite-update feed (update.json) beside the bundles.
+                       Needs the `feed` feature, --sequence, and CALCITE_UPDATE_KEY
+      --sequence N     The feed sequence; it must rise with every feed the apps have seen
+      --notes FILE     Release notes for the feed, in Markdown
   -h, --help           Show this help
 
 Settings live in [package.metadata.calcite.bundle] of the app's Cargo.toml.";
@@ -69,6 +73,7 @@ fn main() -> ExitCode {
 /// `None` asks for the help text.
 fn parse(args: &[String]) -> Result<Option<Options>, String> {
 	let mut options = Options::default();
+	let (mut feed, mut sequence, mut notes) = (false, None, None);
 	let mut args = args.iter();
 	while let Some(arg) = args.next() {
 		let mut value = |name: &str| {
@@ -89,9 +94,23 @@ fn parse(args: &[String]) -> Result<Option<Options>, String> {
 			}
 			"--debug" => options.debug = true,
 			"--no-build" => options.no_build = true,
+			"--feed" => feed = true,
+			"--sequence" => {
+				sequence = Some(
+					value(arg)?
+						.parse::<u64>()
+						.map_err(|_| "--sequence takes a whole number")?,
+				)
+			}
+			"--notes" => notes = Some(PathBuf::from(value(arg)?)),
 			"-h" | "--help" => return Ok(None),
 			other => return Err(format!("unknown option `{other}`")),
 		}
+	}
+	if feed {
+		options.feed = Some(FeedOptions { sequence, notes });
+	} else if sequence.is_some() || notes.is_some() {
+		return Err("--sequence and --notes need --feed".to_string());
 	}
 	Ok(Some(options))
 }

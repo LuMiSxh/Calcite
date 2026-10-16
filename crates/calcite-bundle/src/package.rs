@@ -49,6 +49,17 @@ pub struct Options {
 	pub debug: bool,
 	/// Skips `cargo build`; the binary must already exist.
 	pub no_build: bool,
+	/// Also writes a signed calcite-update feed beside the bundles (`--feed`).
+	pub feed: Option<FeedOptions>,
+}
+
+/// The calcite-update feed that `--feed` asks for.
+#[derive(Clone, Debug, Default)]
+pub struct FeedOptions {
+	/// The release sequence. Required; it must rise with every feed that the apps have seen.
+	pub sequence: Option<u64>,
+	/// Release notes in Markdown, read from this file.
+	pub notes: Option<PathBuf>,
 }
 
 /// One package that was written.
@@ -77,6 +88,9 @@ pub struct Plan {
 	pub manifest_dir: PathBuf,
 	/// The formats after the `standalone` alias is resolved, or `None` for the platform defaults.
 	pub formats: Option<Vec<String>>,
+	/// The calcite-update feed that `--feed` writes beside the bundles.
+	#[cfg(feature = "feed")]
+	pub feed: Option<crate::feed::Plan>,
 }
 
 /// Builds the app and writes its packages to `target/calcite-bundle/<profile>`.
@@ -108,6 +122,24 @@ pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 		eprintln!("{warning}");
 	}
 	let bin = select_bin(package, options.bin.as_deref())?;
+	// The feed settings are checked before the build, so a missing key fails in seconds.
+	#[cfg(feature = "feed")]
+	let feed = match &options.feed {
+		Some(request) => Some(crate::feed::Plan::resolve(
+			request,
+			&settings,
+			manifest,
+			&identifier,
+			name,
+			version,
+			|key| std::env::var(key).ok(),
+		)?),
+		None => None,
+	};
+	#[cfg(not(feature = "feed"))]
+	if options.feed.is_some() {
+		return Err("--feed needs calcite-bundle built with the `feed` feature".into());
+	}
 	let profile = if options.debug { "debug" } else { "release" };
 
 	if !options.no_build {
@@ -126,6 +158,8 @@ pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 		bundle_dir,
 		manifest_dir,
 		formats: requested_formats(options.formats.clone(), &settings),
+		#[cfg(feature = "feed")]
+		feed,
 		settings,
 		bin,
 	};
@@ -137,13 +171,28 @@ pub fn bundle(options: &Options) -> Result<Vec<Output>> {
 pub fn publish(plan: &Plan, packager: &impl Packager, commands: &impl Commands) -> Result<Vec<Output>> {
 	fs::create_dir_all(&plan.out_dir).map_err(|error| format!("{}: {error}", plan.out_dir.display()))?;
 	let staging = Staging::create(&plan.bundle_dir)?;
-	match produce(plan, &staging, packager, commands) {
+	match produce(plan, &staging, packager, commands).and_then(|outputs| with_feed(plan, &staging, outputs)) {
 		Ok(outputs) => staging.commit(&plan.out_dir, outputs),
 		Err(error) => Err(match staging.discard() {
 			Ok(()) => error,
 			Err(cleanup) => format!("{error}\n{cleanup}"),
 		}),
 	}
+}
+
+/// Adds the calcite-update feed to the outputs when `--feed` asks for it. The feed is staged
+/// with the bundles, so it moves into the output directory in the same commit.
+#[cfg(feature = "feed")]
+fn with_feed(plan: &Plan, staging: &Staging, mut outputs: Vec<Output>) -> Result<Vec<Output>> {
+	if let Some(feed) = &plan.feed {
+		outputs.push(feed.write(staging, &outputs)?);
+	}
+	Ok(outputs)
+}
+
+#[cfg(not(feature = "feed"))]
+fn with_feed(_plan: &Plan, _staging: &Staging, outputs: Vec<Output>) -> Result<Vec<Output>> {
+	Ok(outputs)
 }
 
 fn produce(
@@ -482,6 +531,8 @@ mod tests {
 			out_dir: bundle_dir.join("release"),
 			bundle_dir: bundle_dir.to_path_buf(),
 			manifest_dir: bundle_dir.to_path_buf(),
+			#[cfg(feature = "feed")]
+			feed: None,
 			formats,
 		}
 	}
