@@ -63,6 +63,12 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 		let enabled = self.enabled;
 		let id = self.id.clone();
 		let count = self.options.len();
+		let segment_height = theme.px(control::HEIGHT_REGULAR) - px(2. * SEGMENTED_PADDING);
+		let container_radius = theme
+			.style
+			.radii
+			.capsule_radius(theme.px(control::HEIGHT_REGULAR));
+		let segment_radius = theme.style.radii.capsule_radius(segment_height);
 		let selected_index = self.options.iter().position(|(value, _)| *value == self.selected);
 		let values: Vec<T> = self.options.iter().map(|(value, _)| value.clone()).collect();
 		let keys = self.on_change.clone().filter(|_| enabled);
@@ -131,7 +137,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 					.bottom(px(SEGMENTED_PADDING))
 					.left(px(left))
 					.w(px(indicator_width))
-					.rounded_full()
+					.rounded(segment_radius)
 					.border_1()
 					.border_color(tokens::mix(chromatic.border, theme.ink(1.), rim));
 				match selected_glass.filter() {
@@ -159,7 +165,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 			.grid_cols_min_content(count.max(1) as u16)
 			.gap(px(SEGMENTED_GAP))
 			.p(px(SEGMENTED_PADDING))
-			.rounded_full()
+			.rounded(container_radius)
 			.bg(container_fill)
 			.border_1()
 			.border_color(with_alpha(
@@ -172,7 +178,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 			// A fast exit can skip a cell's own hover event; leaving the whole control clears all.
 			.clear_hover_on_leave(segment_states)
 			.when(enabled, |this| {
-				this.keyboard_focus(&focus, FocusShape::Capsule, &theme, window)
+				this.keyboard_focus(&focus, FocusShape::Rounded(container_radius), &theme, window)
 			})
 			// Like a macOS segmented control, the arrow keys move the selection itself.
 			.when_some(keys, move |this, on_change| {
@@ -226,7 +232,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Segmented<T> {
 							.whitespace_nowrap()
 							.px(theme.pt(10.))
 							.py(theme.pt(4.))
-							.rounded_full()
+							.rounded(segment_radius)
 							.text_size(theme.text_body())
 							.font_weight(FontWeight::SEMIBOLD)
 							.text_color(foreground)

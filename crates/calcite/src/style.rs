@@ -98,6 +98,9 @@ pub struct Radii {
 	pub hud_pill: Pixels,
 	/// Modals and dialogs.
 	pub modal: Pixels,
+	/// Corner radius of capsule-shaped controls, as a fraction of half their height: `1.` is a
+	/// full capsule and `0.` a square. Read it through [`Radii::capsule_radius`].
+	pub capsule: f32,
 }
 
 impl Radii {
@@ -108,6 +111,7 @@ impl Radii {
 		panel: px(5.),
 		hud_pill: px(8.),
 		modal: px(8.),
+		capsule: 0.2,
 	};
 	/// The launcher's radii.
 	pub const DEFAULT: Self = Self {
@@ -116,6 +120,7 @@ impl Radii {
 		panel: radius::PANEL,
 		hud_pill: radius::HUD_PILL,
 		modal: radius::MODAL,
+		capsule: 1.,
 	};
 	/// Generous, soft corners.
 	pub const ROUND: Self = Self {
@@ -124,9 +129,10 @@ impl Radii {
 		panel: px(24.),
 		hud_pill: px(30.),
 		modal: px(34.),
+		capsule: 1.,
 	};
 
-	/// Every radius times `factor`.
+	/// Every pixel radius times `factor`. `capsule` is a fraction, not a length, so it stays as it is.
 	pub fn scale(self, factor: f32) -> Self {
 		let by = |radius: Pixels| px(f32::from(radius) * factor);
 		Self {
@@ -135,6 +141,19 @@ impl Radii {
 			panel: by(self.panel),
 			hud_pill: by(self.hud_pill),
 			modal: by(self.modal),
+			capsule: self.capsule,
+		}
+	}
+
+	/// The corner radius of a capsule-shaped control `height` tall.
+	/// The corner radius of a capsule-shaped control about `height` tall. A full capsule
+	/// (`capsule >= 1`) returns gpui's `rounded_full` radius, which the renderer clamps to the
+	/// real half-height, so controls whose height is only estimated stay true capsules.
+	pub fn capsule_radius(&self, height: Pixels) -> Pixels {
+		if self.capsule >= 1. {
+			px(9999.)
+		} else {
+			height / 2. * self.capsule
 		}
 	}
 
@@ -148,6 +167,7 @@ impl Radii {
 			panel: lerp(self.panel, to.panel),
 			hud_pill: lerp(self.hud_pill, to.hud_pill),
 			modal: lerp(self.modal, to.modal),
+			capsule: self.capsule + (to.capsule - self.capsule) * t,
 		}
 	}
 }
@@ -276,6 +296,16 @@ mod tests {
 		assert_eq!(mid.control, px((3. + 14.) / 2.));
 		assert_eq!(Radii::SHARP.mix(Radii::ROUND, 0.), Radii::SHARP);
 		assert_eq!(Radii::SHARP.mix(Radii::ROUND, 1.), Radii::ROUND);
+	}
+
+	#[test]
+	fn capsule_radius_is_half_height_scaled_by_the_capsule_fraction() {
+		let height = px(28.);
+		assert!(Radii::DEFAULT.capsule_radius(height) >= px(14.));
+		assert!(Radii::SHARP.capsule_radius(height) < px(14.));
+		let mid = Radii::SHARP.mix(Radii::ROUND, 0.5);
+		assert!((mid.capsule - (Radii::SHARP.capsule + 1.) / 2.).abs() < 1e-6);
+		assert_eq!(mid.capsule_radius(height), mid.capsule * px(14.));
 	}
 
 	#[test]

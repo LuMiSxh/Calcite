@@ -24,6 +24,7 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite`: the default palette is `Palette::NEUTRAL`, graphite surfaces with a blue accent. `Palette::ARKNIGHTS` is a named preset, not the default. `Theme::default` and `Theme::follow_system` use the neutral palette. Pass `Palette::ARKNIGHTS` to keep the old look.
 - `calcite`: `artwork_layer` is replaced by `cover_image(Option<PathBuf>)`. It takes a `.fallback(...)` element that the app supplies, so Calcite no longer draws the "A" glyph or serves the accent slash. `readability_field` is removed; draw your own scrim behind the wordmark.
 - `calcite-bundle`: unknown keys in `[package.metadata.calcite.bundle]` are errors. Before, the bundler ignored them. The error names the key and the manifest.
+- `calcite`: `FocusShape::Capsule` is removed. A capsule control passes `FocusShape::Rounded` with `Radii::capsule_radius` of its height.
 
 ### Changed
 
@@ -49,6 +50,7 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-bundle`: `[package.metadata.calcite.bundle.packager]` merges its keys into the cargo-packager configuration, for options that Calcite does not name.
 - `calcite-bundle`: macOS signing with `[package.metadata.calcite.bundle.macos]` (`signing-identity`, `entitlements`). The DMG is notarized and stapled. Credentials come from `APPLE_NOTARY_KEYCHAIN_PROFILE`, or from `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD`. The Apple ID form puts the password in the `notarytool` arguments, so Calcite warns and recommends the keychain profile.
 - `calcite-bundle`: Windows signing with `[package.metadata.calcite.bundle.windows]` (`certificate-thumbprint`, `timestamp-url`), or with a PFX from `CALCITE_SIGN_CERT` and `CALCITE_SIGN_PASSWORD`. The binary and the installers are signed. A PFX password goes in the `signtool` arguments, so Calcite warns and recommends `certificate-thumbprint`.
+- `calcite`: `Radii::capsule` and `Radii::capsule_radius(height)`. The capsule fraction is 1 by default and 0.2 in `Radii::SHARP`. `capsule_radius` returns half the height times the fraction.
 
 ### Fixed
 
@@ -58,6 +60,7 @@ All notable changes to Calcite are recorded here. The format follows
 - `calcite-bundle`: the `packager` table can no longer set `macos.signing-identity`, `macos.entitlements`, `macos.notarization-credentials`, or the Windows signing keys. Calcite manages them.
 - `calcite-bundle`: a package without a name or a version in cargo metadata is an error, not an empty string.
 - Glass surfaces follow `Style::radii`. The preview's glass style cards, glass elevation cards, and motion lab morph surface kept the default HUD corners. The icon tiles, settings frame, plot boxes, chrome swatches, and motion swatches now follow the active preset too.
+- Capsule controls follow `Style::radii`. Buttons, icon buttons, segmented controls, toggles, sliders, text fields, chips, tags, badges, progress bars, HUD pills, the control bar, the floating action bar, nav markers, and focus rings kept the full pill shape under `Radii::SHARP`. They now use `Radii::capsule_radius`.
 
 ### Security
 

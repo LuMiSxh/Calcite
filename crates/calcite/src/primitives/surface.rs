@@ -122,7 +122,7 @@ impl Surface {
 
 /// The compact capsule of a chip and a menu picker: one padding, gap, and caption text size.
 /// The caller adds the surface, border, and content.
-pub(crate) fn chip_capsule(id: impl Into<ElementId>) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn chip_capsule(id: impl Into<ElementId>, theme: &Theme) -> gpui::Stateful<gpui::Div> {
 	div()
 		.id(id)
 		.relative()
@@ -132,7 +132,12 @@ pub(crate) fn chip_capsule(id: impl Into<ElementId>) -> gpui::Stateful<gpui::Div
 		.gap(px(control::CHIP_GAP))
 		.px(px(control::COMPACT_HORIZONTAL_PADDING))
 		.py(px(control::COMPACT_VERTICAL_PADDING))
-		.rounded_full()
+		.rounded(
+			theme
+				.style
+				.radii
+				.capsule_radius(theme.px(control::HEIGHT_COMPACT)),
+		)
 		.text_size(tokens::text::CAPTION)
 		.font_weight(FontWeight::SEMIBOLD)
 }

@@ -50,7 +50,7 @@ pub(super) fn chip(
 ) -> gpui::Stateful<gpui::Div> {
 	let focus = focus_handle(&id, window, cx);
 	let glass = chip_glass(theme);
-	let chip = chip_capsule(id)
+	let chip = chip_capsule(id, theme)
 		.font_family(theme.sans())
 		.text_color(foreground)
 		.border_1()
@@ -58,7 +58,17 @@ pub(super) fn chip(
 		.child(content)
 		.child(Icon::ChevronUpDown.render(theme.pt(9.), foreground));
 	let chip = chip.when(enabled, |chip| {
-		chip.keyboard_focus(&focus, FocusShape::Capsule, theme, window)
+		chip.keyboard_focus(
+			&focus,
+			FocusShape::Rounded(
+				theme
+					.style
+					.radii
+					.capsule_radius(theme.px(control::HEIGHT_COMPACT)),
+			),
+			theme,
+			window,
+		)
 	});
 	match (enabled, glass.filter()) {
 		(true, Some(_)) if rim <= 0. => chip,

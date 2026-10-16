@@ -149,7 +149,7 @@ impl RenderOnce for Badge {
 			.font_family(theme.sans())
 			.px(theme.pt(control::BADGE_HORIZONTAL_PADDING))
 			.py(theme.pt(control::BADGE_VERTICAL_PADDING))
-			.rounded_full()
+			.rounded(theme.style.radii.capsule_radius(theme.px(control::BADGE_HEIGHT)))
 			.bg(with_alpha(color, 0.16))
 			.border_1()
 			.border_color(with_alpha(color, 0.4))

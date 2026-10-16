@@ -285,7 +285,7 @@ impl RenderOnce for NavItem {
 					.top(px(NAV_ROW_HEIGHT / 2. - 8. * shown))
 					.w(px(3.))
 					.h(px(16. * shown))
-					.rounded_full()
+					.rounded(theme.style.radii.capsule_radius(px(16. * shown)))
 					.bg(theme.accent),
 			)
 		})

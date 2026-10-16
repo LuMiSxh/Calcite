@@ -209,7 +209,7 @@ impl RenderOnce for Pill {
 			Some(morph_width(collapsed_width, expanded_width, open))
 		};
 		let corner = lerp(
-			theme.px(hud::PILL_HEIGHT) / 2.,
+			theme.style.radii.capsule_radius(theme.px(hud::PILL_HEIGHT)),
 			theme.style.radii.hud_pill,
 			open.clamp(0., 1.),
 		);
@@ -426,7 +426,12 @@ impl RenderOnce for ControlBar {
 			.items_center()
 			.gap(px(16.))
 			.p(px(16.))
-			.rounded_full()
+			.rounded(
+				theme
+					.style
+					.radii
+					.capsule_radius(theme.px(control::HEIGHT_REGULAR) + px(32.)),
+			)
 			.font_family(theme.sans())
 			.glass(theme.hud_surface())
 			.border_1()

@@ -149,7 +149,7 @@ impl RenderOnce for Toggle {
 			.top(px((track_height - height) / 2.))
 			.w(px(width))
 			.h(px(height))
-			.rounded_full();
+			.rounded(theme.style.radii.capsule_radius(px(height)));
 		// The knob rims with light for a moment as it lands, then the rim fades out.
 		let thumb = thumb.when(rim > 0.01, |thumb| thumb.border_1().border_color(theme.ink(rim)));
 		let thumb = knob_surface(thumb, lens, height, alpha, 0.28, &theme);
@@ -158,14 +158,14 @@ impl RenderOnce for Toggle {
 		let glow = glows
 			.then(|| glow_layer(&frame, theme.ink(1.)))
 			.flatten()
-			.map(|glow| glow.rounded_full());
+			.map(|glow| glow.rounded(theme.style.radii.capsule_radius(px(track_height))));
 		let track = div()
 			.id(self.id)
 			.relative()
 			.w(px(track_width))
 			.h(px(track_height))
 			.flex_none()
-			.rounded_full()
+			.rounded(theme.style.radii.capsule_radius(px(track_height)))
 			.bg(scale_alpha(track, alpha))
 			.role(Role::Switch)
 			.aria_label(self.label)
@@ -175,7 +175,12 @@ impl RenderOnce for Toggle {
 			.children(glow)
 			.child(thumb)
 			.when(self.enabled, |this| {
-				this.keyboard_focus(&focus, FocusShape::Capsule, &theme, window)
+				this.keyboard_focus(
+					&focus,
+					FocusShape::Rounded(theme.style.radii.capsule_radius(px(track_height))),
+					&theme,
+					window,
+				)
 			});
 		let on_change: Option<SharedChangeHandler<bool>> =
 			self.on_change.filter(|_| self.enabled).map(Rc::from);
