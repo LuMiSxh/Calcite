@@ -23,8 +23,8 @@ impl Preview {
 			.pt(px(14.))
 			// overflow_hidden clips to the frame's rectangle, so the rail's own fill takes the
 			// frame's left corners.
-			.rounded_tl(tokens::radius::MODAL)
-			.rounded_bl(tokens::radius::MODAL)
+			.rounded_tl(theme.style.radii.modal)
+			.rounded_bl(theme.style.radii.modal)
 			.children(Page::ALL.iter().enumerate().map(|(index, page)| {
 				nav_item(
 					SharedString::from(format!("nav-{index}")),
@@ -59,7 +59,7 @@ impl Preview {
 			.flex()
 			.flex_row()
 			.overflow_hidden()
-			.rounded(tokens::radius::MODAL)
+			.rounded(theme.style.radii.modal)
 			.bg(calcite::tokens::stack(&[
 				theme.palette.panel_background,
 				theme.hud_tint,
@@ -99,7 +99,7 @@ impl Preview {
 			.w(px(360.))
 			.h(px(230.))
 			.overflow_hidden()
-			.rounded(tokens::radius::PANEL)
+			.rounded(theme.style.radii.panel)
 			.border_1()
 			.border_color(theme.palette.hairline)
 			.bg(theme.palette.panel_background)

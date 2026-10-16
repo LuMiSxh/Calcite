@@ -10,7 +10,7 @@ use calcite::{
 	glass::{Elevation, GlassExt},
 	motion::{self, Spring},
 	prelude::*,
-	tokens::{self, radius, white},
+	tokens::{self, white},
 };
 use gpui::{
 	Bounds, Context, IntoElement, ParentElement, Pixels, Render, Styled, Task, Window, canvas, div, px,
@@ -151,7 +151,13 @@ impl MotionLab {
 			)
 	}
 
-	fn plot_box(&self, spring: Spring, title: &'static str, accent: gpui::Rgba) -> impl IntoElement + use<> {
+	fn plot_box(
+		&self,
+		spring: Spring,
+		title: &'static str,
+		accent: gpui::Rgba,
+		corner: Pixels,
+	) -> impl IntoElement + use<> {
 		div()
 			.w(px(200.))
 			.flex()
@@ -160,7 +166,7 @@ impl MotionLab {
 			.child(
 				div()
 					.h(px(86.))
-					.rounded(radius::CONTROL)
+					.rounded(corner)
 					.bg(tokens::black(0.45))
 					.border_1()
 					.border_color(white(0.08))
@@ -193,7 +199,11 @@ impl Render for MotionLab {
 		let sample = motion::spring("motion-lab-demo", target, spring, theme.reduce_motion, window, cx);
 		self.peak = self.peak.max(sample.value);
 		let (width, height) = demo_size(sample.value);
-		let radius = lerp(TRIGGER.1 / 2., 22., sample.value.clamp(0., 1.));
+		let radius = lerp(
+			TRIGGER.1 / 2.,
+			f32::from(theme.style.radii.hud_pill),
+			sample.value.clamp(0., 1.),
+		);
 
 		let surface = div()
 			.absolute()
@@ -266,8 +276,13 @@ impl Render for MotionLab {
 								},
 							)),
 					)
-					.child(self.plot_box(self.open_spring, "open", theme.accent))
-					.child(self.plot_box(self.close_spring, "close", theme.accent)),
+					.child(self.plot_box(self.open_spring, "open", theme.accent, theme.style.radii.control))
+					.child(self.plot_box(
+						self.close_spring,
+						"close",
+						theme.accent,
+						theme.style.radii.control,
+					)),
 			)
 			.child(
 				div()

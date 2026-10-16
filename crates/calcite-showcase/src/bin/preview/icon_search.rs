@@ -53,7 +53,7 @@ pub fn page_range(total: usize, page: usize) -> Range<usize> {
 	start..(start + PAGE_SIZE).min(total)
 }
 
-fn tile(glyph: gpui::Svg, name: &'static str) -> impl IntoElement {
+fn tile(glyph: gpui::Svg, name: &'static str, corner: gpui::Pixels) -> impl IntoElement {
 	div()
 		.w(px(96.))
 		.h(px(64.))
@@ -64,7 +64,7 @@ fn tile(glyph: gpui::Svg, name: &'static str) -> impl IntoElement {
 		.justify_center()
 		.gap(px(6.))
 		.px(px(4.))
-		.rounded(tokens::radius::CONTROL)
+		.rounded(corner)
 		.bg(tokens::white(0.05))
 		.border_1()
 		.border_color(tokens::white(0.08))
@@ -86,6 +86,7 @@ impl Preview {
 		let page = self.icon_page.min(pages - 1);
 		let shown = page_range(results.len(), page);
 		let color = theme.palette.primary_text;
+		let corner = theme.style.radii.control;
 
 		div()
 			.flex()
@@ -107,7 +108,7 @@ impl Preview {
 				div().flex().flex_row().flex_wrap().gap(px(10.)).children(
 					Icon::ALL
 						.iter()
-						.map(|icon| tile(icon.render(px(20.), color), icon.name())),
+						.map(|icon| tile(icon.render(px(20.), color), icon.name(), corner)),
 				),
 			)
 			.child(label(format!(
@@ -154,7 +155,7 @@ impl Preview {
 				div().flex().flex_row().flex_wrap().gap(px(10.)).children(
 					results[shown]
 						.iter()
-						.map(|icon| tile(icon.render(px(20.), color), icon.name())),
+						.map(|icon| tile(icon.render(px(20.), color), icon.name(), corner)),
 				),
 			)
 	}

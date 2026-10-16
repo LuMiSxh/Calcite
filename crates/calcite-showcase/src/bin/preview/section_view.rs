@@ -298,11 +298,13 @@ impl Kind {
 			Self::Overlay => preview.overlay_section(cx).into_any_element(),
 			Self::Setup => preview.setup_section(cx).into_any_element(),
 			Self::Notices => preview.notices_section(cx).into_any_element(),
-			Self::Chrome => sections::chrome_section().into_any_element(),
+			Self::Chrome => sections::chrome_section(theme.style.radii.control).into_any_element(),
 			Self::Icons => preview.icons_section(&theme, cx).into_any_element(),
 			Self::Tokens => sections::tokens_section(theme).into_any_element(),
 			Self::Typography => preview.typography_section(cx).into_any_element(),
-			Self::Motion => sections::motion_section(theme.accent).into_any_element(),
+			Self::Motion => {
+				sections::motion_section(theme.accent, theme.style.radii.control).into_any_element()
+			}
 			Self::MotionLab => preview.motion_lab.clone().into_any_element(),
 		}
 	}
