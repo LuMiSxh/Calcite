@@ -604,7 +604,10 @@ fn artwork_tint(path: &std::path::Path) -> Option<calcite::tint::Tint> {
 		}
 	};
 	let (width, height) = image.dimensions();
-	calcite::tint::Extractor::default().extract(image.as_raw(), width as usize, height as usize)
+	let view = calcite::tint::ImageView::packed_rgba(width as usize, height as usize, image.as_raw())
+		.inspect_err(|error| eprintln!("artwork tint: {}: {error}", path.display()))
+		.ok()?;
+	calcite::tint::Extractor::default().extract(view)
 }
 
 fn gigabytes(bytes: f64) -> String {

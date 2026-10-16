@@ -5,6 +5,21 @@ All notable changes to Calcite are recorded here. The format follows
 
 ## [Unreleased]
 
+### Breaking
+
+- `calcite-tint`: `Extractor::extract` takes an `ImageView` instead of a packed RGBA slice and dimensions. Use `ImageView::packed_rgba` for tightly packed RGBA; a malformed buffer returns an `ImageError`.
+- `calcite-tint`: `Hsb` fields are private. Read them with `hue()`, `saturation()`, and `brightness()`, and build colors with `Hsb::new`, which wraps the hue and clamps the other values.
+- `calcite-tint`: `Extractor` drops `hue_buckets` (the bucket count is fixed at 24). Its tuple settings are now `Bounds` and `BackgroundTint`.
+
+### Added
+
+- `calcite-tint`: `ImageView` accepts a row stride and BGRA pixels, so padded or BGRA buffers need no copy.
+
+### Fixed
+
+- `calcite-tint`: a red image no longer loses to a smaller blue area when its hue sits at the 0/1 seam. Hue buckets wrap, and the winning hue is a circular mean.
+- `calcite-tint`: the artwork is averaged over a grid of cells instead of read at one pixel per cell, so the tint no longer depends on image size or a single stray pixel.
+
 ## [0.4.0] - 2026-10-16
 
 ### Added
