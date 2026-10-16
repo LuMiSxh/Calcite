@@ -106,7 +106,8 @@ struct Home {
 	custom_artwork: Option<PathBuf>,
 	music_playing: bool,
 	activity: ActivityStore<Activity>,
-	lease: Option<ActivityLease>,
+	/// Held while the game runs; downloads keep their lease inside the task instead.
+	lease: Option<ActivityLease<Activity>>,
 	transfer: TaskSlot,
 	_clock: Task<()>,
 }
@@ -170,7 +171,7 @@ impl Home {
 
 	fn end_activity(&mut self) {
 		if let Some(lease) = self.lease.take() {
-			self.activity.end(lease);
+			lease.end();
 		}
 	}
 
@@ -178,14 +179,14 @@ impl Home {
 		match self.phase {
 			Phase::NotInstalled | Phase::Paused => self.start_transfer(cx),
 			Phase::Downloading => {
-				// Invalidate first, so suspended work cannot republish stale progress.
-				self.transfer.invalidate();
-				self.end_activity();
+				// Revoke first: the store is idle now, and the cancelled task's lease is stale.
+				drop(self.transfer.cancel());
+				self.activity.revoke();
 				self.phase = Phase::Paused;
 			}
 			Phase::Verifying => {}
 			Phase::Ready => {
-				self.lease = self.activity.begin(Activity::Running);
+				self.lease = self.activity.begin(Activity::Running).ok();
 				if self.lease.is_some() {
 					self.phase = Phase::Running;
 				}
@@ -200,48 +201,44 @@ impl Home {
 	}
 
 	/// Simulates a download whose raw progress is throttled to ~10 Hz, then a verification.
+	/// Simulates a download whose raw progress is throttled to ~10 Hz, then a verification.
 	fn start_transfer(&mut self, cx: &mut Context<Self>) {
-		let Some(lease) = self.activity.begin(Activity::Downloading) else {
+		let Ok(lease) = self.activity.begin(Activity::Downloading) else {
 			return;
 		};
-		self.lease = Some(lease);
 		self.phase = Phase::Downloading;
 		let start = self.progress;
-		self.transfer.run(
-			cx,
-			|home| &mut home.transfer,
-			async move |job| {
-				// The work also stops when its activity lease is no longer current.
-				job.guard(move |home: &Home| home.activity.holds(lease));
-				let mut throttle = Throttle::progress();
-				let started_at = std::time::Instant::now();
-				let rate = DOWNLOAD_RATE * DEMO_SPEEDUP / DOWNLOAD_BYTES;
-				loop {
-					job.sleep(Duration::from_millis(25)).await;
-					let progress = (start + started_at.elapsed().as_secs_f64() * rate).min(1.);
-					if progress >= 1. {
-						break;
-					}
-					job.update_throttled(&mut throttle, |home, cx| {
-						home.progress = progress;
-						cx.notify();
-					})?;
+		// The lease lives in the task: cancelling the task releases it.
+		self.transfer.run(cx, async move |job| {
+			// About 10 Hz; the last value always arrives before the task ends.
+			let progress = job.progress(Duration::from_millis(100), |home: &mut Home, value: f64, cx| {
+				home.progress = value;
+				cx.notify();
+			});
+			let started_at = job.now();
+			let rate = DOWNLOAD_RATE * DEMO_SPEEDUP / DOWNLOAD_BYTES;
+			loop {
+				job.sleep(Duration::from_millis(25)).await;
+				let value = (start + (job.now() - started_at).as_secs_f64() * rate).min(1.);
+				if value >= 1. {
+					break;
 				}
-				job.update(|home, cx| {
-					home.progress = 1.;
-					home.phase = Phase::Verifying;
-					home.activity.update(lease, Activity::Verifying);
-					cx.notify();
-				})?;
-				job.sleep(Duration::from_millis(2600)).await;
-				job.update(|home, cx| {
-					home.end_activity();
-					home.phase = Phase::Ready;
-					home.halo_generation += 1;
-					cx.notify();
-				})
-			},
-		);
+				progress.set(value);
+			}
+			job.update(|home, cx| {
+				home.progress = 1.;
+				home.phase = Phase::Verifying;
+				lease.set(Activity::Verifying);
+				cx.notify();
+			})?;
+			job.sleep(Duration::from_millis(2600)).await;
+			job.update(|home, cx| {
+				lease.end();
+				home.phase = Phase::Ready;
+				home.halo_generation += 1;
+				cx.notify();
+			})
+		});
 	}
 
 	fn toggle_pill(&mut self, pill: Pill, cx: &mut Context<Self>) {

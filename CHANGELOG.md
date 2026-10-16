@@ -9,6 +9,11 @@ All notable changes to Calcite are recorded here. The format follows
 
 - Calcite builds as a plain git dependency. The patched gpui-ce is in `third_party/gpui-ce`, and `scripts/bootstrap.sh`, `scripts/bootstrap.ps1`, and `scripts/publish-gpui-fork.sh` are gone. An app needs no gpui dependency: `calcite` re-exports `gpui` and `platform` (gpui_platform), and `calcite::prelude` includes the common gpui items. Add `use calcite::gpui;` in each module that uses a gpui derive or `actions!`.
 - `calcite` no longer enables gpui-ce features through the workspace. The new features `font-kit`, `image-formats`, `wayland`, and `x11` pass through to gpui-ce and are on by default.
+- `calcite-exec` is redesigned. Replace `TaskSlot::replace`, `begin`, `owns`, `invalidate`, and `finish` with `TaskSlot::run` and `TaskSlot::cancel`. `run` takes no slot selector.
+- `calcite-exec`: `TaskSlot::cancel` and a replacing `run` return `Settled`. The new run starts only after the replaced run, its children, and its `Job::on_cancel` cleanup are gone.
+- `calcite-exec`: `ActivityLease` is not `Copy` and not `Clone`, and it releases when it drops. `ActivityStore::begin` returns `Result<ActivityLease, Busy>`. `holds`, `update`, and `end(lease)` on the store are removed; use `ActivityLease::set`, `end`, and `is_current`, or `ActivityStore::revoke`. `ActivityStore<A>` needs only `A: Default`.
+- `calcite-exec`: `Throttle`, `Job::guard`, `Job::update_throttled`, `Job::check`, and `bounded` are removed. Use `Job::progress`, `Job::is_current`, and `try_bounded`.
+- `calcite-exec`: `Job::read` takes `&self` and reads without an update. `Job::token` returns a `CancellationToken`, not a `SlotToken`. `SlotToken` and `SlotSelector` are removed.
 - `calcite-tint`: `Extractor::extract` takes an `ImageView` instead of a packed RGBA slice and dimensions. Use `ImageView::packed_rgba` for tightly packed RGBA; a malformed buffer returns an `ImageError`.
 - `calcite-tint`: `Hsb` fields are private. Read them with `hue()`, `saturation()`, and `brightness()`, and build colors with `Hsb::new`, which wraps the hue and clamps the other values.
 - `calcite-tint`: `Extractor` drops `hue_buckets` (the bucket count is fixed at 24). Its tuple settings are now `Bounds` and `BackgroundTint`.
@@ -24,6 +29,7 @@ All notable changes to Calcite are recorded here. The format follows
 
 ### Added
 
+- `calcite-exec`: `Job::background`, `Job::tokio` (feature `tokio`), `Job::on_cancel`, `Job::hold`, `Job::sleep` and `Job::now` on the executor clock, `Job::progress` with `Progress` (latest value, trailing edge, final value always published), `Counter`, `try_bounded` with `TryBounded::fail_fast` and `cancel`, and `Spawner`.
 - `calcite-tint`: `ImageView` accepts a row stride and BGRA pixels, so padded or BGRA buffers need no copy.
 - `calcite-update`: a client rejects a replayed feed (a lower `sequence` than it has seen, kept in `update-state.json`), a feed older than `max_feed_age` (default 30 days), and a feed dated more than 5 minutes ahead. `Clock` and `SystemClock` make the time injectable. The new `Error::Stale` names these cases.
 - `calcite-update`: an app can trust several keys by `key_id`, for key rotation. An unknown `key_id` is an error before any parsing.

@@ -1,40 +1,64 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! [`TaskSlot`] and [`Job`]: one in-flight task per slot, and a handle that publishes into
-//! the view only while the work still owns its slot.
+//! [`TaskSlot`]: one in-flight run per slot, with cancellation you can wait for.
 
-use std::{future::Future, time::Duration};
+use std::{
+	cell::Cell,
+	future::Future,
+	pin::Pin,
+	rc::Rc,
+	task::{Context as TaskContext, Poll},
+};
 
-use gpui::{AppContext as _, AsyncApp, Context, Task, WeakEntity};
+use futures::{FutureExt as _, channel::oneshot, future::Shared};
+use gpui::Context;
+use tokio_util::sync::CancellationToken;
 
-use crate::Throttle;
+use crate::job::{Job, JobResult, Shared as JobShared};
 
-/// Identity of one run of a [`TaskSlot`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct SlotToken(u64);
+/// Resolves when a cancelled run is completely gone: its work future, its children, and its
+/// [`Job::on_cancel`] cleanup. Cloning is cheap. Dropping it does not stop the cleanup.
+#[derive(Clone)]
+pub struct Settled {
+	done: Rc<Cell<bool>>,
+	signal: Shared<oneshot::Receiver<()>>,
+}
 
-/// The work no longer owns its slot, a guard failed, or the view is gone. Return it with
-/// `?` to stop quietly; it is not an error to report.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stale;
+impl Settled {
+	fn ready() -> Self {
+		let (tx, rx) = oneshot::channel();
+		tx.send(()).ok();
+		Self {
+			done: Rc::new(Cell::new(true)),
+			signal: rx.shared(),
+		}
+	}
 
-impl std::fmt::Display for Stale {
-	fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		formatter.write_str("the work was replaced, invalidated, or its view was dropped")
+	/// Whether the run is gone already.
+	pub fn is_settled(&self) -> bool {
+		self.done.get()
 	}
 }
 
-impl std::error::Error for Stale {}
+impl Future for Settled {
+	type Output = ();
 
-/// The result type of work run in a slot.
-pub type JobResult<T = ()> = Result<T, Stale>;
+	fn poll(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<()> {
+		Pin::new(&mut self.signal).poll(cx).map(|_| ())
+	}
+}
 
-/// Owns at most one in-flight task and rejects results from replaced or invalidated work.
+struct Run {
+	root: CancellationToken,
+	settled: Settled,
+}
+
+/// Owns at most one in-flight run. A new [`run`](Self::run) cancels the old one, and the new
+/// work starts only after the old run settled, so two runs never overlap. Keep one slot per
+/// key (for example in a map) when several runs may proceed side by side.
 #[derive(Default)]
 pub struct TaskSlot {
-	task: Option<Task<()>>,
-	current: u64,
-	active: bool,
+	run: Option<Run>,
 }
 
 impl TaskSlot {
@@ -42,173 +66,92 @@ impl TaskSlot {
 		Self::default()
 	}
 
-	/// Cancels the running task and returns a fresh token for work the caller runs itself.
-	pub fn begin(&mut self) -> SlotToken {
-		// Dropping a GPUI task cancels it at its next suspension point.
-		self.task = None;
-		self.current += 1;
-		self.active = true;
-		SlotToken(self.current)
+	/// Whether a run is in flight and not cancelled.
+	pub fn is_running(&self) -> bool {
+		self.run
+			.as_ref()
+			.is_some_and(|run| !run.root.is_cancelled() && !run.settled.is_settled())
 	}
 
-	/// Cancels the running task and runs `work` under a fresh token. `slot` selects this slot
-	/// from the view, for example `|view| &mut view.download`. The slot turns idle when the
-	/// work returns, unless newer work replaced it.
+	/// Cancels the run. Its work future drops at the next `await`, its children are cancelled
+	/// and awaited, and then its [`Job::on_cancel`] cleanup runs to completion. Await the
+	/// result to wait for all of that. Dropping it is safe: the cleanup still runs.
+	#[must_use = "await it when later work must not overlap the cancelled run"]
+	pub fn cancel(&mut self) -> Settled {
+		match &self.run {
+			Some(run) => {
+				run.root.cancel();
+				run.settled.clone()
+			}
+			None => Settled::ready(),
+		}
+	}
+
+	/// Cancels the current run and starts `work` after that run settled. Returns the
+	/// [`Settled`] of the replaced run. The view redraws when the run ends.
 	///
 	/// ```ignore
-	/// self.download.run(cx, |view| &mut view.download, async move |job| {
+	/// self.download.run(cx, async move |job| {
 	///     job.sleep(Duration::from_millis(100)).await;
-	///     job.update(|view, cx| { view.progress = 0.5; cx.notify(); })?;
-	///     Ok(())
+	///     job.update(|view, cx| { view.progress = 0.5; cx.notify(); })
 	/// });
 	/// ```
-	pub fn run<V, F>(&mut self, cx: &mut Context<V>, slot: SlotSelector<V>, work: F) -> SlotToken
+	pub fn run<V, F>(&mut self, cx: &mut Context<V>, work: F) -> Settled
 	where
 		V: 'static,
 		F: AsyncFnOnce(&mut Job<'_, V>) -> JobResult + 'static,
 	{
-		let token = self.begin();
-		self.task = Some(cx.spawn(async move |view, cx| {
-			let mut job = Job {
-				token,
-				view,
-				cx,
-				slot,
-				guards: Vec::new(),
+		let replaced = self.cancel();
+		let root = CancellationToken::new();
+		let (finished, signal) = oneshot::channel();
+		let settled = Settled {
+			done: Rc::new(Cell::new(false)),
+			signal: signal.shared(),
+		};
+		self.run = Some(Run {
+			root: root.clone(),
+			settled: settled.clone(),
+		});
+
+		let waiting_for = replaced.clone();
+		cx.spawn(async move |view, cx| {
+			waiting_for.await;
+			let shared = Rc::new(JobShared::default());
+			let result = if root.is_cancelled() {
+				None
+			} else {
+				let mut job = Job {
+					view: view.clone(),
+					cx: &mut *cx,
+					root: root.clone(),
+					shared: shared.clone(),
+				};
+				root.run_until_cancelled(work(&mut job)).await
 			};
-			// Stale work ends quietly; current work releases its slot either way.
-			let _ = work(&mut job).await;
-			job.view
-				.update(job.cx, |view, cx| {
-					if slot(view).finish(token) {
-						cx.notify();
-					}
-				})
-				.ok();
-		}));
-		token
-	}
+			let completed = result.is_some() && !root.is_cancelled();
 
-	/// Cancels the running task and starts `operation` under a fresh token. Prefer
-	/// [`TaskSlot::run`]; this is the lower-level form with a plain token.
-	pub fn replace<V, F>(&mut self, cx: &mut Context<V>, operation: F) -> SlotToken
-	where
-		V: 'static,
-		F: AsyncFnOnce(SlotToken, WeakEntity<V>, &mut AsyncApp) + 'static,
-	{
-		let token = self.begin();
-		self.task = Some(cx.spawn(async move |this, cx| operation(token, this, cx).await));
-		token
-	}
-
-	pub fn owns(&self, token: SlotToken) -> bool {
-		self.active && self.current == token.0
-	}
-
-	/// Whether work started from this slot is still running.
-	pub fn is_running(&self) -> bool {
-		self.active
-	}
-
-	/// Marks the slot idle once its work finished normally. A stale token changes nothing.
-	pub fn finish(&mut self, token: SlotToken) -> bool {
-		if !self.owns(token) {
-			return false;
-		}
-		self.active = false;
-		self.task = None;
-		true
-	}
-
-	/// Cancels the running task and makes every outstanding token stale.
-	pub fn invalidate(&mut self) {
-		self.task = None;
-		self.active = false;
-		self.current += 1;
+			if completed && shared.has_progress() {
+				view.update(cx, |view, cx| shared.flush(view, cx)).ok();
+			}
+			root.cancel();
+			shared.reap().await;
+			if !completed {
+				shared.clean_up().await;
+			}
+			shared.release_leases();
+			settled.done.set(true);
+			view.update(cx, |_, cx| cx.notify()).ok();
+			let _ = finished.send(());
+		})
+		.detach();
+		replaced
 	}
 }
 
-type Guard<V> = Box<dyn Fn(&V) -> bool>;
-
-/// Selects a slot inside its view, for example `|view| &mut view.download`.
-pub type SlotSelector<V> = fn(&mut V) -> &mut TaskSlot;
-
-/// The handle work receives in [`TaskSlot::run`]. Every read and write rechecks that the
-/// work still owns its slot and that every guard still holds.
-pub struct Job<'a, V> {
-	token: SlotToken,
-	view: WeakEntity<V>,
-	cx: &'a mut AsyncApp,
-	slot: SlotSelector<V>,
-	guards: Vec<Guard<V>>,
-}
-
-impl<V: 'static> Job<'_, V> {
-	pub fn token(&self) -> SlotToken {
-		self.token
-	}
-
-	/// Adds an identity check, for example that an activity lease is still current. Like the
-	/// slot token, it is rechecked before every publish.
-	pub fn guard(&mut self, guard: impl Fn(&V) -> bool + 'static) -> &mut Self {
-		self.guards.push(Box::new(guard));
-		self
-	}
-
-	/// Publishes into the view if the work is still current.
-	pub fn update<R>(&mut self, update: impl FnOnce(&mut V, &mut Context<V>) -> R) -> JobResult<R> {
-		let slot = self.slot;
-		let token = self.token;
-		let guards = &self.guards;
-		self.view
-			.update(self.cx, |view, cx| {
-				if !slot(view).owns(token) || !guards.iter().all(|guard| guard(view)) {
-					return Err(Stale);
-				}
-				Ok(update(view, cx))
-			})
-			.unwrap_or(Err(Stale))
-	}
-
-	/// Reads from the view if the work is still current.
-	pub fn read<R>(&mut self, read: impl FnOnce(&V) -> R) -> JobResult<R> {
-		self.update(|view, _| read(view))
-	}
-
-	/// Publishes only when `throttle` admits a value now; returns whether it published.
-	pub fn update_throttled(
-		&mut self,
-		throttle: &mut Throttle,
-		update: impl FnOnce(&mut V, &mut Context<V>),
-	) -> JobResult<bool> {
-		if !throttle.admit(std::time::Instant::now()) {
-			// Still fail fast when the work was replaced while it skipped frames.
-			self.check()?;
-			return Ok(false);
+impl Drop for TaskSlot {
+	fn drop(&mut self) {
+		if let Some(run) = &self.run {
+			run.root.cancel();
 		}
-		self.update(update).map(|()| true)
-	}
-
-	/// Fails with [`Stale`] when the work is no longer current.
-	pub fn check(&mut self) -> JobResult {
-		self.read(|_| ())
-	}
-
-	/// Waits without blocking the UI thread.
-	pub async fn sleep(&mut self, duration: Duration) {
-		self.cx.background_executor().timer(duration).await;
-	}
-
-	/// Runs CPU or blocking work off the UI thread and returns its result.
-	pub async fn background<R: Send + 'static>(
-		&mut self,
-		work: impl Future<Output = R> + Send + 'static,
-	) -> R {
-		self.cx.background_spawn(work).await
-	}
-
-	/// The underlying async context, for APIs this handle does not wrap.
-	pub fn async_cx(&mut self) -> &mut AsyncApp {
-		self.cx
 	}
 }

@@ -1,14 +1,21 @@
 [package]
 name = "calcite-exec"
-description = "Minimal execution layer for gpui-ce views: task slots, activity leases, progress throttling, bounded parallelism"
+description = "Execution layer for gpui-ce views: cancellable task slots, activity leases, throttled progress, bounded parallelism"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Bridge to a tokio runtime: `Job::tokio` and `Spawner::Tokio`. The default build has no runtime.
+tokio = ["dep:tokio", "tokio-util/rt"]
+
 [dependencies]
 gpui.workspace = true
 futures.workspace = true
+tokio-util = "0.7.19"
+tokio = { version = "1", optional = true, default-features = false, features = ["rt"] }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "sync", "time"] }
