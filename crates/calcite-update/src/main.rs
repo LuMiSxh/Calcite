@@ -10,7 +10,7 @@ use std::{
 	process::ExitCode,
 };
 
-use calcite_update::{Delta, Envelope, Feed, Target, publish, stage, target_id};
+use calcite_update::{Envelope, Feed, publish, stage, target_id};
 
 const USAGE: &str = "\
 Writes and signs releases for calcite-update clients.
@@ -19,13 +19,16 @@ Usage:
   calcite-update keygen
       Prints a new signing seed (keep it secret) and its public key.
 
-  calcite-update release --product ID --channel NAME --version X.Y.Z --bundle PATH --out DIR
-                         [--name APP] [--target ID] [--notes FILE] [--previous X.Y.Z=PATH]...
+  calcite-update release --product ID --channel NAME --version X.Y.Z --sequence N --bundle PATH
+                         --out DIR [--name APP] [--target ID] [--notes FILE]
+                         [--minimum-version X.Y.Z] [--previous X.Y.Z=PATH]...
       Writes the full package and one delta per --previous tree into DIR, and adds the
-      target to DIR/feed.json (created when missing). Run it once per target.
+      target to DIR/feed.json (created when missing). Run it once per target. --sequence
+      must be higher than the sequence of every feed you signed before.
 
-  calcite-update sign --feed DIR/feed.json --out DIR/update.json
-      Signs the feed. The seed comes from CALCITE_UPDATE_KEY or standard input.
+  calcite-update sign --feed DIR/feed.json --out DIR/update.json --key-id ID
+      Signs the feed and stamps it with the current time. The seed comes from
+      CALCITE_UPDATE_KEY or standard input.
 
   calcite-update extract --feed FILE --package FILE --into DIR [--target ID]
       Rebuilds an earlier release's tree from its full package, for deltas.";
@@ -108,62 +111,54 @@ fn release(flags: &Flags) -> Result<(), String> {
 	let channel = flags.require("channel")?;
 	let version = flags.require("version")?;
 	version.parse::<calcite_update::Version>()?;
+	let sequence: u64 = flags
+		.require("sequence")?
+		.parse()
+		.map_err(|_| "--sequence takes a whole number")?;
+	let minimum_version = flags.get("minimum-version");
+	if let Some(minimum) = minimum_version {
+		minimum.parse::<calcite_update::Version>()?;
+	}
 	let bundle = PathBuf::from(flags.require("bundle")?);
 	let out = PathBuf::from(flags.require("out")?);
 	let target = flags.get("target").map_or_else(target_id, str::to_string);
 	let name = flags.get("name").unwrap_or("app");
-	fs::create_dir_all(&out).map_err(|error| format!("{}: {error}", out.display()))?;
+	let mut previous = Vec::new();
+	for argument in flags.all("previous") {
+		let (from, root) = argument.split_once('=').ok_or("--previous takes VERSION=PATH")?;
+		previous.push((from.to_string(), PathBuf::from(root)));
+	}
 
-	let entries = publish::scan(&bundle).map_err(|error| error.to_string())?;
-	let full_path = out.join(format!("{name}-{version}-{target}.full.zst"));
-	let full = publish::write_full(&bundle, &entries, &full_path).map_err(|error| error.to_string())?;
-	println!("full   {} ({} bytes)", full.name, full.size);
-
-	let mut deltas = Vec::new();
-	for previous in flags.all("previous") {
-		let (from, root) = previous.split_once('=').ok_or("--previous takes VERSION=PATH")?;
-		let root = PathBuf::from(root);
-		let old_entries = publish::scan(&root).map_err(|error| error.to_string())?;
-		let path = out.join(format!("{name}-{from}-{version}-{target}.delta"));
-		let asset = publish::write_delta(&root, &old_entries, &bundle, &entries, from, version, &path)
-			.map_err(|error| error.to_string())?;
-		println!("delta  {} ({} bytes)", asset.name, asset.size);
-		deltas.push(Delta {
-			from: from.to_string(),
-			asset,
-		});
+	let built = publish::build_target(&bundle, &out, name, version, &target, &previous)
+		.map_err(|error| error.to_string())?;
+	println!("full   {} ({} bytes)", built.full.name, built.full.size);
+	for delta in &built.deltas {
+		println!("delta  {} ({} bytes)", delta.asset.name, delta.asset.size);
 	}
 
 	let feed_path = out.join("feed.json");
 	let mut feed = if feed_path.exists() {
 		read_feed(&feed_path)?
 	} else {
-		Feed {
-			format: Feed::FORMAT,
-			product: product.to_string(),
-			channel: channel.to_string(),
-			version: version.to_string(),
-			notes: String::new(),
-			targets: BTreeMap::new(),
-		}
+		publish::FeedBuilder::new(product, channel, version, sequence, publish::now()).build()
 	};
-	if feed.product != product || feed.channel != channel || feed.version != version {
+	if feed.product != product
+		|| feed.channel != channel
+		|| feed.version != version
+		|| feed.sequence != sequence
+	{
 		return Err(format!(
-			"{} is for another product, channel, or version",
+			"{} is for another product, channel, version, or sequence",
 			feed_path.display()
 		));
+	}
+	if let Some(minimum) = minimum_version {
+		feed.minimum_version = Some(minimum.to_string());
 	}
 	if let Some(notes) = flags.get("notes") {
 		feed.notes = fs::read_to_string(notes).map_err(|error| format!("{notes}: {error}"))?;
 	}
-	feed.targets.insert(
-		target,
-		Target {
-			entries,
-			full,
-			deltas,
-		},
-	);
+	feed.targets.insert(target, built);
 	let text = serde_json::to_string_pretty(&feed).map_err(|error| error.to_string())?;
 	fs::write(&feed_path, text).map_err(|error| format!("{}: {error}", feed_path.display()))?;
 	println!("feed   {}", feed_path.display());
@@ -171,8 +166,10 @@ fn release(flags: &Flags) -> Result<(), String> {
 }
 
 fn sign(flags: &Flags) -> Result<(), String> {
-	let feed = read_feed(Path::new(flags.require("feed")?))?;
+	let mut feed = read_feed(Path::new(flags.require("feed")?))?;
 	let out = PathBuf::from(flags.require("out")?);
+	let key_id = flags.require("key-id")?;
+	feed.issued_at = publish::now();
 	// The seed never travels in arguments, which other processes can read.
 	let seed = match std::env::var("CALCITE_UPDATE_KEY") {
 		Ok(seed) => seed,
@@ -185,9 +182,8 @@ fn sign(flags: &Flags) -> Result<(), String> {
 		}
 	};
 	let key = publish::signing_key(seed.trim()).map_err(|error| error.to_string())?;
-	let envelope = publish::sign(&feed, &key).map_err(|error| error.to_string())?;
-	let text = serde_json::to_string_pretty(&envelope).map_err(|error| error.to_string())?;
-	fs::write(&out, text).map_err(|error| format!("{}: {error}", out.display()))?;
+	let bytes = publish::sign_feed(&feed, key_id, &key).map_err(|error| error.to_string())?;
+	fs::write(&out, bytes).map_err(|error| format!("{}: {error}", out.display()))?;
 	println!("signed {}", out.display());
 	Ok(())
 }
