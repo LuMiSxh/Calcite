@@ -228,6 +228,22 @@ Replace it at runtime. The dynamic accent stays:
 Theme::update(cx, |theme| *theme = theme.with_palette(Palette::ARKNIGHTS));
 ```
 
+To build a whole palette from three seeds, use `Palette::from_seeds`:
+
+```rust
+let palette = Palette::from_seeds(Seeds {
+	accent: tokens::rgba(0.90, 0.35, 0.20, 1.),
+	backdrop: tokens::rgba(0.05, 0.08, 0.12, 1.),
+	appearance: Appearance::Dark,
+});
+```
+
+The base is `Palette::NEUTRAL` for `Appearance::Dark` and `Palette::LIGHT` for `Appearance::Light`.
+The accent is used as given. The panel, the navigation colors, and the HUD tint lean 20% toward
+the backdrop and keep their alpha. Text, ink, shade, neutrals, and status colors come from the base.
+`Seeds`, `Appearance`, and `HueTint` are in `calcite::palette`. `hud_hue_tint` is a `HueTint`,
+built with `HueTint::new(saturation, brightness, opacity)`.
+
 ### Dynamic Theme
 
 Dynamic Theme changes two values only: the accent and the hue of the HUD tint. The palette
