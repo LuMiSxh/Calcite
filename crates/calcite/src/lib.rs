@@ -35,7 +35,8 @@ pub mod tokens;
 
 // The groups are for navigation only: every module stays at its original path (`calcite::controls`).
 pub use components::{
-	app_icon, choice, chrome, controls, feedback, forms, hud, layout, menu, notice, overlay, progress, ticker,
+	app_icon, artwork, choice, chrome, controls, feedback, forms, hud, layout, menu, notice, overlay,
+	progress, ticker,
 };
 pub use primitives::{
 	attached, continuous, frame_stats, glass, glass_group, interaction, keymap, morph, motion,

@@ -6,6 +6,7 @@
 //! Every module is also reachable at the crate root (`calcite::controls`, `calcite::forms`...).
 
 pub mod app_icon;
+pub mod artwork;
 pub mod choice;
 pub mod chrome;
 pub mod controls;

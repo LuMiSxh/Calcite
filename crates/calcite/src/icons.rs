@@ -182,7 +182,9 @@ pub struct Assets {
 
 impl Default for Assets {
 	fn default() -> Self {
-		let assets = Self { entries: Vec::new() }.icons::<Icon>();
+		let assets = Self { entries: Vec::new() }
+			.icons::<Icon>()
+			.with(crate::artwork::SLASH_PATH, crate::artwork::SLASH_SVG);
 		#[cfg(feature = "lucide")]
 		let assets = assets.icons::<Lucide>();
 		assets
