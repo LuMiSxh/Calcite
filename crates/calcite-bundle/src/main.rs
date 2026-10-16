@@ -22,6 +22,9 @@ Options:
                        Needs the `feed` feature, --sequence, and CALCITE_UPDATE_KEY
       --sequence N     The feed sequence; it must rise with every feed the apps have seen
       --notes FILE     Release notes for the feed, in Markdown
+      --previous VERSION=PATH
+                       An earlier release's installable tree (the .app folder, AppImage, or exe).
+                       Adds a delta from it to the feed. Repeat for each release; needs --feed
   -h, --help           Show this help
 
 Settings live in [package.metadata.calcite.bundle] of the app's Cargo.toml.";
@@ -74,6 +77,7 @@ fn main() -> ExitCode {
 fn parse(args: &[String]) -> Result<Option<Options>, String> {
 	let mut options = Options::default();
 	let (mut feed, mut sequence, mut notes) = (false, None, None);
+	let mut previous = Vec::new();
 	let mut args = args.iter();
 	while let Some(arg) = args.next() {
 		let mut value = |name: &str| {
@@ -103,14 +107,25 @@ fn parse(args: &[String]) -> Result<Option<Options>, String> {
 				)
 			}
 			"--notes" => notes = Some(PathBuf::from(value(arg)?)),
+			"--previous" => {
+				let text = value(arg)?;
+				let (version, path) = text
+					.split_once('=')
+					.ok_or_else(|| format!("--previous takes VERSION=PATH, not `{text}`"))?;
+				previous.push((version.to_string(), PathBuf::from(path)));
+			}
 			"-h" | "--help" => return Ok(None),
 			other => return Err(format!("unknown option `{other}`")),
 		}
 	}
 	if feed {
-		options.feed = Some(FeedOptions { sequence, notes });
-	} else if sequence.is_some() || notes.is_some() {
-		return Err("--sequence and --notes need --feed".to_string());
+		options.feed = Some(FeedOptions {
+			sequence,
+			notes,
+			previous,
+		});
+	} else if sequence.is_some() || notes.is_some() || !previous.is_empty() {
+		return Err("--sequence, --notes, and --previous need --feed".to_string());
 	}
 	Ok(Some(options))
 }
