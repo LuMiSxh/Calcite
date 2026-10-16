@@ -482,6 +482,7 @@ impl<'a> FrameEncoder<'a> {
                             opacity: boundary.opacity,
                             clip: FilterCompositeClip::ContentShape,
                             glass: None,
+                            drop_shadow: boundary.drop_shadow(),
                         },
                     );
                     pass = begin_scene_render_pass(

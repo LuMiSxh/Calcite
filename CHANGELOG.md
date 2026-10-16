@@ -19,11 +19,13 @@ All notable changes to Calcite are recorded here. The format follows
 
 ### Changed
 
-- The gpui-ce patch is split into `0001-paint-transform`, `0002-glass`, and `0003-cached-view-fix`. `scripts/vendor-sync.sh` rebuilds `third_party/gpui-ce`, and CI checks that it matches.
+- The gpui-ce patch is split into `0001-paint-transform`, `0002-glass`, `0003-cached-view-fix`, `0004-radial-gradient`, and `0005-drop-shadow`. `scripts/vendor-sync.sh` rebuilds `third_party/gpui-ce`, and CI checks that it matches.
 - `rust-version` is 1.97, shared through the workspace. `scripts/check.sh` checks the format with `cargo fmt --check`. CI pins Rust 1.97 and runs the tests on Linux, macOS, and Windows.
 
 ### Added
 
+- The gpui-ce patch adds `0004-radial-gradient` (`gpui::radial_gradient`, a `Background`) and `0005-drop-shadow` (`Filter::DropShadow`, a shadow that follows the alpha of the content). Both work on Metal, wgpu, and Direct3D. `patches/NEW_API.md` lists the API.
+- `calcite::prelude`: `radial_gradient`, `DropShadowExt::drop_shadow` for an element, and `text_shadow` for a blurred text shadow. The preview has an Effects section.
 - `calcite-tint`: `ImageView` accepts a row stride and BGRA pixels, so padded or BGRA buffers need no copy.
 - `calcite-update`: a client rejects a replayed feed (a lower `sequence` than it has seen, kept in `update-state.json`), a feed older than `max_feed_age` (default 30 days), and a feed dated more than 5 minutes ahead. `Clock` and `SystemClock` make the time injectable. The new `Error::Stale` names these cases.
 - `calcite-update`: an app can trust several keys by `key_id`, for key rotation. An unknown `key_id` is an error before any parsing.

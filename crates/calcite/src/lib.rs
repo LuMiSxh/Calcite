@@ -47,7 +47,7 @@ pub use components::{
 	progress, ticker,
 };
 pub use primitives::{
-	attached, continuous, frame_stats, glass, glass_group, interaction, keymap, morph, motion,
+	attached, continuous, effects, frame_stats, glass, glass_group, interaction, keymap, morph, motion,
 };
 // Crate-private helpers extracted from components.
 pub(crate) use primitives::{knob, surface};
@@ -93,6 +93,7 @@ pub mod prelude {
 		chrome::{ChromeStyle, title_bar, window_frame},
 		continuous::ContinuousMotion,
 		controls::{Size, ThemeOverride, Tone, button, halo, icon_button},
+		effects::{DropShadowExt, radial_gradient, text_shadow},
 		feedback::{TooltipExt, badge, skeleton},
 		forms::{segmented, slider, text_field, text_state, toggle},
 		glass::{Elevation, Glass, GlassExt},

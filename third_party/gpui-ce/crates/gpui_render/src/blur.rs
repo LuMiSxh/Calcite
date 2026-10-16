@@ -5,7 +5,7 @@ pub use crate::shaders::{
         Corners as ShaderCorners, DownsampleMode,
     },
 };
-use gpui::{Bounds, Corners, ScaledGlass, ScaledPixels};
+use gpui::{Bounds, Corners, ScaledDropShadow, ScaledGlass, ScaledPixels};
 use wgsl_rs::std::{vec2f, vec4f};
 
 pub const DOWNSAMPLE_FACTOR: u32 = 2;
@@ -41,6 +41,16 @@ pub struct FilterCompositeParameters {
     pub clip: FilterCompositeClip,
     /// Composites refractive glass instead of the plain blur.
     pub glass: Option<ScaledGlass>,
+    /// Draws a tinted, shifted copy of the blurred alpha, then the sharp source, instead of the
+    /// blurred source. Content filters only.
+    pub drop_shadow: Option<ScaledDropShadow>,
+}
+
+/// Extra margin a drop shadow adds around the blurred bounds: the shadow moves by its offset.
+pub fn drop_shadow_margin(shadow: Option<ScaledDropShadow>) -> f32 {
+    shadow.map_or(0.0, |shadow| {
+        shadow.offset.x.0.abs().max(shadow.offset.y.0.abs())
+    })
 }
 
 /// Extra blurred margin a glass composite samples beyond its bounds.
@@ -135,6 +145,37 @@ impl BlurUniforms {
 }
 
 impl BlurUniforms {
+    /// Turns a composite into the shadow of the blurred source. `None` keeps the plain blur.
+    pub fn with_drop_shadow(mut self, shadow: Option<ScaledDropShadow>) -> Self {
+        let Some(shadow) = shadow else {
+            return self;
+        };
+        let [r, g, b, a] = shadow.color;
+        self.shadow_color = vec4f(r, g, b, a.clamp(0.0, 1.0));
+        self.shadow_offset = vec4f(shadow.offset.x.0, shadow.offset.y.0, 1.0, 0.0);
+        self
+    }
+
+    /// Composites the full-resolution source as it is, over a drop shadow. It has no corner
+    /// rounding: a content filter does not clip to its shape.
+    pub fn content_copy(
+        bounds: Bounds<ScaledPixels>,
+        content_mask: Bounds<ScaledPixels>,
+        opacity: f32,
+        size: [f32; 2],
+    ) -> Self {
+        Self::composite(
+            bounds,
+            content_mask,
+            Corners::default(),
+            0.0,
+            opacity,
+            FilterCompositeClip::ContentShape,
+            size,
+            size,
+        )
+    }
+
     /// Enables the glass branch of the composite shader. `None` keeps the plain blur.
     pub fn with_glass(mut self, glass: Option<ScaledGlass>) -> Self {
         let Some(ScaledGlass {
@@ -325,6 +366,8 @@ fn empty_uniforms(downsample_mode: DownsampleMode) -> BlurUniforms {
         glass_rects: [vec4f(0.0, 0.0, 0.0, 0.0); 8],
         glass_radii: [vec4f(0.0, 0.0, 0.0, 0.0); 8],
         glass_border: vec4f(0.0, 0.0, 0.0, 0.0),
+        shadow_color: vec4f(0.0, 0.0, 0.0, 0.0),
+        shadow_offset: vec4f(0.0, 0.0, 0.0, 0.0),
     }
 }
 

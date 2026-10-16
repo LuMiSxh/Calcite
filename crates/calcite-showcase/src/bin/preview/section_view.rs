@@ -73,6 +73,7 @@ pub enum Kind {
 	Actions,
 	Choices,
 	Glow,
+	Effects,
 	Forms,
 	Menus,
 	Selection,
@@ -91,12 +92,13 @@ pub enum Kind {
 }
 
 impl Kind {
-	pub const ALL: [Self; 20] = [
+	pub const ALL: [Self; 21] = [
 		Self::Glass,
 		Self::Style,
 		Self::Actions,
 		Self::Choices,
 		Self::Glow,
+		Self::Effects,
 		Self::Forms,
 		Self::Menus,
 		Self::Selection,
@@ -119,6 +121,7 @@ impl Kind {
 		match self {
 			Self::Glass
 			| Self::Glow
+			| Self::Effects
 			| Self::Tokens
 			| Self::Typography
 			| Self::Icons
@@ -142,6 +145,7 @@ impl Kind {
 			Self::Actions => Lucide::MousePointer2,
 			Self::Choices => Lucide::Check,
 			Self::Glow => Lucide::Sparkles,
+			Self::Effects => Lucide::Droplet,
 			Self::Forms => Lucide::ToggleRight,
 			Self::Menus => Lucide::ChevronDown,
 			Self::Selection => Lucide::ListFilter,
@@ -167,6 +171,7 @@ impl Kind {
 			Self::Actions => "Buttons and actions",
 			Self::Choices => "Choices and chips",
 			Self::Glow => "Cursor glow",
+			Self::Effects => "Effects",
 			Self::Forms => "Forms",
 			Self::Menus => "Menu morph",
 			Self::Selection => "Selection and nav",
@@ -198,6 +203,7 @@ impl Kind {
 			}
 			Self::Choices => "choice_card · chip · badge · tag, by kind, selection and enabled state".into(),
 			Self::Glow => "move the cursor over it: glow(true) next to glow(false)".into(),
+			Self::Effects => "radial_gradient · drop_shadow · text_shadow".into(),
 			Self::Forms => "toggle · slider · segmented · text_field, by state".into(),
 			Self::Menus => "menu_picker · action_menu: the menu morphs out of its trigger".into(),
 			Self::Selection => {
@@ -265,6 +271,7 @@ impl Kind {
 			| Self::Style
 			| Self::Actions
 			| Self::Glow
+			| Self::Effects
 			| Self::Choices
 			| Self::Selection
 			| Self::Overlay
@@ -289,6 +296,7 @@ impl Kind {
 			Self::Actions => preview.actions_section(&theme).into_any_element(),
 			Self::Choices => preview.choices_section(&theme).into_any_element(),
 			Self::Glow => preview.glow_section().into_any_element(),
+			Self::Effects => super::effects::effects_section(&theme).into_any_element(),
 			Self::Forms => preview.forms_section(cx).into_any_element(),
 			Self::Menus => preview.menus_section(cx).into_any_element(),
 			Self::Selection => preview.selection_section().into_any_element(),

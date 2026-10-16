@@ -559,6 +559,63 @@ pub enum Filter {
     /// saturation, a fill, a Fresnel rim, a specular highlight, and an optional pointer light.
     /// Only meaningful as a backdrop filter; as a content filter it acts as its blur.
     Glass(GlassFilter),
+    /// A shadow that follows the alpha of the element's painted content (text, images, SVG,
+    /// shapes). Only meaningful as a content filter; as a backdrop filter it acts as its blur.
+    DropShadow(DropShadowFilter),
+}
+
+/// Parameters of [`Filter::DropShadow`], in logical pixels. The color is straight-alpha sRGB.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DropShadowFilter {
+    /// How far the shadow is shifted from the content.
+    pub offset: Point<Pixels>,
+    /// Gaussian blur radius of the shadow. `0` still softens the edge by about a pixel.
+    pub blur: Pixels,
+    /// The shadow color. Its alpha scales the alpha of the content.
+    pub color: [f32; 4],
+}
+
+impl DropShadowFilter {
+    /// A drop shadow of `color`, shifted by `offset` and blurred by `blur`.
+    pub fn new(offset: Point<Pixels>, blur: Pixels, color: [f32; 4]) -> Self {
+        Self {
+            offset,
+            blur,
+            color,
+        }
+    }
+
+    fn scale(&self, factor: f32) -> ScaledDropShadow {
+        ScaledDropShadow {
+            offset: self.offset.scale(factor),
+            blur: self.blur.scale(factor),
+            color: self.color,
+        }
+    }
+}
+
+/// The scene-space form of [`DropShadowFilter`]: lengths in device pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[expect(missing_docs)]
+pub struct ScaledDropShadow {
+    pub offset: Point<ScaledPixels>,
+    pub blur: ScaledPixels,
+    pub color: [f32; 4],
+}
+
+impl ScaledDropShadow {
+    /// Applies a uniform paint transform: lengths scale. The offset is a vector, so the
+    /// translation does not apply to it.
+    pub fn transformed(&self, scale: f32) -> Self {
+        Self {
+            offset: Point {
+                x: self.offset.x * scale,
+                y: self.offset.y * scale,
+            },
+            blur: self.blur * scale,
+            ..*self
+        }
+    }
 }
 
 /// Parameters of [`Filter::Glass`], in logical pixels. Colors are straight-alpha sRGB.
@@ -839,6 +896,7 @@ impl ScaledFilter {
             ScaledFilter::Glass(glass) => {
                 ScaledFilter::Glass(glass.transformed(scale, translation))
             }
+            ScaledFilter::DropShadow(shadow) => ScaledFilter::DropShadow(shadow.transformed(scale)),
         }
     }
 }
@@ -854,6 +912,7 @@ impl Filter {
         match self {
             Filter::Blur(radius) => *radius <= Pixels::ZERO,
             Filter::Glass(_) => false,
+            Filter::DropShadow(shadow) => shadow.color[3] <= 0.0,
         }
     }
 
@@ -863,6 +922,7 @@ impl Filter {
         match self {
             Filter::Blur(radius) => ScaledFilter::Blur(radius.scale(factor)),
             Filter::Glass(glass) => ScaledFilter::Glass(glass.scale(factor)),
+            Filter::DropShadow(shadow) => ScaledFilter::DropShadow(shadow.scale(factor)),
         }
     }
 }
@@ -880,6 +940,8 @@ pub enum ScaledFilter {
     Blur(ScaledPixels),
     /// A refractive glass material; see [`Filter::Glass`].
     Glass(ScaledGlassFilter),
+    /// A shadow that follows the alpha of the content; see [`Filter::DropShadow`].
+    DropShadow(ScaledDropShadow),
 }
 
 /// How to handle whitespace in text

@@ -7,6 +7,7 @@
 
 pub mod attached;
 pub mod continuous;
+pub mod effects;
 pub mod frame_stats;
 pub mod glass;
 pub mod glass_group;

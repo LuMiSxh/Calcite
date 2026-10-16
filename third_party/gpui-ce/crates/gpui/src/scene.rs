@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Pixels, Point,
-    Radians, ScaledFilter, ScaledGlass, ScaledGlassFilter, ScaledGlassGroup, ScaledPixels, Size,
-    bounds_tree::BoundsTree, point,
+    Radians, ScaledDropShadow, ScaledFilter, ScaledGlass, ScaledGlassFilter, ScaledGlassGroup,
+    ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
 use smallvec::SmallVec;
 use std::{
@@ -943,6 +943,16 @@ impl FilterBoundary {
     pub fn max_blur_radius(&self) -> f32 {
         max_blur_radius(&self.filters)
     }
+
+    /// The drop shadow drawn under the isolated content, if the chain has one. The last drop
+    /// shadow wins. The content itself stays sharp; the largest blur radius of the chain is the
+    /// blur of the shadow.
+    pub fn drop_shadow(&self) -> Option<ScaledDropShadow> {
+        self.filters.iter().rev().find_map(|filter| match filter {
+            ScaledFilter::DropShadow(shadow) => Some(*shadow),
+            ScaledFilter::Blur(_) | ScaledFilter::Glass(_) => None,
+        })
+    }
 }
 
 /// Returns the largest blur radius in a scene-space filter chain.
@@ -954,13 +964,15 @@ fn max_blur_radius(filters: &[ScaledFilter]) -> f32 {
         ScaledFilter::Blur(filter_radius) => radius.max(filter_radius.0),
         // The renderer needs a blur pass to sample from, so glass always blurs a little.
         ScaledFilter::Glass(glass) => radius.max(glass.blur.0.max(1.0)),
+        // A hard shadow still needs the blur passes to read the content alpha from.
+        ScaledFilter::DropShadow(shadow) => radius.max(shadow.blur.0.max(1.0)),
     })
 }
 
 /// The glass material of a filter chain, if any. The last glass filter wins.
 fn glass_filter(filters: &[ScaledFilter]) -> Option<ScaledGlassFilter> {
     filters.iter().rev().find_map(|filter| match filter {
-        ScaledFilter::Blur(_) => None,
+        ScaledFilter::Blur(_) | ScaledFilter::DropShadow(_) => None,
         ScaledFilter::Glass(glass) => Some(*glass),
     })
 }

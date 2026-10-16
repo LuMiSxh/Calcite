@@ -239,7 +239,9 @@ pub const RENDER_BUFFER_LAYOUTS: &[gpui::SceneBufferLayout] = &[
         glass_group,
         glass_rects,
         glass_radii,
-        glass_border
+        glass_border,
+        shadow_color,
+        shadow_offset
     ),
     render_layout!(crate::path_types::PathSprite, "PathSprite", bounds),
     render_layout!(

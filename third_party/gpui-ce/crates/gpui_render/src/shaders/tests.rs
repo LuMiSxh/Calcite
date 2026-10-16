@@ -190,6 +190,10 @@ fn shader_discriminants_match_scene_types() {
         gpui::BackgroundTag::Checkerboard as u32
     );
     assert_eq!(
+        common::BackgroundTag::RadialGradient as u32,
+        gpui::BackgroundTag::RadialGradient as u32
+    );
+    assert_eq!(
         common::ColorSpace::Srgb as u32,
         gpui::ColorSpace::Srgb as u32
     );
@@ -204,6 +208,56 @@ fn shader_discriminants_match_scene_types() {
     assert_eq!(
         common::BorderStyle::Dashed as u32,
         gpui::BorderStyle::Dashed as u32
+    );
+}
+
+#[test]
+fn radial_gradient_runs_from_its_center_to_its_radius() {
+    use common::*;
+    use wgsl_rs::std::*;
+
+    let stop = |l: f32, percentage: f32| LinearColorStop {
+        color: Hsla {
+            h: 0.0,
+            s: 0.0,
+            l,
+            a: 1.0,
+        },
+        percentage,
+    };
+    let background = Background {
+        tag: BackgroundTag::RadialGradient,
+        color_space: ColorSpace::Srgb,
+        // Center at (0.5, 0.5) of the bounds.
+        solid: Hsla {
+            h: 0.5,
+            s: 0.5,
+            l: 0.0,
+            a: 0.0,
+        },
+        gradient_angle_or_pattern_height: 0.5,
+        colors: [stop(0.0, 0.0), stop(1.0, 1.0)],
+        padding: 0,
+    };
+    let bounds = Bounds {
+        origin: vec2f(10.0, 20.0),
+        size: vec2f(100.0, 200.0),
+    };
+    let paint = Paint::new(background, bounds);
+    let prepared = prepare_paint(paint);
+    let center = paint_color(paint, vec2f(60.0, 120.0), prepared);
+    let inside = paint_color(paint, vec2f(60.0 + 25.0, 120.0), prepared);
+    let beyond = paint_color(paint, vec2f(60.0, 120.0 + 80.0), prepared);
+
+    // The radius is half of the shorter side (50 px): black in the middle, white from there out.
+    assert!(center.x < 0.01, "center is the first stop: {center:?}");
+    assert!(
+        inside.x > center.x + 0.05 && inside.x < beyond.x,
+        "color grows with distance: {center:?} {inside:?} {beyond:?}"
+    );
+    assert!(
+        beyond.x > 0.95,
+        "past the radius is the last stop: {beyond:?}"
     );
 }
 
