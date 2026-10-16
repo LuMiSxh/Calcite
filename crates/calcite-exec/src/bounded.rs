@@ -12,7 +12,10 @@ use std::{
 use futures::{Stream, StreamExt as _, future::join_all, stream::FuturesUnordered};
 use tokio_util::sync::CancellationToken;
 
-use crate::spawn::{Spawned, Spawner};
+use crate::{
+	job::Stale,
+	spawn::{Spawned, Spawner},
+};
 
 type Next<T, E> = Box<dyn FnMut(&Spawner, &CancellationToken) -> Option<Spawned<Result<T, E>>>>;
 
@@ -95,18 +98,23 @@ impl<T: 'static, E: 'static> Stream for TryBounded<T, E> {
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
 		let this = &mut *self;
-		this.fill();
-		match this.running.poll_next_unpin(cx) {
-			Poll::Ready(Some(result)) => {
-				if this.fail_fast && result.is_err() {
-					this.stop();
-					this.running = FuturesUnordered::new();
-				} else {
-					this.fill();
+		loop {
+			this.fill();
+			match this.running.poll_next_unpin(cx) {
+				Poll::Ready(Some(Ok(result))) => {
+					if this.fail_fast && result.is_err() {
+						this.stop();
+						this.running = FuturesUnordered::new();
+					} else {
+						this.fill();
+					}
+					return Poll::Ready(Some(result));
 				}
-				Poll::Ready(Some(result))
+				// The tokio runtime shut down: no item can finish, so start no more.
+				Poll::Ready(Some(Err(Stale))) => this.stop(),
+				Poll::Ready(None) => return Poll::Ready(None),
+				Poll::Pending => return Poll::Pending,
 			}
-			other => other,
 		}
 	}
 }

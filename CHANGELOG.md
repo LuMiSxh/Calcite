@@ -29,7 +29,7 @@ All notable changes to Calcite are recorded here. The format follows
 
 ### Added
 
-- `calcite-exec`: `Job::background`, `Job::tokio` (feature `tokio`), `Job::on_cancel`, `Job::hold`, `Job::sleep` and `Job::now` on the executor clock, `Job::progress` with `Progress` (latest value, trailing edge, final value always published), `Counter`, `try_bounded` with `TryBounded::fail_fast` and `cancel`, and `Spawner`.
+- `calcite-exec`: `Job::background`, `Job::tokio` (feature `tokio`, returns `JobResult` and fails with `Stale` when the runtime shuts down), `Job::on_cancel`, `Job::hold`, `Job::sleep` and `Job::now` on the executor clock, `Job::progress` with `Progress` (latest value, trailing edge, final value always published), `Counter`, `try_bounded` with `TryBounded::fail_fast` and `cancel`, and `Spawner`.
 - `calcite-tint`: `ImageView` accepts a row stride and BGRA pixels, so padded or BGRA buffers need no copy.
 - `calcite-update`: a client rejects a replayed feed (a lower `sequence` than it has seen, kept in `update-state.json`), a feed older than `max_feed_age` (default 30 days), and a feed dated more than 5 minutes ahead. `Clock` and `SystemClock` make the time injectable. The new `Error::Stale` names these cases.
 - `calcite-update`: an app can trust several keys by `key_id`, for key rotation. An unknown `key_id` is an error before any parsing.

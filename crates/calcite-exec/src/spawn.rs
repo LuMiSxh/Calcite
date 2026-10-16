@@ -12,6 +12,8 @@ use std::{
 use futures::channel::oneshot;
 use gpui::{BackgroundExecutor, Task};
 
+use crate::job::Stale;
+
 /// The executor that runs spawned work.
 #[derive(Clone)]
 pub enum Spawner {
@@ -78,26 +80,30 @@ pub(crate) struct Spawned<R> {
 }
 
 impl<R: 'static> Spawned<R> {
-	pub(crate) async fn stop(self) {
+	/// Cancels the work now. The returned future resolves once the work is really gone.
+	pub(crate) fn stop(self) -> impl Future<Output = ()> {
 		let Self { kind, gone } = self;
 		drop(kind);
-		// Resolves with `Canceled` when the sender drops; both mean the future is gone.
-		let _ = gone.await;
+		async move {
+			// Resolves with `Canceled` when the sender drops; both mean the future is gone.
+			let _ = gone.await;
+		}
 	}
 }
 
+/// Fails with [`Stale`] when the tokio runtime shut down before the work finished.
 impl<R: 'static> Future for Spawned<R> {
-	type Output = R;
+	type Output = Result<R, Stale>;
 
-	fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<R> {
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
 		match &mut self.kind {
-			Kind::Task(task) => task.as_mut().poll(cx),
+			Kind::Task(task) => task.as_mut().poll(cx).map(Ok),
 			#[cfg(feature = "tokio")]
 			Kind::Tokio(handle) => handle.as_mut().poll(cx).map(|joined| match joined {
-				Ok(value) => value,
+				Ok(value) => Ok(value),
 				Err(error) => match error.try_into_panic() {
 					Ok(payload) => panic::resume_unwind(payload),
-					Err(_) => panic!("the tokio runtime shut down while work was running"),
+					Err(_) => Err(Stale),
 				},
 			}),
 		}

@@ -16,6 +16,10 @@ use gpui::{AppContext as _, TestAppContext};
 
 use crate::prelude::*;
 
+mod lifecycle;
+#[cfg(feature = "tokio")]
+mod tokio_parallel;
+
 #[derive(Default, Debug)]
 enum Work {
 	#[default]
@@ -281,7 +285,7 @@ async fn a_replaced_run_aborts_its_tokio_task(cx: &mut TestAppContext) {
 				let _guard = guard;
 				futures::future::pending::<()>().await;
 			})
-			.await;
+			.await?;
 			Ok(())
 		});
 	});

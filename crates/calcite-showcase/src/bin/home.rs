@@ -201,7 +201,6 @@ impl Home {
 	}
 
 	/// Simulates a download whose raw progress is throttled to ~10 Hz, then a verification.
-	/// Simulates a download whose raw progress is throttled to ~10 Hz, then a verification.
 	fn start_transfer(&mut self, cx: &mut Context<Self>) {
 		let Ok(lease) = self.activity.begin(Activity::Downloading) else {
 			return;

@@ -100,13 +100,15 @@ impl<V> Shared<V> {
 /// until the work is gone before it finishes.
 struct Child<R: 'static> {
 	spawned: Option<Spawned<R>>,
+	/// The child's own token, so cancelling one child leaves its siblings running.
+	token: CancellationToken,
 	reaper: Reaper,
 }
 
 impl<R: 'static> Future for Child<R> {
-	type Output = R;
+	type Output = JobResult<R>;
 
-	fn poll(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<R> {
+	fn poll(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
 		let spawned = self.spawned.as_mut().expect("polled after completion");
 		let output = Pin::new(spawned).poll(cx);
 		if output.is_ready() {
@@ -118,6 +120,7 @@ impl<R: 'static> Future for Child<R> {
 
 impl<R: 'static> Drop for Child<R> {
 	fn drop(&mut self) {
+		self.token.cancel();
 		if let Some(spawned) = self.spawned.take() {
 			self.reaper.borrow_mut().push(spawned.stop().boxed_local());
 		}
@@ -216,15 +219,18 @@ impl<V: 'static> Job<'_, V> {
 	{
 		let spawner = Spawner::Background(self.cx.background_executor().clone());
 		self.child(&spawner, work)
+			.map(|output| output.unwrap_or_else(|Stale| unreachable!("gpui tasks do not fail")))
 	}
 
 	/// Runs `work` on a tokio runtime. Cancelling the run aborts the task and the run waits for it.
+	/// Dropping the returned future cancels the task. It fails with [`Stale`] when the runtime
+	/// shuts down before the work finishes.
 	#[cfg(feature = "tokio")]
 	pub fn tokio<R, Fut, W>(
 		&self,
 		handle: &tokio::runtime::Handle,
 		work: W,
-	) -> impl Future<Output = R> + use<R, Fut, W, V>
+	) -> impl Future<Output = JobResult<R>> + use<R, Fut, W, V>
 	where
 		W: FnOnce(CancellationToken) -> Fut + Send + 'static,
 		R: Send + 'static,
@@ -240,8 +246,10 @@ impl<V: 'static> Job<'_, V> {
 		Fut: Future<Output = R> + Send + 'static,
 	{
 		let token = self.token();
+		let child_token = token.clone();
 		Child {
-			spawned: Some(spawner.spawn(async move { work(token).await })),
+			spawned: Some(spawner.spawn(async move { work(child_token).await })),
+			token,
 			reaper: self.shared.reaper.clone(),
 		}
 	}
