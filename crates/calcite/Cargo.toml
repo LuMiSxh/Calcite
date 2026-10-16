@@ -1,8 +1,9 @@
 [package]
 name = "calcite"
-version = "0.2.1"
+version.workspace = true
 description = "A glass UI library for gpui-ce: Liquid Glass looks of macOS 26 and 27, spring motion, controls, forms, menus, panels, modals, and HUD surfaces"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository = "https://github.com/LuMiSxh/Calcite"
@@ -12,18 +13,26 @@ categories = ["gui"]
 include = ["src/**/*", "assets/**/*", "examples/**/*", "build.rs", "README.md", "LICENSE"]
 
 [features]
-default = ["lucide", "tint", "fonts"]
+default = ["lucide", "tint", "fonts", "font-kit", "image-formats", "wayland", "x11"]
 # The full Lucide set as the `Lucide` enum (about 2100 icons, 0.9 MB of SVG).
 lucide = []
 # Plus Jakarta Sans and Fira Code (SIL OFL 1.1), registered by `calcite::fonts::register`.
 fonts = []
 # Dynamic theme colors from artwork through calcite-tint.
 tint = ["dep:calcite-tint"]
+# macOS text through Core Text and font-kit.
+font-kit = ["gpui_platform/font-kit", "gpui/font-kit"]
+# PNG, JPEG, and the other default image formats of gpui.
+image-formats = ["gpui/image-default-formats"]
+# Linux window system backends.
+wayland = ["gpui_platform/wayland", "gpui/wayland"]
+x11 = ["gpui_platform/x11", "gpui/x11"]
 # `CALCITE_FRAME_STATS=1` prints draw and present timings once a second (builds gpui's profiler).
 frame-stats = ["gpui/profiler"]
 
 [dependencies]
 gpui.workspace = true
+gpui_platform.workspace = true
 gpui_ce_elements.workspace = true
 smallvec = "1"
 calcite-tint = { workspace = true, optional = true }
@@ -40,7 +49,6 @@ harness = false
 required-features = ["fonts"]
 
 [dev-dependencies]
-gpui_platform.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 # Reads the name table of the bundled fonts in tests; the version gpui already locks.
 skrifa = "0.44"

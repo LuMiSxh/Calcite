@@ -5,6 +5,16 @@ All notable changes to Calcite are recorded here. The format follows
 
 ## [Unreleased]
 
+### Breaking
+
+- Calcite builds as a plain git dependency. The patched gpui-ce is in `third_party/gpui-ce`, and `scripts/bootstrap.sh`, `scripts/bootstrap.ps1`, and `scripts/publish-gpui-fork.sh` are gone. An app needs no gpui dependency: `calcite` re-exports `gpui` and `platform` (gpui_platform), and `calcite::prelude` includes the common gpui items. Add `use calcite::gpui;` in each module that uses a gpui derive or `actions!`.
+- `calcite` no longer enables gpui-ce features through the workspace. The new features `font-kit`, `image-formats`, `wayland`, and `x11` pass through to gpui-ce and are on by default.
+
+### Changed
+
+- The gpui-ce patch is split into `0001-paint-transform`, `0002-glass`, and `0003-cached-view-fix`. `scripts/vendor-sync.sh` rebuilds `third_party/gpui-ce`, and CI checks that it matches.
+- `rust-version` is 1.97, shared through the workspace. `scripts/check.sh` checks the format with `cargo fmt --check`. CI pins Rust 1.97 and runs the tests on Linux, macOS, and Windows.
+
 ## [0.4.0] - 2026-10-16
 
 ### Added

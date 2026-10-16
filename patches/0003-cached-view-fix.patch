@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Calcite <calcite@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 22:16:10 +0200
+Subject: [PATCH 3/3] fix(view): carry element states of a reused cached view
+
+A cached view reuses its prepaint range without the element states it created while rendering.
+Also fill the new Quad fields in the debug overlay.
+
+diff --git a/crates/gpui/src/debug_overlay.rs b/crates/gpui/src/debug_overlay.rs
+index 7e580e840e..c1a10f97a3 100644
+--- a/crates/gpui/src/debug_overlay.rs
++++ b/crates/gpui/src/debug_overlay.rs
+@@ -220,12 +220,16 @@ fn solid_quad(
+     Quad {
+         order: 0,
+         border_style: BorderStyle::Solid,
++        border_dashed_length: 0.0,
++        border_dashed_gap: 0.0,
+         bounds,
+         content_mask: *content_mask,
+         background: color.into(),
+         border_color: transparent_black().into(),
+         corner_radii: Corners::default(),
+         border_widths: Edges::default(),
++        corner_smoothing: 0.0,
++        padding: 0,
+     }
+ }
+ 
+diff --git a/crates/gpui/src/view.rs b/crates/gpui/src/view.rs
+index 1751d41818..55d9d37826 100644
+--- a/crates/gpui/src/view.rs
++++ b/crates/gpui/src/view.rs
+@@ -350,6 +350,9 @@ pub struct ViewElementRequestLayoutState {
+     element: Option<AnyElement>,
+     detached_layout_id: Option<LayoutId>,
+     accessed_entities: FxHashSet<EntityId>,
++    /// Where this frame's accessed element states stood before the view rendered, so the
++    /// states it created while rendering are carried over when the view is reused.
++    accessed_element_states_start: Option<usize>,
+ }
+ 
+ #[derive(Default)]
+@@ -412,6 +415,7 @@ impl<V: View> Element for ViewElement<V> {
+                     !known || window.dirty_views.contains(&entity_id) || window.refreshing;
+ 
+                 if should_probe {
++                    let accessed_element_states_start = window.accessed_element_states_len();
+                     let ((element, detached_layout_id), accessed_entities) = cx
+                         .detect_accessed_entities(|cx| {
+                             let mut element = render_view(self.view.take().unwrap(), window, cx);
+@@ -430,6 +434,7 @@ impl<V: View> Element for ViewElement<V> {
+                             element: Some(element),
+                             detached_layout_id: Some(detached_layout_id),
+                             accessed_entities,
++                            accessed_element_states_start: Some(accessed_element_states_start),
+                         },
+                     );
+                 }
+@@ -509,7 +514,13 @@ impl<V: View> Element for ViewElement<V> {
+                         }
+ 
+                         let refreshing = mem::replace(&mut window.refreshing, true);
+-                        let prepaint_start = window.prepaint_index();
++                        let mut prepaint_start = window.prepaint_index();
++                        if let Some(start) = request_layout.accessed_element_states_start.take() {
++                            Window::extend_prepaint_range_from_accessed_element_states(
++                                &mut prepaint_start,
++                                start,
++                            );
++                        }
+                         let mut accessed_entities =
+                             mem::take(&mut request_layout.accessed_entities);
+                         let (element, additional_entities) = cx.detect_accessed_entities(|cx| {
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 3302cb9b53..86a4686189 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -2321,6 +2321,19 @@ mod content_mask_tests {
+ }
+ 
+ impl Window {
++    /// How many element states this frame has accessed so far. A cached view records it
++    /// before rendering in `request_layout`, so the states its render touches join its reuse range.
++    pub(crate) fn accessed_element_states_len(&self) -> usize {
++        self.next_frame.accessed_element_states.len()
++    }
++
++    pub(crate) fn extend_prepaint_range_from_accessed_element_states(
++        range_start: &mut PrepaintStateIndex,
++        accessed_element_states_index: usize,
++    ) {
++        range_start.accessed_element_states_index = accessed_element_states_index;
++    }
++
+     fn mark_view_dirty(&mut self, view_id: EntityId) {
+         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
+         // should already be dirty.

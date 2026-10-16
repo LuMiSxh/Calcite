@@ -16,6 +16,8 @@ env:
   CARGO_TERM_COLOR: always
   # Dependencies build without debug info (see Cargo.toml); CI also skips incremental state.
   CARGO_INCREMENTAL: "0"
+  # The toolchain of rust-version in Cargo.toml; keep the two in step.
+  RUSTUP_TOOLCHAIN: "1.97"
 
 jobs:
   linux:
@@ -34,10 +36,7 @@ jobs:
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb-shape0-dev libxcb-xfixes0-dev libfontconfig-dev
 
       - name: Set up Rust
-        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
-
-      - name: Fetch and patch gpui-ce
-        run: ./scripts/bootstrap.sh
+        run: rustup toolchain install 1.97 --profile minimal --component clippy,rustfmt
 
       - name: Check the developer preview with frame stats
         run: cargo check -p calcite-showcase --features frame-stats --bin preview
@@ -48,8 +47,26 @@ jobs:
       - name: Package the developer preview as a deb
         run: cargo run -p calcite-bundle -- calcite bundle -p calcite-showcase --bin preview --format deb --debug
 
+  vendor:
+    name: third_party/gpui-ce matches the patches
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rebuild third_party/gpui-ce
+        run: ./scripts/vendor-sync.sh
+
+      - name: Fail on any difference
+        run: |
+          git diff --exit-code third_party/
+          test -z "$(git status --porcelain third_party/)"
+
   macos:
-    name: Lint (macOS, Metal)
+    name: Lint and test (macOS, Metal)
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -59,13 +76,13 @@ jobs:
           persist-credentials: false
 
       - name: Set up Rust
-        run: rustup toolchain install stable --profile minimal --component clippy
-
-      - name: Fetch and patch gpui-ce
-        run: ./scripts/bootstrap.sh
+        run: rustup toolchain install 1.97 --profile minimal --component clippy
 
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
 
   windows:
     name: Build (Windows, Direct3D)
@@ -78,14 +95,13 @@ jobs:
           persist-credentials: false
 
       - name: Set up Rust
-        run: rustup toolchain install stable --profile minimal
-
-      - name: Fetch and patch gpui-ce
-        shell: pwsh
-        run: ./scripts/bootstrap.ps1
+        run: rustup toolchain install 1.97 --profile minimal
 
       - name: Build
         run: cargo build --workspace --all-targets
+
+      - name: Test the crates without a GPU
+        run: cargo test -p calcite-tint -p calcite-update -p calcite-exec
 
       - name: Package the developer preview as a standalone exe
         run: cargo run -p calcite-bundle -- calcite bundle -p calcite-showcase --bin preview --format exe --debug --no-build

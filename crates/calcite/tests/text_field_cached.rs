@@ -8,8 +8,8 @@ use std::{cell::Cell, rc::Rc};
 
 use calcite::{EditableTextState, prelude::*};
 use gpui::{
-	AnyWindowHandle, AppContext as _, Context, Entity, EntityInputHandler as _, Focusable as _, IntoElement,
-	ParentElement, Render, StyleRefinement, Styled, TestAppContext, Window, WindowHandle, div, px,
+	AnyWindowHandle, Context, Entity, EntityInputHandler as _, IntoElement, ParentElement, Render,
+	StyleRefinement, Styled, TestAppContext, Window, WindowHandle, div, px,
 };
 
 struct Section {

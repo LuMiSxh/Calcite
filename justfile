@@ -6,15 +6,15 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Fetch gpui-ce and apply the glass patch; rerun after patches/ changes.
+# Rebuild third_party/gpui-ce from upstream gpui-ce and patches/ (maintainers; needs network).
 [group('Setup')]
-bootstrap:
-    ./scripts/bootstrap.sh
+vendor-sync:
+    ./scripts/vendor-sync.sh
 
-# Regenerate patches/gpui-ce-glass.patch from vendor/gpui-ce, then prove it reproduces that tree.
+# Edit the gpui-ce patches: `just patch-regen init` makes a working clone, plain `just patch-regen` exports its commits.
 [group('Setup')]
-patch-regen:
-    ./scripts/patch-regen.sh
+patch-regen *args='':
+    ./scripts/patch-regen.sh {{ args }}
 
 # Run the developer preview (default) or the home screen; extra arguments go to the binary, e.g. an artwork image for home.
 [group('Development')]
@@ -26,7 +26,7 @@ run bin='preview' *args='':
 stats bin='preview':
     CALCITE_FRAME_STATS=1 cargo run --release --features frame-stats --bin {{ quote(bin) }}
 
-# Format, lint, and test the Calcite crates.
+# Check the format, lint, and test the Calcite crates.
 [group('Checks')]
 check:
     ./scripts/check.sh
@@ -41,14 +41,10 @@ test *args='':
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
 
-# Format each Calcite crate on its own, so the vendored gpui-ce stays untouched.
+# Format the Calcite crates (the vendored gpui-ce is a separate workspace and stays untouched).
 [group('Checks')]
 format:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for crate in calcite calcite-exec calcite-tint calcite-bundle calcite-update calcite-showcase; do
-        cargo fmt -p "$crate"
-    done
+    cargo fmt
 
 # Package the developer preview ("Calcite - preview") as app, dmg, nsis, wix (MSI), exe, deb, appimage, or standalone (the host's single file); default: the host's native formats.
 [group('Packaging')]

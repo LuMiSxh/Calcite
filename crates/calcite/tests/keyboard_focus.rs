@@ -8,8 +8,8 @@ use std::{cell::Cell, cell::RefCell, rc::Rc};
 
 use calcite::{EditableTextState, prelude::*};
 use gpui::{
-	AnyWindowHandle, AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement, Render,
-	Styled, TestAppContext, Window, WindowHandle, div, px,
+	AnyWindowHandle, Context, Entity, IntoElement, ParentElement, Render, Styled, TestAppContext, Window,
+	WindowHandle, div, px,
 };
 
 fn draw<V: Render>(window: WindowHandle<V>, cx: &mut TestAppContext) {

@@ -309,6 +309,7 @@ mod tests {
 			.split("pub mod prelude {")
 			.nth(1)
 			.and_then(|rest| rest.split("\n}\n").next())
+			.and_then(|prelude| prelude.split("// gpui re-exports.").next())
 			.expect("lib.rs declares the prelude");
 		let mut names = Vec::new();
 		let mut word = String::new();

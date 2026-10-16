@@ -8,8 +8,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use calcite::prelude::*;
 use gpui::{
-	AnyWindowHandle, AppContext as _, ClickEvent, Context, IntoElement, ParentElement, Render, Styled,
-	TestAppContext, Window, WindowHandle, div, px,
+	AnyWindowHandle, ClickEvent, Context, IntoElement, ParentElement, Render, Styled, TestAppContext, Window,
+	WindowHandle, div, px,
 };
 
 struct Rails {

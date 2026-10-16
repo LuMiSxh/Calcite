@@ -5,12 +5,12 @@
 //! not, so this test has no harness (`harness = false` in Cargo.toml) and runs `main` itself.
 
 use calcite::fonts::{Family, register};
-use gpui::Application;
+use calcite::gpui::Application;
 
 fn main() {
 	// The platform may end the process when the app quits, so the check runs before `quit`
 	// and reports through the exit code.
-	Application::with_platform(gpui_platform::current_platform(true)).run(|cx| {
+	Application::with_platform(calcite::platform::current_platform(true)).run(|cx| {
 		register(cx);
 		let names = cx.text_system().all_font_names();
 		let missing: Vec<&str> = Family::ALL

@@ -8,9 +8,7 @@ use calcite::{
 	forms::{Slider, Toggle},
 	prelude::*,
 };
-use gpui::{
-	AnyElement, Context, FontWeight, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px,
-};
+use gpui::{AnyElement, Context, FontWeight, IntoElement, ParentElement, SharedString, Styled, div, px};
 
 use super::{
 	Display, Preview,

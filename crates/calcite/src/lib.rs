@@ -9,13 +9,16 @@
 //! ```ignore
 //! use calcite::prelude::*;
 //!
-//! gpui_platform::application().with_assets(Assets::default()).run(|cx| {
+//! calcite::platform::application().with_assets(Assets::default()).run(|cx| {
 //!     calcite::init(cx);
 //!     // In a view's render:
 //!     // control_bar(status("Ready to play")).action(button("play", "Play").accent().large().icon(Icon::Play))
 //! });
 //! ```
 //!
+//! - Calcite re-exports gpui-ce as [`gpui`] and its platform entry point as [`platform`]. An app
+//!   needs no gpui dependency of its own. Add `use calcite::gpui;` to each module that uses a
+//!   gpui derive or macro (`#[derive(IntoElement)]`, `actions!`): they expand to `gpui::...` paths.
 //! - Every component reads the app [`Theme`] with `cx.theme()`; `.theme(theme)` overrides
 //!   it per component.
 //! - Builders are free functions named after the component (`button`, `toggle`, `modal`...),
@@ -23,6 +26,11 @@
 //! - Glass needs the patched gpui-ce with `Filter::Glass`; see the crate README.
 //! - Icons come from [Lucide](https://lucide.dev): [`Icon`](icons::Icon) for the components, and
 //!   `Lucide` for the full set (default `lucide` feature).
+
+/// The patched gpui-ce that Calcite builds on.
+pub use gpui;
+/// The gpui-ce platform entry point: `calcite::platform::application()`.
+pub use gpui_platform as platform;
 
 pub mod components;
 pub mod fonts;
@@ -105,6 +113,14 @@ pub mod prelude {
 		progress::{OutlineMode, progress_outline},
 		ticker::ticker,
 		tokens,
+	};
+	// gpui re-exports. The common gpui items let an app import only Calcite. Calcite's own
+	// names win over the glob. The showcase coverage test reads the prelude above this line.
+	pub use gpui::prelude::*;
+	pub use gpui::{
+		AnyElement, App, Bounds, ClickEvent, Entity, FocusHandle, Focusable, Hsla, Pixels, Point, Rgba,
+		SharedString, Window, WindowBounds, WindowOptions, actions, div, hsla, point, px, rems, rgb, rgba,
+		size,
 	};
 }
 

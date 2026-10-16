@@ -1,0 +1,565 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Calcite <calcite@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 22:16:09 +0200
+Subject: [PATCH 1/3] feat(window): add a paint-time transform
+
+Window::with_paint_transform scales everything painted inside a closure about a point.
+Layout, hit-testing, and content masks are unaffected; sprites keep their raster and scale on the GPU.
+
+diff --git a/crates/gpui/src/scene.rs b/crates/gpui/src/scene.rs
+index da07fdd02a..b1a1277bef 100644
+--- a/crates/gpui/src/scene.rs
++++ b/crates/gpui/src/scene.rs
+@@ -1279,6 +1279,29 @@ where
+     }
+ }
+ 
++impl Path<ScaledPixels> {
++    /// Applies the uniform paint transform `p' = scale * p + translation` (device pixels).
++    /// Curve coordinates are unaffected, so the path rasterises identically at the new size.
++    pub fn transform(&mut self, scale: f32, translation: Point<ScaledPixels>) {
++        let map = |point: Point<ScaledPixels>| Point {
++            x: point.x * scale + translation.x,
++            y: point.y * scale + translation.y,
++        };
++        self.bounds = Bounds {
++            origin: map(self.bounds.origin),
++            size: Size {
++                width: self.bounds.size.width * scale,
++                height: self.bounds.size.height * scale,
++            },
++        };
++        for vertex in &mut self.vertices {
++            vertex.xy_position = map(vertex.xy_position);
++        }
++        self.start = map(self.start);
++        self.current = map(self.current);
++    }
++}
++
+ impl From<Path<ScaledPixels>> for Primitive {
+     fn from(path: Path<ScaledPixels>) -> Self {
+         Primitive::Path(path)
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index b14111a3ee..fb40fa8261 100644
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -556,6 +556,15 @@ pub enum Filter {
+     Blur(Pixels),
+ }
+ 
++impl ScaledFilter {
++    /// Applies a uniform paint transform `p' = scale * p + translation` (device pixels).
++    pub fn transformed(&self, scale: f32, _translation: [f32; 2]) -> Self {
++        match self {
++            ScaledFilter::Blur(radius) => ScaledFilter::Blur(*radius * scale),
++        }
++    }
++}
++
+ impl Filter {
+     /// Whether this filter has no visible effect, so painting can skip it entirely (and the
+     /// element can avoid the offscreen isolation pass when *all* of its filters are identities).
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 61239ec447..2b306e38cd 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -1290,6 +1290,59 @@ enum InputModality {
+     Touch,
+ }
+ 
++/// A uniform scale plus translation applied to everything painted inside
++/// [`Window::with_paint_transform`]: `p' = scale * p + translation`, in logical pixels.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct PaintTransform {
++    /// Uniform scale factor.
++    pub scale: f32,
++    /// Translation applied after scaling, in logical pixels.
++    pub translation: Point<Pixels>,
++}
++
++impl PaintTransform {
++    /// The transform that changes nothing.
++    pub const IDENTITY: Self = Self {
++        scale: 1.0,
++        translation: Point {
++            x: Pixels(0.0),
++            y: Pixels(0.0),
++        },
++    };
++
++    /// Scales by `scale` about the fixed point `origin`.
++    pub fn about(scale: f32, origin: Point<Pixels>) -> Self {
++        Self {
++            scale,
++            translation: point(origin.x * (1.0 - scale), origin.y * (1.0 - scale)),
++        }
++    }
++
++    /// The transform that applies `inner` first and then `self`.
++    pub fn then(self, inner: Self) -> Self {
++        Self {
++            scale: self.scale * inner.scale,
++            translation: point(
++                inner.translation.x * self.scale + self.translation.x,
++                inner.translation.y * self.scale + self.translation.y,
++            ),
++        }
++    }
++
++    /// Transforms a point.
++    pub fn apply(&self, p: Point<Pixels>) -> Point<Pixels> {
++        point(
++            p.x * self.scale + self.translation.x,
++            p.y * self.scale + self.translation.y,
++        )
++    }
++
++    /// Whether this transform changes nothing.
++    pub fn is_identity(&self) -> bool {
++        *self == Self::IDENTITY
++    }
++}
++
+ /// Holds the state for a specific window.
+ pub struct Window {
+     pub(crate) handle: AnyWindowHandle,
+@@ -1324,6 +1377,8 @@ pub struct Window {
+     style_transition_containing_bounds: Option<Bounds<Pixels>>,
+     pub(crate) element_opacity: f32,
+     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
++    /// Composed paint-time transform of the enclosing [`Window::with_paint_transform`] scopes.
++    pub(crate) paint_transform: PaintTransform,
+     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+     /// The [`TextInputConfiguration`] most recently forwarded to the platform
+     /// window, so that only actual changes are forwarded (reconfiguring a live
+@@ -2079,6 +2134,7 @@ impl Window {
+             element_offset_stack: Vec::new(),
+             style_transition_containing_bounds: None,
+             content_mask_stack: Vec::new(),
++            paint_transform: PaintTransform::IDENTITY,
+             element_opacity: 1.0,
+             requested_autoscroll: None,
+             last_text_input_configuration: None,
+@@ -4004,6 +4060,90 @@ impl Window {
+         }
+     }
+ 
++    /// Runs `f` with a uniform paint-time transform: everything painted inside is scaled by
++    /// `scale` about `origin` (a point in the coordinates painted inside, window space). Layout,
++    /// hit-testing and hitboxes are unaffected; glyph, SVG and image sprites keep their original
++    /// raster and are scaled on the GPU. Nested transforms compose (the inner one applies first).
++    /// Content masks are not transformed. This method should only be called during paint.
++    pub fn with_paint_transform<R>(
++        &mut self,
++        scale: f32,
++        origin: Point<Pixels>,
++        f: impl FnOnce(&mut Self) -> R,
++    ) -> R {
++        self.invalidator.debug_assert_paint();
++        let previous = self.paint_transform;
++        self.paint_transform = previous.then(PaintTransform::about(scale, origin));
++        let result = f(self);
++        self.paint_transform = previous;
++        result
++    }
++
++    /// The composed transform of the enclosing [`Self::with_paint_transform`] scopes.
++    pub fn paint_transform(&self) -> PaintTransform {
++        self.paint_transform
++    }
++
++    /// Device-space `(scale, translation)` of the paint transform, or `None` for identity.
++    fn device_paint_transform(&self) -> Option<(f32, Point<ScaledPixels>)> {
++        let transform = self.paint_transform;
++        if transform.is_identity() {
++            return None;
++        }
++        let factor = self.scale_factor();
++        Some((
++            transform.scale,
++            point(
++                ScaledPixels(transform.translation.x.0 * factor),
++                ScaledPixels(transform.translation.y.0 * factor),
++            ),
++        ))
++    }
++
++    fn transform_bounds(&self, bounds: Bounds<ScaledPixels>) -> Bounds<ScaledPixels> {
++        let Some((scale, translation)) = self.device_paint_transform() else {
++            return bounds;
++        };
++        Bounds {
++            origin: point(
++                bounds.origin.x * scale + translation.x,
++                bounds.origin.y * scale + translation.y,
++            ),
++            size: size(bounds.size.width * scale, bounds.size.height * scale),
++        }
++    }
++
++    fn transform_length(&self, length: ScaledPixels) -> ScaledPixels {
++        length * self.paint_transform.scale
++    }
++
++    fn transform_corners(&self, corners: Corners<ScaledPixels>) -> Corners<ScaledPixels> {
++        corners.map(|radius| self.transform_length(*radius))
++    }
++
++    fn transform_edges(&self, edges: Edges<ScaledPixels>) -> Edges<ScaledPixels> {
++        edges.map(|width| self.transform_length(*width))
++    }
++
++    /// Lowers logical filters to device space and applies the paint transform to them.
++    fn scale_filters(&self, filters: &[Filter]) -> SmallVec<[ScaledFilter; 4]> {
++        let scale_factor = self.scale_factor();
++        let transform = self.device_paint_transform();
++        filters
++            .iter()
++            .filter(|filter| !filter.is_identity())
++            .map(|filter| {
++                let scaled = filter.scale(scale_factor);
++                match transform {
++                    Some((scale, translation)) => {
++                        scaled.transformed(scale, [translation.x.0, translation.y.0])
++                    }
++                    None => scaled,
++                }
++            })
++            .collect()
++    }
++
+     /// Updates the global element offset relative to the current offset. This is used to implement
+     /// scrolling. This method should only be called during the prepaint phase of element drawing.
+     pub fn with_element_offset<R>(
+@@ -4494,8 +4634,8 @@ impl Window {
+         let scale_factor = self.scale_factor();
+         let content_mask = self.snapped_content_mask();
+         let opacity = self.element_opacity();
+-        let element_bounds = self.cover_bounds(bounds);
+-        let element_corner_radii = corner_radii.scale(scale_factor);
++        let element_bounds = self.transform_bounds(self.cover_bounds(bounds));
++        let element_corner_radii = self.transform_corners(corner_radii.scale(scale_factor));
+         let corner_smoothing = corner_smoothing.clamp(0.0, 1.0);
+         for shadow in shadows {
+             if shadow.inset {
+@@ -4504,10 +4644,10 @@ impl Window {
+             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
+             self.next_frame.scene.insert_primitive(Shadow {
+                 order: 0,
+-                blur_radius: shadow.blur_radius.scale(scale_factor),
+-                bounds: self.cover_bounds(shadow_bounds),
++                blur_radius: self.transform_length(shadow.blur_radius.scale(scale_factor)),
++                bounds: self.transform_bounds(self.cover_bounds(shadow_bounds)),
+                 content_mask,
+-                corner_radii: corner_radii.scale(scale_factor),
++                corner_radii: self.transform_corners(corner_radii.scale(scale_factor)),
+                 color: shadow.color.opacity(opacity),
+                 element_bounds,
+                 element_corner_radii,
+@@ -4543,8 +4683,8 @@ impl Window {
+         let scale_factor = self.scale_factor();
+         let content_mask = self.snapped_content_mask();
+         let opacity = self.element_opacity();
+-        let element_bounds = self.cover_bounds(bounds);
+-        let element_corner_radii = corner_radii.scale(scale_factor);
++        let element_bounds = self.transform_bounds(self.cover_bounds(bounds));
++        let element_corner_radii = self.transform_corners(corner_radii.scale(scale_factor));
+         let corner_smoothing = corner_smoothing.clamp(0.0, 1.0);
+         for shadow in shadows {
+             if !shadow.inset {
+@@ -4562,10 +4702,10 @@ impl Window {
+             };
+             self.next_frame.scene.insert_primitive(Shadow {
+                 order: 0,
+-                blur_radius: shadow.blur_radius.scale(scale_factor),
+-                bounds: self.cover_bounds(hole),
++                blur_radius: self.transform_length(shadow.blur_radius.scale(scale_factor)),
++                bounds: self.transform_bounds(self.cover_bounds(hole)),
+                 content_mask,
+-                corner_radii: hole_corner_radii.scale(scale_factor),
++                corner_radii: self.transform_corners(hole_corner_radii.scale(scale_factor)),
+                 color: shadow.color.opacity(opacity),
+                 element_bounds,
+                 element_corner_radii,
+@@ -4604,20 +4744,16 @@ impl Window {
+         self.invalidator.debug_assert_paint();
+ 
+         let scale_factor = self.scale_factor();
+-        let filters: SmallVec<[ScaledFilter; 4]> = filters
+-            .iter()
+-            .filter(|filter| !filter.is_identity())
+-            .map(|filter| filter.scale(scale_factor))
+-            .collect();
++        let filters = self.scale_filters(filters);
+         if filters.is_empty() {
+             return;
+         }
+ 
+         self.next_frame.scene.insert_primitive(BackdropFilter {
+             order: 0,
+-            bounds: self.snap_bounds(bounds),
++            bounds: self.transform_bounds(self.snap_bounds(bounds)),
+             content_mask: self.snapped_content_mask(),
+-            corner_radii: corner_radii.scale(scale_factor),
++            corner_radii: self.transform_corners(corner_radii.scale(scale_factor)),
+             corner_smoothing: corner_smoothing.clamp(0.0, 1.0),
+             filters,
+             opacity: self.element_opacity(),
+@@ -4655,11 +4791,7 @@ impl Window {
+         self.invalidator.debug_assert_paint();
+ 
+         let scale_factor = self.scale_factor();
+-        let filters: SmallVec<[ScaledFilter; 4]> = filters
+-            .iter()
+-            .filter(|filter| !filter.is_identity())
+-            .map(|filter| filter.scale(scale_factor))
+-            .collect();
++        let filters = self.scale_filters(filters);
+         if filters.is_empty() {
+             return f(self);
+         }
+@@ -4673,9 +4805,9 @@ impl Window {
+         // `.blur(r).opacity(0.5)` would render at 0.25 instead of 0.5).
+         let boundary = FilterBoundary {
+             order: 0,
+-            bounds: self.snap_bounds(bounds),
++            bounds: self.transform_bounds(self.snap_bounds(bounds)),
+             content_mask: self.snapped_content_mask(),
+-            corner_radii: corner_radii.scale(scale_factor),
++            corner_radii: self.transform_corners(corner_radii.scale(scale_factor)),
+             corner_smoothing: corner_smoothing.clamp(0.0, 1.0),
+             filters,
+             opacity: 1.0,
+@@ -4750,19 +4882,21 @@ impl Window {
+         self.invalidator.debug_assert_paint();
+ 
+         let opacity = self.element_opacity();
+-        let snapped_bounds = self.snap_bounds(quad.bounds);
+-        let snapped_border_widths = self.snap_border_widths(quad.border_widths);
++        let snapped_bounds = self.transform_bounds(self.snap_bounds(quad.bounds));
++        let snapped_border_widths =
++            self.transform_edges(self.snap_border_widths(quad.border_widths));
++        let transform_scale = self.paint_transform.scale;
+         let quad = Quad {
+             order: 0,
+             bounds: snapped_bounds,
+             content_mask: self.snapped_content_mask(),
+             background: quad.background.opacity(opacity),
+             border_color: quad.border_color.opacity(opacity),
+-            corner_radii: quad.corner_radii.scale(self.scale_factor()),
++            corner_radii: self.transform_corners(quad.corner_radii.scale(self.scale_factor())),
+             border_widths: snapped_border_widths,
+             border_style: quad.border_style,
+-            border_dashed_length: quad.border_dashed_length,
+-            border_dashed_gap: quad.border_dashed_gap,
++            border_dashed_length: quad.border_dashed_length * transform_scale,
++            border_dashed_gap: quad.border_dashed_gap * transform_scale,
+             corner_smoothing: corner_smoothing.clamp(0.0, 1.0),
+             padding: 0,
+         };
+@@ -4831,9 +4965,11 @@ impl Window {
+         path.content_mask = content_mask;
+         let color: Background = color.into();
+         path.color = color.opacity(opacity);
+-        self.next_frame
+-            .scene
+-            .insert_primitive(path.scale(scale_factor));
++        let mut path = path.scale(scale_factor);
++        if let Some((scale, translation)) = self.device_paint_transform() {
++            path.transform(scale, translation);
++        }
++        self.next_frame.scene.insert_primitive(path);
+     }
+ 
+     /// Paint an underline into the scene for the next frame at the current z-index.
+@@ -4854,10 +4990,10 @@ impl Window {
+         } else {
+             thickness
+         };
+-        let bounds = Bounds {
++        let bounds = self.transform_bounds(Bounds {
+             origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
+             size: size(self.snap_stroke(width), height),
+-        };
++        });
+         let element_opacity = self.element_opacity();
+ 
+         self.next_frame.scene.insert_primitive(Underline {
+@@ -4870,7 +5006,7 @@ impl Window {
+                 .unwrap_or_default()
+                 .opacity(element_opacity)
+                 .into(),
+-            thickness,
++            thickness: self.transform_length(thickness),
+             wavy: style.wavy.into(),
+         });
+     }
+@@ -4888,10 +5024,10 @@ impl Window {
+ 
+         let scale_factor = self.scale_factor();
+         let height = style.thickness;
+-        let bounds = Bounds {
++        let bounds = self.transform_bounds(Bounds {
+             origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
+             size: size(self.snap_stroke(width), self.snap_stroke(height)),
+-        };
++        });
+         let opacity = self.element_opacity();
+ 
+         self.next_frame.scene.insert_primitive(Underline {
+@@ -4899,7 +5035,7 @@ impl Window {
+             padding: 0,
+             bounds,
+             content_mask: self.snapped_content_mask(),
+-            thickness: self.snap_stroke(style.thickness),
++            thickness: self.transform_length(self.snap_stroke(style.thickness)),
+             color: style.color.unwrap_or_default().opacity(opacity).into(),
+             wavy: false.into(),
+         });
+@@ -4964,10 +5100,10 @@ impl Window {
+         };
+ 
+         debug_assert_eq!(entry.bounds.size, tile.bounds.size.map(Into::into));
+-        let bounds = Bounds {
++        let bounds = self.transform_bounds(Bounds {
+             origin: integer_origin + entry.bounds.origin.map(Into::into),
+             size: tile.bounds.size.map(Into::into),
+-        };
++        });
+         let content_mask = self.snapped_content_mask();
+ 
+         match entry.format {
+@@ -5130,9 +5266,11 @@ impl Window {
+                 .size
+                 .map(|value| ScaledPixels(value.0 as f32 / SMOOTH_SVG_SCALE_FACTOR)),
+         };
+-        let final_bounds = svg_bounds
+-            .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
+-            .map_size(|size| size.ceil());
++        let final_bounds = self.transform_bounds(
++            svg_bounds
++                .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
++                .map_size(|size| size.ceil()),
++        );
+ 
+         self.next_frame.scene.insert_primitive(MonochromeSprite {
+             order: 0,
+@@ -5214,7 +5352,7 @@ impl Window {
+             })?
+             .expect("Callback above only returns Some");
+ 
+-        let visible_bounds_snapped = self.snap_bounds(visible_bounds);
++        let visible_bounds_snapped = self.transform_bounds(self.snap_bounds(visible_bounds));
+ 
+         let sub_tile = if visible_bounds == image_bounds {
+             tile
+@@ -5260,6 +5398,7 @@ impl Window {
+         let corner_radii = corner_radii
+             .clamp_radii_for_quad_size(visible_bounds.size)
+             .scale(self.scale_factor());
++        let corner_radii = self.transform_corners(corner_radii);
+         let opacity = self.element_opacity();
+ 
+         self.next_frame.scene.insert_primitive(PolychromeSprite {
+@@ -5287,7 +5426,7 @@ impl Window {
+ 
+         self.invalidator.debug_assert_paint();
+ 
+-        let bounds = self.snap_bounds(bounds);
++        let bounds = self.transform_bounds(self.snap_bounds(bounds));
+         let content_mask = self.snapped_content_mask();
+         self.next_frame.scene.insert_surface(
+             PaintSurface {
+@@ -8721,6 +8860,91 @@ mod tests {
+             .unwrap();
+     }
+ 
++    #[test]
++    fn paint_transforms_compose_inner_first() {
++        let outer = PaintTransform::about(0.5, point(px(10.), px(10.)));
++        let inner = PaintTransform::about(2.0, point(px(0.), px(0.)));
++        let composed = outer.then(inner);
++
++        // The origin of a transform is its fixed point.
++        assert_eq!(
++            outer.apply(point(px(10.), px(10.))),
++            point(px(10.), px(10.))
++        );
++        assert_eq!(composed.scale, 1.0);
++        for p in [point(px(0.), px(0.)), point(px(30.), px(-4.))] {
++            assert_eq!(composed.apply(p), outer.apply(inner.apply(p)));
++        }
++        assert!(PaintTransform::IDENTITY.is_identity());
++        assert!(!outer.is_identity());
++        assert_eq!(PaintTransform::IDENTITY.then(outer), outer);
++    }
++
++    struct PaintTransformSceneView;
++
++    impl Render for PaintTransformSceneView {
++        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
++            canvas(
++                |_, _, _| (),
++                |_, _, window, _| {
++                    let bounds = Bounds::new(point(px(10.), px(10.)), size(px(20.), px(20.)));
++                    let styled = || {
++                        quad(
++                            bounds,
++                            px(8.),
++                            crate::blue(),
++                            px(4.),
++                            crate::white(),
++                            BorderStyle::Solid,
++                        )
++                    };
++                    window.paint_quad(styled());
++                    window.with_paint_transform(0.5, point(px(10.), px(10.)), |window| {
++                        window.paint_quad(styled());
++                        window.with_paint_transform(2.0, point(px(0.), px(0.)), |window| {
++                            window.paint_quad(styled());
++                        });
++                    });
++                    window.paint_quad(styled());
++                },
++            )
++            .size_full()
++        }
++    }
++
++    #[gpui::test]
++    fn paint_transform_scales_primitives_and_leaves_the_rest_alone(cx: &mut TestAppContext) {
++        let window = cx.add_window(|_, _| PaintTransformSceneView);
++        window
++            .update(cx, |_, window, _| {
++                let sf = window.scale_factor();
++                let scene = &window.rendered_frame.scene;
++                let quads: Vec<_> = scene.quads.iter().collect();
++                assert_eq!(quads.len(), 4);
++                let rect = |quad: &Quad| {
++                    [
++                        quad.bounds.origin.x.0 / sf,
++                        quad.bounds.origin.y.0 / sf,
++                        quad.bounds.size.width.0 / sf,
++                        quad.bounds.size.height.0 / sf,
++                    ]
++                };
++                // Untransformed before and after the scope: identical, exact.
++                assert_eq!(rect(quads[0]), [10., 10., 20., 20.]);
++                assert_eq!(rect(quads[3]), [10., 10., 20., 20.]);
++                assert_eq!(quads[0].corner_radii.top_left.0, 8. * sf);
++                assert_eq!(quads[0].border_widths.top.0, 4. * sf);
++                // 0.5 about (10, 10): the corner stays, size, radius and border halve.
++                assert_eq!(rect(quads[1]), [10., 10., 10., 10.]);
++                assert_eq!(quads[1].corner_radii.top_left.0, 4. * sf);
++                assert_eq!(quads[1].border_widths.top.0, 2. * sf);
++                // Nested 2.0 about the origin inside 0.5 about (10, 10): net scale 1, shift 5.
++                assert_eq!(rect(quads[2]), [15., 15., 20., 20.]);
++                assert_eq!(quads[2].corner_radii.top_left.0, 8. * sf);
++            })
++            .unwrap();
++    }
++
+     struct OpensWindowOnPaint {
+         opened: Rc<Cell<bool>>,
+     }

@@ -1,9 +1,11 @@
-# New gpui-ce API in `gpui-ce-glass.patch`
+# New gpui-ce API in `patches/`
 
-Everything below is in the `gpui` crate (re-exported at the crate root) and needs no change in
-the backends' public API. All paint methods are paint-phase only.
+One section per patch, in apply order. `scripts/vendor-sync.sh` applies the patches to upstream
+gpui-ce and writes the result to `third_party/gpui-ce`. Everything below is in the `gpui` crate
+(re-exported at the crate root) and needs no change in the backends' public API. All paint
+methods are paint-phase only.
 
-## 1. Paint transform
+## 1. `0001-paint-transform.patch`: paint transform
 
 ```rust
 impl Window {
@@ -43,7 +45,13 @@ From Calcite: wrap the control's whole paint (glass, fill, border, label, icon) 
 `ControlFrame::surface_insets`, so text and icons scale with the surface. Keep hit-testing on the
 untransformed bounds.
 
-## 2. Glass groups (morphing glass)
+## 2. `0002-glass.patch`: glass filter and glass groups (morphing glass)
+
+`Filter::Glass(GlassFilter)` is a backdrop filter that blurs and refracts the backdrop, with
+dispersion, saturation, a fill, a Fresnel rim, a specular highlight, and an optional pointer
+light. `ScaledFilter::Glass` is its device-pixel form. As a content filter it acts as its blur.
+`Window::paint_backdrop_filter` draws one glass shape. A glass group draws several shapes in one
+pass:
 
 ```rust
 pub const MAX_GLASS_SHAPES: usize = 8;
@@ -95,3 +103,9 @@ Option<Box<ScaledGlassGroup>>`; `BackdropFilter::glass()` now returns `Option<Sc
 (`glass_group`, `glass_rects[8]`, `glass_radii[8]`, `glass_border`, 480 bytes total). The shader is written once
 in `gpui_render/src/shaders/filters.rs` and compiled to MSL, WGSL and HLSL, so Metal, wgpu
 (Linux) and Direct3D share it.
+
+## 3. `0003-cached-view-fix.patch`: cached views keep their element states
+
+No new public API. A cached view that is reused now carries over the element states it created
+while it rendered, so state such as a text field's cursor survives a frame in which only another
+view changed. The patch also fills the `Quad` fields that the debug overlay lacked.

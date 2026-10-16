@@ -15,8 +15,8 @@ use std::{
 
 use calcite::{continuous::ContinuousMotion, prelude::*};
 use gpui::{
-	AppContext as _, Context, Entity, IntoElement, ParentElement, Render, StyleRefinement, Styled,
-	TestAppContext, Window, WindowHandle, div, px,
+	Context, Entity, IntoElement, ParentElement, Render, StyleRefinement, Styled, TestAppContext, Window,
+	WindowHandle, div, px,
 };
 
 #[derive(Clone, Default)]

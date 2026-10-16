@@ -23,6 +23,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  # The toolchain of rust-version in Cargo.toml; keep the two in step.
+  RUSTUP_TOOLCHAIN: "1.97"
   TAG: ${{ inputs.tag }}
 
 jobs:
@@ -63,11 +65,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Rust
-        run: rustup toolchain install stable --profile minimal
-
-      - name: Fetch and patch gpui-ce
-        shell: pwsh
-        run: ./scripts/bootstrap.ps1
+        run: rustup toolchain install 1.97 --profile minimal
 
       - name: Build the developer preview
         run: cargo build --release --locked -p calcite-showcase --bin preview
@@ -109,10 +107,7 @@ jobs:
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb-shape0-dev libxcb-xfixes0-dev libfontconfig-dev
 
       - name: Set up Rust
-        run: rustup toolchain install stable --profile minimal
-
-      - name: Fetch and patch gpui-ce
-        run: ./scripts/bootstrap.sh
+        run: rustup toolchain install 1.97 --profile minimal
 
       - name: Build the developer preview
         run: cargo build --release --locked -p calcite-showcase --bin preview
@@ -146,10 +141,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Rust
-        run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
-
-      - name: Fetch and patch gpui-ce
-        run: ./scripts/bootstrap.sh
+        run: rustup toolchain install 1.97 --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Build the developer preview for Apple silicon and Intel
         run: |

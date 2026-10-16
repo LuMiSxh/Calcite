@@ -20,7 +20,7 @@ use calcite_showcase::artwork::{
 };
 use gpui::{
 	App, Bounds, Context, FocusHandle, FontWeight, IntoElement, MouseButton, SharedString, Task, Window,
-	WindowOptions, actions, div, prelude::*, px, rgba, size,
+	WindowOptions, actions, div, px, rgba, size,
 };
 
 actions!(

@@ -18,8 +18,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use calcite::prelude::*;
 use gpui::{
-	AnyElement, AppContext as _, Context, Entity, EntityId, IntoElement, ParentElement, Pixels, Render,
-	SharedString, Styled, WeakEntity, Window, canvas, div, px,
+	AnyElement, Context, Entity, EntityId, IntoElement, ParentElement, Pixels, Render, SharedString, Styled,
+	WeakEntity, Window, canvas, div, px,
 };
 
 use super::{Preview, sections};

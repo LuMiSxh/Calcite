@@ -31,7 +31,7 @@ use calcite::{
 use calcite_showcase::artwork::{SLASH_ASSET, SLASH_SVG};
 use gpui::{
 	App, Bounds, Context, Entity, FocusHandle, IntoElement, ParentElement, Rgba, ScrollHandle,
-	StyleRefinement, Styled, Window, actions, div, point, prelude::*, px, rgba, size,
+	StyleRefinement, Styled, Window, actions, div, point, px, rgba, size,
 };
 use motion_lab::MotionLab;
 use section_view::{Group, Kind, PageView};

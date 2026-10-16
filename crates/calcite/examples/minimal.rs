@@ -4,11 +4,7 @@
 //!
 //! Run it with `cargo run -p calcite --example minimal`.
 
-use calcite::{UI_FONT, prelude::*};
-use gpui::{
-	App, Bounds, Context, IntoElement, ParentElement, Render, Styled, Window, WindowBounds, WindowOptions,
-	div, prelude::*, px, size,
-};
+use calcite::{UI_FONT, gpui, prelude::*};
 
 struct Minimal {
 	notifications: bool,
@@ -64,7 +60,7 @@ impl Render for Minimal {
 }
 
 fn main() {
-	gpui_platform::application()
+	calcite::platform::application()
 		.with_assets(Assets::default())
 		.run(|cx: &mut App| {
 			calcite::init(cx);

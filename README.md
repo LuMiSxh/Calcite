@@ -40,10 +40,11 @@
 | `calcite-update`   | Signed updates with per-file deltas, staged next to the app and installed on quit. Sparkle's model on every platform. |
 | `calcite-exec`     | Execution layer for views: `TaskSlot`, `ActivityStore` with leases, `Throttle`, `bounded`.     |
 | `calcite-showcase` | `preview` (the Developer Preview: grouped component sections with variant and state matrices) and `home` (a launcher home screen with a simulated install). |
-| `patches/`         | The gpui-ce patch that adds `Filter::Glass`, and the pinned gpui-ce commit.                    |
+| `patches/`         | The gpui-ce patches (paint transform, `Filter::Glass`, cached-view fix) and the pinned gpui-ce commit. |
+| `third_party/gpui-ce` | Upstream gpui-ce at the pinned commit with the patches applied. Cargo builds it. `scripts/vendor-sync.sh` rebuilds it. |
 
 > [!NOTE]
-> Calcite needs gpui-ce with the Liquid Glass patch. Upstream gpui-ce does not have `Filter::Glass` yet. Calcite is not affiliated with Apple, Zed Industries, or the gpui-ce maintainers.
+> Calcite ships its own patched gpui-ce in `third_party/gpui-ce`. Upstream gpui-ce does not have `Filter::Glass` yet. Calcite is not affiliated with Apple, Zed Industries, or the gpui-ce maintainers.
 >
 > This project uses AI coding assistants.
 
@@ -51,21 +52,7 @@
 
 1. Install current stable Rust with `rustup` (tested with 1.97).
 2. On macOS, install Xcode.
-3. Fetch gpui-ce and apply the glass patch:
-
-   macOS and Linux:
-
-   ```sh
-   ./scripts/bootstrap.sh
-   ```
-
-   Windows (PowerShell):
-
-   ```powershell
-   ./scripts/bootstrap.ps1
-   ```
-
-4. Start the developer preview or the home screen:
+3. Start the developer preview or the home screen:
 
    ```sh
    just run
@@ -87,8 +74,46 @@
    `--reduce-transparency` start with those settings on. `preview --help` lists the flags; an
    unknown flag prints the usage and exits with status 2.
 
-The first build compiles gpui-ce and takes several minutes. Run the bootstrap script again after
-`patches/` changes.
+The first build compiles gpui-ce and takes several minutes. There is no bootstrap step: the
+patched gpui-ce is in the repository.
+
+### Use Calcite in your app
+
+Add one dependency. Do not add gpui-ce: Calcite re-exports it.
+
+```toml
+[dependencies]
+calcite = { git = "https://github.com/LuMiSxh/Calcite", tag = "v0.4.0" }
+```
+
+```rust
+use calcite::prelude::*;
+// Needed in each module that uses a gpui derive or macro (`#[derive(IntoElement)]`,
+// `actions!`): they expand to `gpui::...` paths.
+use calcite::gpui;
+
+fn main() {
+    calcite::platform::application().with_assets(Assets::default()).run(|cx| {
+        calcite::init(cx);
+        // open a window
+    });
+}
+```
+
+`calcite::prelude` includes the common gpui items (`div`, `px`, `Styled`, `ParentElement`,
+`IntoElement`, `Render`, `Context`, `Window`, `App`). The `wayland`, `x11`, `font-kit`, and
+`image-formats` features pass through to gpui-ce. All are on by default.
+
+### Change the gpui-ce patches
+
+Maintainers only. `scripts/vendor-sync.sh` needs macOS or Linux, `git`, `python3`, and network access.
+
+1. Run `just patch-regen init`. It clones gpui-ce into `.gpui-ce-work/` with the patches as commits.
+2. Edit and commit in that clone. One commit is one numbered patch.
+3. Run `just patch-regen`. It writes `patches/`, proves that they reproduce the clone, and rebuilds `third_party/gpui-ce`.
+4. To change the pin, edit `patches/GPUI_CE_REVISION`, then run `just vendor-sync`.
+
+CI runs `scripts/vendor-sync.sh` and fails when `third_party/` differs from the commit.
 
 ### Keys
 
@@ -211,5 +236,4 @@ slot before it ends the lease.
   content. Round full-bleed images with `chrome::corner_radius`.
 - The window chrome is verified on Linux only. Check the traffic lights and the Windows caption
   buttons on real systems.
-- Calcite needs the patched gpui-ce. Push it to a fork with `scripts/publish-gpui-fork.sh` before
-  you use Calcite as a Git dependency.
+- `third_party/gpui-ce` is about 7 MB. It keeps only the crates Calcite builds.
