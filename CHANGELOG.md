@@ -8,17 +8,7 @@ All notable changes to Calcite are recorded here. The format follows
 ### Breaking
 
 - Calcite builds as a plain git dependency. The patched gpui-ce is in `third_party/gpui-ce`, and `scripts/bootstrap.sh`, `scripts/bootstrap.ps1`, and `scripts/publish-gpui-fork.sh` are gone. An app needs no gpui dependency: `calcite` re-exports `gpui` and `platform` (gpui_platform), and `calcite::prelude` includes the common gpui items. Add `use calcite::gpui;` in each module that uses a gpui derive or `actions!`.
-- `calcite` no longer enables gpui-ce features through the workspace. The new features `font-kit`, `image-formats`, `wayland`, and `x11` pass through to gpui-ce on by default.
-- `calcite-tint`
-=======
-- `calcite-tint`: `Extractor::extract`
-=======
-and are on by default.
-- `calcite-tint`: `Extractor::extract`
-=======
-on by default.
-- `calcite-tint`
-=======
+- `calcite` no longer enables gpui-ce features through the workspace. The new features `font-kit`, `image-formats`, `wayland`, and `x11` pass through to gpui-ce and are on by default.
 - `calcite-tint`: `Extractor::extract` takes an `ImageView` instead of a packed RGBA slice and dimensions. Use `ImageView::packed_rgba` for tightly packed RGBA; a malformed buffer returns an `ImageError`.
 - `calcite-tint`: `Hsb` fields are private. Read them with `hue()`, `saturation()`, and `brightness()`, and build colors with `Hsb::new`, which wraps the hue and clamps the other values.
 - `calcite-tint`: `Extractor` drops `hue_buckets` (the bucket count is fixed at 24). Its tuple settings are now `Bounds` and `BackgroundTint`.
@@ -44,37 +34,7 @@ on by default.
 ### Fixed
 
 - `calcite-tint`: a red image no longer loses to a smaller blue area when its hue sits at the 0/1 seam. Hue buckets wrap, and the winning hue is a circular mean.
-- `calcite-tint`: the artwork is averaged over a grid of cells instead of read at one pixel per cell, so the tint no longer depends on image size or a - `calcite-update`: `Updater` is built with `Updater::builder(trusted_keys)`. Its fields are private. `feed_url`, `product`, `channel`, `current`, `root`, and `state_dir` are required.
-- `calcite-update`: the feed format is 2. A feed has the signed fields `issued_at`, `sequence`, and the optional `minimum_version`. The envelope has a `key_id`. Sign again with `calcite-update sign --key-id ID`; `release` needs `--sequence`.
-- `calcite-update`: `install::install` and `Staged::install` take the product and version, and `Staged::install` hashes the staged tree again first. `publish::sign` takes a `key_id`.
-- `calcite-update`: `Updater` rejects `file://` URLs. The `test-support` feature and `UpdaterBuilder::allow_file_urls` allow them for tests.
-
-### Added
-
-- `calcite-update`: a client rejects a replayed feed (a lower `sequence` than it has seen, kept in `update-state.json`), a feed older than `max_feed_age` (default 30 days), and a feed dated more than 5 minutes ahead. `Clock` and `SystemClock` make the time injectable. The new `Error::Stale` names these cases.
-- `calcite-update`: an app can trust several keys by `key_id`, for key rotation. An unknown `key_id` is an error before any parsing.
-- `calcite-update`: `Available::is_required` reports that the running version is below the feed's `minimum_version`.
-- `calcite-update`: `publish::sign_feed`, `publish::FeedBuilder`, and `publish::build_target`.
-- `calcite-update`: a crate README with the security model.
-
-### Security
-=======
-single stray pixel.
-
-### Security
-=======
-- `calcite-update`: `Updater` is built with `Updater::builder(trusted_keys)`. Its fields are private. `feed_url`, `product`, `channel`, `current`, `root`, and `state_dir` are required.
-- `calcite-update`: the feed format is 2. A feed has the signed fields `issued_at`, `sequence`, and the optional `minimum_version`. The envelope has a `key_id`. Sign again with `calcite-update sign --key-id ID`; `release` needs `--sequence`.
-- `calcite-update`: `install::install` and `Staged::install` take the product and version, and `Staged::install` hashes the staged tree again first. `publish::sign` takes a `key_id`.
-- `calcite-update`: `Updater` rejects `file://` URLs. The `test-support` feature and `UpdaterBuilder::allow_file_urls` allow them for tests.
-
-### Added
-
-- `calcite-update`: a client rejects a replayed feed (a lower `sequence` than it has seen, kept in `update-state.json`), a feed older than `max_feed_age` (default 30 days), and a feed dated more than 5 minutes ahead. `Clock` and `SystemClock` make the time injectable. The new `Error::Stale` names these cases.
-- `calcite-update`: an app can trust several keys by `key_id`, for key rotation. An unknown `key_id` is an error before any parsing.
-- `calcite-update`: `Available::is_required` reports that the running version is below the feed's `minimum_version`.
-- `calcite-update`: `publish::sign_feed`, `publish::FeedBuilder`, and `publish::build_target`.
-- `calcite-update`: a crate README with the security model.
+- `calcite-tint`: the artwork is averaged over a grid of cells instead of read at one pixel per cell, so the tint no longer depends on image size or a single stray pixel.
 
 ### Security
 
