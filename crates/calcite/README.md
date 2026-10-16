@@ -230,7 +230,8 @@ Dynamic Theme changes two values only: the accent and the hue of the HUD tint. T
 stays. With the default `tint` feature, `calcite::tint` finds them in artwork:
 
 ```rust
-let tint = calcite::tint::Extractor::default().extract(&rgba_pixels, width, height);
+let image = calcite::tint::ImageView::packed_rgba(width, height, &rgba_pixels)?; // Checks the buffer.
+let tint = calcite::tint::Extractor::default().extract(image);
 Theme::set_artwork_tint(cx, tint); // `None` for artwork without a hue: back to the palette accent
 ```
 
